@@ -1,0 +1,59 @@
+[project]
+name = "neural-engine"
+version = "0.0.1a1"
+description = "A model-agnostic cognitive evolution engine."
+readme = "README.md"
+requires-python = ">=3.14"
+authors = [
+    { name = "Grzegorz Pilich", email = "grzegorz.pilich@gmail.com" }
+]
+license = { text = "MIT" }
+
+dependencies = [
+    "typer>=0.16",
+    "rich>=14.0",
+    "pydantic>=2.11",
+]
+
+[project.scripts]
+neural = "neural_engine.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "ruff>=0.12",
+    "mypy>=1.16",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["src/neural_engine/tests"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+
+
+[project.urls]
+Homepage = "https://github.com/Grzanka777/NeuralEngine"
+Repository = "https://github.com/Grzanka777/NeuralEngine"
+Issues = "https://github.com/Grzanka777/NeuralEngine/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/neural_engine"]
