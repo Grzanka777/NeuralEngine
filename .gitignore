@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Editors
+*.swp
+*.kate-swp
+.vscode/
+.idea/
+
+# AI tools
+.deepseek/
+.cursor/
+.claude/
+.aider*
+
+# Operating systems
+.DS_Store
+Thumbs.db
