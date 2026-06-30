@@ -19,4 +19,5 @@ class Container:
     def experience_service(self) -> ExperienceService:
         return ExperienceService(
             JsonExperienceRepository(),
+            JsonObservationRepository(),
         )

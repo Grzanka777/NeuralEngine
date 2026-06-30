@@ -28,7 +28,8 @@ Neural Engine also has a minimal Experience vertical slice:
   `neural experience show UUID`
 
 Experiences are stored as one JSON file per experience under
-`NeuralPaths.EXPERIENCES`.
+`NeuralPaths.EXPERIENCES`. Experience creation validates any supplied
+observation IDs through the `ObservationRepository` port before saving.
 
 ## Validation
 
@@ -39,10 +40,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 24 tests.
+Pytest collected 30 tests.
 
 ## Notes for next work
 
-The next logical step is to decide whether and how observations should be
-manually linked to experiences in higher-level workflows before adding automatic
+The next logical step is to decide how manually linked observations should be
+displayed or summarized in experience workflows before adding automatic
 Observation-to-Experience conversion.

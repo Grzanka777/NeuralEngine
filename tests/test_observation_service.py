@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from neural_engine.application.observation_service import ObservationService
 from neural_engine.domain import Observation
 from neural_engine.ports.observation_repository import ObservationRepository
@@ -12,6 +14,13 @@ class FakeObservationRepository(ObservationRepository):
 
     def load_all(self) -> list[Observation]:
         return self.saved
+
+    def get_by_id(self, observation_id: UUID) -> Observation | None:
+        for observation in self.saved:
+            if observation.id == observation_id:
+                return observation
+
+        return None
 
 
 def test_add_observation() -> None:

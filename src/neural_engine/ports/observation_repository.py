@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from uuid import UUID
 
 from neural_engine.domain import Observation
 
@@ -13,3 +14,7 @@ class ObservationRepository(ABC):
     @abstractmethod
     def load_all(self) -> list[Observation]:
         """Load all observations."""
+
+    @abstractmethod
+    def get_by_id(self, observation_id: UUID) -> Observation | None:
+        """Load one observation by id."""

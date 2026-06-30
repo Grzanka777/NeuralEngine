@@ -7,6 +7,7 @@ from rich.panel import Panel
 
 from neural_engine import APP_NAME, MISSION, __version__
 from neural_engine.application.container import Container
+from neural_engine.application.experience_service import ObservationNotFoundError
 from neural_engine.core.brain import Brain
 from neural_engine.domain import Experience, ExperienceResult
 
@@ -149,15 +150,19 @@ def add_experience(
     """Store a new experience."""
 
     service = container.experience_service()
-    experience = service.add(
-        title=title,
-        context=context,
-        action=action,
-        outcome=outcome,
-        result=result,
-        observation_ids=observation_ids,
-        tags=tags,
-    )
+    try:
+        experience = service.add(
+            title=title,
+            context=context,
+            action=action,
+            outcome=outcome,
+            result=result,
+            observation_ids=observation_ids,
+            tags=tags,
+        )
+    except ObservationNotFoundError as error:
+        console.print(f"[red]Observation not found: {error.observation_id}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(f"[green]Experience stored.[/green] ID: [cyan]{experience.id}[/cyan]")
 

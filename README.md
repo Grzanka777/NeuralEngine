@@ -31,6 +31,9 @@ neural experience list
 neural experience show 11111111-1111-1111-1111-111111111111
 ```
 
+When `--observation-id` is supplied, every referenced observation must already
+exist.
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. The CLI delegates behavior to application services and does not own

@@ -4,6 +4,15 @@ from uuid import UUID
 
 from neural_engine.domain import Experience, ExperienceResult
 from neural_engine.ports.experience_repository import ExperienceRepository
+from neural_engine.ports.observation_repository import ObservationRepository
+
+
+class ObservationNotFoundError(Exception):
+    """Raised when an experience references an unknown observation."""
+
+    def __init__(self, observation_id: UUID) -> None:
+        self.observation_id = observation_id
+        super().__init__(f"Observation not found: {observation_id}")
 
 
 class ExperienceService:
@@ -11,9 +20,11 @@ class ExperienceService:
 
     def __init__(
         self,
-        repository: ExperienceRepository,
+        experience_repository: ExperienceRepository,
+        observation_repository: ObservationRepository,
     ) -> None:
-        self._repository = repository
+        self._experience_repository = experience_repository
+        self._observation_repository = observation_repository
 
     def add(
         self,
@@ -25,22 +36,30 @@ class ExperienceService:
         observation_ids: list[UUID] | None = None,
         tags: list[str] | None = None,
     ) -> Experience:
+        validated_observation_ids = observation_ids or []
+        self._validate_observation_ids(validated_observation_ids)
+
         experience = Experience(
             title=title,
             context=context,
             action=action,
             outcome=outcome,
             result=result,
-            observation_ids=observation_ids or [],
+            observation_ids=validated_observation_ids,
             tags=tags or [],
         )
 
-        self._repository.save(experience)
+        self._experience_repository.save(experience)
 
         return experience
 
     def list_experiences(self) -> list[Experience]:
-        return self._repository.load_all()
+        return self._experience_repository.load_all()
 
     def get_by_id(self, experience_id: UUID) -> Experience | None:
-        return self._repository.get_by_id(experience_id)
+        return self._experience_repository.get_by_id(experience_id)
+
+    def _validate_observation_ids(self, observation_ids: list[UUID]) -> None:
+        for observation_id in observation_ids:
+            if self._observation_repository.get_by_id(observation_id) is None:
+                raise ObservationNotFoundError(observation_id)

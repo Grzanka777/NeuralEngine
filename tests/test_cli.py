@@ -4,6 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from neural_engine import cli
+from neural_engine.application.experience_service import ObservationNotFoundError
 from neural_engine.domain import Experience, ExperienceResult, Observation
 
 
@@ -18,8 +19,13 @@ class FakeObservationService:
 
 
 class FakeExperienceService:
-    def __init__(self, experiences: list[Experience]) -> None:
+    def __init__(
+        self,
+        experiences: list[Experience],
+        missing_observation_id: UUID | None = None,
+    ) -> None:
         self.experiences = experiences
+        self.missing_observation_id = missing_observation_id
         self.add_calls: list[
             tuple[str, str, str, str, ExperienceResult, list[UUID] | None, list[str] | None]
         ] = []
@@ -36,6 +42,9 @@ class FakeExperienceService:
         tags: list[str] | None = None,
     ) -> Experience:
         self.add_calls.append((title, context, action, outcome, result, observation_ids, tags))
+
+        if self.missing_observation_id is not None:
+            raise ObservationNotFoundError(self.missing_observation_id)
 
         experience = Experience(
             title=title,
@@ -156,6 +165,40 @@ def test_experience_add_delegates_to_service_with_parsed_result(
     )
     assert "Experience stored." in result.output
     assert str(service.experiences[0].id) in result.output
+
+
+def test_experience_add_handles_missing_observation_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("44444444-4444-4444-4444-444444444444")
+    service = FakeExperienceService([], missing_observation_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(experience_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "experience",
+            "add",
+            "--title",
+            "Ship feature",
+            "--context",
+            "CLI surface",
+            "--action",
+            "Added commands",
+            "--outcome",
+            "Users can record experiences",
+            "--result",
+            "success",
+            "--observation-id",
+            str(missing_id),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert len(service.add_calls) == 1
+    assert service.experiences == []
+    assert f"Observation not found: {missing_id}" in result.output
 
 
 def test_experience_add_rejects_invalid_result(monkeypatch: pytest.MonkeyPatch) -> None:

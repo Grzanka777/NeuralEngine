@@ -47,10 +47,11 @@ whose content matches the given query (case-insensitive substring match).
 ## Experience Flow
 
 `neural experience add` calls the application container, receives an
-`ExperienceService`, and asks it to add an experience. The service creates a
-domain `Experience` and persists it through the `ExperienceRepository` port.
-The JSON repository is the current infrastructure implementation and stores one
-file per experience under `NeuralPaths.EXPERIENCES`.
+`ExperienceService`, and asks it to add an experience. The service validates
+referenced observation IDs through the `ObservationRepository` port before it
+creates a domain `Experience` or persists it through the `ExperienceRepository`
+port. The JSON repository is the current infrastructure implementation and
+stores one file per experience under `NeuralPaths.EXPERIENCES`.
 
 `neural experience list` retrieves all experiences through the same service and
 repository stack.
