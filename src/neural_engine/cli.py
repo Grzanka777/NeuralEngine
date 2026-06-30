@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 import typer
 from rich.console import Console
@@ -7,11 +8,16 @@ from rich.panel import Panel
 from neural_engine import APP_NAME, MISSION, __version__
 from neural_engine.application.container import Container
 from neural_engine.core.brain import Brain
+from neural_engine.domain import Experience, ExperienceResult
 
 app = typer.Typer(
     add_completion=False,
     help="Neural Engine CLI",
 )
+experience_app = typer.Typer(
+    help="Manage experiences.",
+)
+app.add_typer(experience_app, name="experience")
 
 console = Console()
 container = Container()
@@ -128,3 +134,81 @@ def search(query: str) -> None:
             console.print(f"[dim]Tags: {', '.join(observation.tags)}[/dim]")
 
         console.print()
+
+
+@experience_app.command("add")
+def add_experience(
+    title: Annotated[str, typer.Option("--title")],
+    context: Annotated[str, typer.Option("--context")],
+    action: Annotated[str, typer.Option("--action")],
+    outcome: Annotated[str, typer.Option("--outcome")],
+    result: Annotated[ExperienceResult, typer.Option("--result")],
+    observation_ids: Annotated[list[UUID] | None, typer.Option("--observation-id")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Store a new experience."""
+
+    service = container.experience_service()
+    experience = service.add(
+        title=title,
+        context=context,
+        action=action,
+        outcome=outcome,
+        result=result,
+        observation_ids=observation_ids,
+        tags=tags,
+    )
+
+    console.print(f"[green]Experience stored.[/green] ID: [cyan]{experience.id}[/cyan]")
+
+
+@experience_app.command("list")
+def list_experiences() -> None:
+    """List all experiences."""
+
+    service = container.experience_service()
+    experiences = service.list_experiences()
+
+    if not experiences:
+        console.print("[yellow]No experiences found.[/yellow]")
+        return
+
+    for experience in experiences:
+        console.print(f"[cyan]{experience.id}[/cyan]")
+        console.print(f"Timestamp: {experience.timestamp}")
+        console.print(f"Title: {experience.title}")
+        console.print(f"Result: {experience.result.value}")
+        console.print()
+
+
+@experience_app.command("show")
+def show_experience(experience_id: UUID) -> None:
+    """Show one experience."""
+
+    service = container.experience_service()
+    experience = service.get_by_id(experience_id)
+
+    if experience is None:
+        console.print(f"[red]Experience not found: {experience_id}[/red]")
+        raise typer.Exit(code=1)
+
+    _print_experience(experience)
+
+
+def _print_experience(experience: Experience) -> None:
+    console.print(f"ID: {experience.id}")
+    console.print(f"Timestamp: {experience.timestamp}")
+    console.print(f"Title: {experience.title}")
+    console.print(f"Context: {experience.context}")
+    console.print(f"Action: {experience.action}")
+    console.print(f"Outcome: {experience.outcome}")
+    console.print(f"Result: {experience.result.value}")
+    console.print(
+        "Observation IDs: "
+        + (
+            ", ".join(str(observation_id) for observation_id in experience.observation_ids)
+            if experience.observation_ids
+            else "-"
+        )
+    )
+    console.print(f"Tags: {', '.join(experience.tags) if experience.tags else '-'}")

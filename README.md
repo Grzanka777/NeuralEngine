@@ -15,7 +15,24 @@ neural list
 neural search pytest
 ```
 
+Experience capture is exposed through a nested CLI group:
+
+```bash
+neural experience add \
+  --title "Fixed flaky test" \
+  --context "CI failed on timing-sensitive assertion" \
+  --action "Replaced sleep with explicit condition" \
+  --outcome "Test is deterministic" \
+  --result success \
+  --observation-id 11111111-1111-1111-1111-111111111111 \
+  --tag testing
+
+neural experience list
+neural experience show 11111111-1111-1111-1111-111111111111
+```
+
 Observations are stored locally as JSON files under the Neural Engine brain
+directory. Experiences are stored locally as JSON files under the experience
 directory. The CLI delegates behavior to application services and does not own
 business logic.
 

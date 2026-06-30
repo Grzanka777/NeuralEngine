@@ -46,8 +46,14 @@ whose content matches the given query (case-insensitive substring match).
 
 ## Experience Flow
 
-Experience has no CLI commands yet. Callers resolve `ExperienceService` through
-`application/container.py`. The service creates a domain `Experience` and
-persists it through the `ExperienceRepository` port. The JSON repository is the
-current infrastructure implementation and stores one file per experience under
-`NeuralPaths.EXPERIENCES`.
+`neural experience add` calls the application container, receives an
+`ExperienceService`, and asks it to add an experience. The service creates a
+domain `Experience` and persists it through the `ExperienceRepository` port.
+The JSON repository is the current infrastructure implementation and stores one
+file per experience under `NeuralPaths.EXPERIENCES`.
+
+`neural experience list` retrieves all experiences through the same service and
+repository stack.
+
+`neural experience show UUID` retrieves a single experience through
+`ExperienceService.get_by_id()`.
