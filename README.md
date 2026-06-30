@@ -12,6 +12,7 @@ The first implemented slice is Observation capture:
 ```bash
 neural observe "Pytest is useful" --tags python --tags testing
 neural list
+neural search pytest
 ```
 
 Observations are stored locally as JSON files under the Neural Engine brain

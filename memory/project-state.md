@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-06-29
+Last updated: 2026-06-30
 
 ## Current implementation
 
@@ -11,7 +11,7 @@ Neural Engine has a first Observation vertical slice:
 * Port: `ObservationRepository`
 * Infrastructure implementation: `JsonObservationRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: `neural observe` and `neural list`
+* CLI commands: `neural observe`, `neural list`, and `neural search`
 
 Observations are stored as JSON files in the local Neural Engine brain
 observation directory.
@@ -25,7 +25,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 5 tests.
+Pytest collected 7 tests.
 
 ## Notes for next work
 

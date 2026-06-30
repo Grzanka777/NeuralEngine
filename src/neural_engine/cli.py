@@ -107,3 +107,24 @@ def observations() -> None:
             console.print(f"[dim]Tags: {', '.join(observation.tags)}[/dim]")
 
         console.print()
+
+
+@app.command()
+def search(query: str) -> None:
+    """Search observations by content."""
+
+    service = container.observation_service()
+    observations = service.search(query)
+
+    if not observations:
+        console.print("[yellow]No matching observations found.[/yellow]")
+        return
+
+    for observation in observations:
+        console.print(f"[cyan]{observation.timestamp}[/cyan]")
+        console.print(observation.content)
+
+        if observation.tags:
+            console.print(f"[dim]Tags: {', '.join(observation.tags)}[/dim]")
+
+        console.print()
