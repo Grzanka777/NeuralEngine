@@ -1,0 +1,37 @@
+# Architecture
+
+Neural Engine follows Clean Architecture.
+
+## Layers
+
+Domain:
+
+* Owns core concepts such as `Observation`.
+* Has no dependency on infrastructure.
+
+Application:
+
+* Coordinates use cases such as adding, listing, and searching observations.
+* Depends on ports instead of concrete infrastructure implementations.
+
+Ports:
+
+* Define repository interfaces required by application services.
+
+Infrastructure:
+
+* Implements ports using concrete storage mechanisms.
+* The current observation repository stores one JSON file per observation.
+
+CLI:
+
+* Remains thin.
+* Creates no business rules.
+* Resolves application services through `application/container.py`.
+
+## Observation Flow
+
+`neural observe` calls the application container, receives an
+`ObservationService`, and asks it to add an observation. The service creates a
+domain `Observation` and persists it through the `ObservationRepository` port.
+The JSON repository is the current infrastructure implementation of that port.

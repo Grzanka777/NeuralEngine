@@ -1,7 +1,7 @@
 from neural_engine.core.brain import Brain
 
 
-def test_brain_exists():
+def test_brain_exists() -> None:
     brain = Brain()
     brain.initialize()
 

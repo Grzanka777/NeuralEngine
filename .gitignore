@@ -21,6 +21,7 @@ htmlcov/
 *.kate-swp
 .vscode/
 .idea/
+.notes
 
 # AI tools
 .deepseek/
@@ -28,6 +29,41 @@ htmlcov/
 .claude/
 .aider*
 
+# Environment variables
+.env
+.env.*
+
 # Operating systems
 .DS_Store
 Thumbs.db
+
+# Python packaging
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+
+# Local databases
+*.db
+*.sqlite3
+
+# Jupyter
+.ipynb_checkpoints/
+
+# UV
+.python-version
+
+# Temporary files
+*.tmp
+*.bak
+
+# AI generated
+memory/sessions/
+
+memory/sessions/*
+!memory/sessions/.gitkeep
+
+__pycache__/
+*.py[cod]

@@ -21,6 +21,7 @@ neural = "neural_engine.cli:app"
 [dependency-groups]
 dev = [
     "pytest>=8.4",
+    "pytest-cov>=6.0",
     "ruff>=0.12",
     "mypy>=1.16",
 ]
@@ -40,10 +41,22 @@ select = [
     "I",
     "UP",
     "B",
+    "SIM",
+    "C4",
 ]
 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
 [tool.pytest.ini_options]
-testpaths = ["src/neural_engine/tests"]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.ruff.lint.isort]
+known-first-party = ["neural_engine"]
 
 [tool.mypy]
 python_version = "3.14"
@@ -57,3 +70,6 @@ Issues = "https://github.com/Grzanka777/NeuralEngine/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/neural_engine"]
+
+[tool.uv]
+default-groups = ["dev"]

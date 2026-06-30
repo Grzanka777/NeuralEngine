@@ -1,9 +1,11 @@
+from typing import Annotated
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
 
-
 from neural_engine import APP_NAME, MISSION, __version__
+from neural_engine.application.container import Container
 from neural_engine.core.brain import Brain
 
 app = typer.Typer(
@@ -12,6 +14,7 @@ app = typer.Typer(
 )
 
 console = Console()
+container = Container()
 
 
 @app.callback(invoke_without_command=True)
@@ -23,9 +26,7 @@ def main(ctx: typer.Context) -> None:
 
     brain = Brain()
     brain_status = (
-      "[green]Initialized[/green]"
-      if brain.exists()
-      else "[yellow]Not initialized[/yellow]"
+        "[green]Initialized[/green]" if brain.exists() else "[yellow]Not initialized[/yellow]"
     )
 
     console.print(
@@ -50,6 +51,7 @@ Run:
         )
     )
 
+
 @app.command()
 def init() -> None:
     """Initialize the local Neural Engine brain."""
@@ -58,6 +60,7 @@ def init() -> None:
     brain.initialize()
 
     console.print("[green]🧠 Neural Engine initialized successfully![/green]")
+
 
 @app.command()
 def status() -> None:
@@ -70,3 +73,37 @@ def status() -> None:
     console.print(f"[bold cyan]{APP_NAME}[/bold cyan]")
     console.print(f"Version : {__version__}")
     console.print(f"Brain   : {state}")
+
+
+@app.command()
+def observe(
+    content: str,
+    tags: Annotated[list[str] | None, typer.Option()] = None,
+) -> None:
+    """Store a new observation."""
+
+    service = container.observation_service()
+    service.add(content, tags)
+
+    console.print("[green]Observation stored.[/green]")
+
+
+@app.command("list")
+def observations() -> None:
+    """List all observations."""
+
+    service = container.observation_service()
+    observations = service.list_observations()
+
+    if not observations:
+        console.print("[yellow]No observations found.[/yellow]")
+        return
+
+    for observation in observations:
+        console.print(f"[cyan]{observation.timestamp}[/cyan]")
+        console.print(observation.content)
+
+        if observation.tags:
+            console.print(f"[dim]Tags: {', '.join(observation.tags)}[/dim]")
+
+        console.print()
