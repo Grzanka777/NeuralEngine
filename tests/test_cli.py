@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 from neural_engine import cli
 from neural_engine.application.experience_service import ObservationNotFoundError
+from neural_engine.application.observation_service import AddObservationResult
 from neural_engine.domain import Experience, ExperienceResult, Observation
 
 
@@ -13,9 +14,27 @@ class FakeObservationService:
         self.observations = observations
         self.queries: list[str] = []
         self.requested_ids: list[UUID] = []
+        self.add_calls: list[tuple[str, list[str] | None]] = []
 
     def list_observations(self) -> list[Observation]:
         return self.observations
+
+    def add(
+        self,
+        content: str,
+        tags: list[str] | None = None,
+    ) -> AddObservationResult:
+        self.add_calls.append((content, tags))
+        duplicate_ids = [
+            observation.id for observation in self.observations if observation.content == content
+        ]
+        observation = Observation(content=content, tags=tags or [])
+        self.observations.append(observation)
+
+        return AddObservationResult(
+            observation=observation,
+            duplicate_ids=duplicate_ids,
+        )
 
     def search(self, query: str) -> list[Observation]:
         self.queries.append(query)
@@ -176,6 +195,43 @@ def test_search_handles_no_matching_observations(monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 0
     assert service.queries == ["missing"]
     assert "No matching observations found." in result.output
+
+
+def test_observe_stores_observation_without_duplicate_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeObservationService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(observation_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["observe", "New content", "--tags", "new"])
+
+    assert result.exit_code == 0
+    assert service.add_calls == [("New content", ["new"])]
+    assert len(service.observations) == 1
+    assert "Observation stored." in result.output
+    assert "Warning: exact duplicate observations already exist:" not in result.output
+
+
+def test_observe_prints_duplicate_warning_and_existing_duplicate_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = Observation(content="Duplicate content")
+    second = Observation(content="Duplicate content")
+    service = FakeObservationService([first, second])
+    monkeypatch.setattr(cli, "container", FakeContainer(observation_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["observe", "Duplicate content"])
+
+    assert result.exit_code == 0
+    assert service.add_calls == [("Duplicate content", None)]
+    assert len(service.observations) == 3
+    assert "Observation stored." in result.output
+    assert "Warning: exact duplicate observations already exist:" in result.output
+    assert f"- {first.id}" in result.output
+    assert f"- {second.id}" in result.output
+    assert f"- {service.observations[-1].id}" not in result.output
 
 
 def test_list_displays_observation_fields(monkeypatch: pytest.MonkeyPatch) -> None:

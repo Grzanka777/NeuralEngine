@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from neural_engine.domain import Observation
 from neural_engine.ports.observation_repository import ObservationRepository
+
+
+@dataclass(frozen=True)
+class AddObservationResult:
+    """Result of adding an observation."""
+
+    observation: Observation
+    duplicate_ids: list[UUID]
 
 
 class ObservationService:
@@ -19,7 +28,14 @@ class ObservationService:
         self,
         content: str,
         tags: list[str] | None = None,
-    ) -> Observation:
+    ) -> AddObservationResult:
+        existing_observations = self._repository.load_all()
+        duplicate_ids = [
+            observation.id
+            for observation in existing_observations
+            if observation.content == content
+        ]
+
         observation = Observation(
             content=content,
             tags=tags or [],
@@ -27,7 +43,10 @@ class ObservationService:
 
         self._repository.save(observation)
 
-        return observation
+        return AddObservationResult(
+            observation=observation,
+            duplicate_ids=duplicate_ids,
+        )
 
     def list_observations(self) -> list[Observation]:
         return self._repository.load_all()

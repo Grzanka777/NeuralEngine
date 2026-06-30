@@ -94,9 +94,14 @@ def observe(
     """Store a new observation."""
 
     service = container.observation_service()
-    service.add(content, tags)
+    result = service.add(content, tags)
 
     console.print("[green]Observation stored.[/green]")
+
+    if result.duplicate_ids:
+        console.print("[yellow]Warning: exact duplicate observations already exist:[/yellow]")
+        for duplicate_id in result.duplicate_ids:
+            console.print(f"- {duplicate_id}")
 
 
 @app.command("list")

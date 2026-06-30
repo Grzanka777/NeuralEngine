@@ -18,7 +18,8 @@ Observations are stored as JSON files in the local Neural Engine brain
 observation directory. Observation list output includes IDs, and
 `neural show UUID` displays all fields for one observation.
 `neural observation experiences UUID` lists experiences linked to one existing
-observation.
+observation. `neural observe` warns when exact duplicate content already exists,
+but still stores the new observation.
 
 Neural Engine also has a minimal Experience vertical slice:
 
@@ -47,7 +48,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 48 tests.
+Pytest collected 54 tests.
 
 ## Notes for next work
 

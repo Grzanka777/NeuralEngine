@@ -36,7 +36,10 @@ CLI:
 `neural observe` calls the application container, receives an
 `ObservationService`, and asks it to add an observation. The service creates a
 domain `Observation` and persists it through the `ObservationRepository` port.
-The JSON repository is the current infrastructure implementation of that port.
+Before saving, the service loads existing observations through the same port and
+returns any exact content duplicate IDs for the CLI to display as a warning.
+Duplicate detection does not block persistence. The JSON repository is the
+current infrastructure implementation of that port.
 
 `neural list` retrieves all observations through the same service and
 repository stack and displays the observation ID, timestamp, content, and tags.

@@ -17,6 +17,9 @@ neural observation experiences 11111111-1111-1111-1111-111111111111
 neural search pytest
 ```
 
+`neural observe` always stores the new observation. If exact duplicate content
+already exists, it prints a warning with the existing observation IDs.
+
 Experience capture is exposed through a nested CLI group:
 
 ```bash
