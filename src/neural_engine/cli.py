@@ -18,7 +18,11 @@ app = typer.Typer(
 experience_app = typer.Typer(
     help="Manage experiences.",
 )
+observation_app = typer.Typer(
+    help="Inspect observations.",
+)
 app.add_typer(experience_app, name="experience")
+app.add_typer(observation_app, name="observation")
 
 console = Console()
 container = Container()
@@ -216,10 +220,26 @@ def list_experiences() -> None:
         return
 
     for experience in experiences:
-        console.print(f"[cyan]{experience.id}[/cyan]")
-        console.print(f"Timestamp: {experience.timestamp}")
-        console.print(f"Title: {experience.title}")
-        console.print(f"Result: {experience.result.value}")
+        _print_experience_summary(experience)
+        console.print()
+
+
+@observation_app.command("experiences")
+def list_observation_experiences(observation_id: UUID) -> None:
+    """List experiences linked to one observation."""
+
+    service = container.experience_service()
+    try:
+        experiences = service.list_for_observation(observation_id)
+    except ObservationNotFoundError as error:
+        _exit_observation_not_found(error)
+
+    if not experiences:
+        console.print(f"[yellow]No experiences linked to observation: {observation_id}[/yellow]")
+        return
+
+    for experience in experiences:
+        _print_experience_summary(experience)
         console.print()
 
 
@@ -254,6 +274,13 @@ def _print_experience(experience: Experience) -> None:
         )
     )
     console.print(f"Tags: {', '.join(experience.tags) if experience.tags else '-'}")
+
+
+def _print_experience_summary(experience: Experience) -> None:
+    console.print(f"ID: {experience.id}")
+    console.print(f"Timestamp: {experience.timestamp}")
+    console.print(f"Title: {experience.title}")
+    console.print(f"Result: {experience.result.value}")
 
 
 def _print_observation_summary(observation: Observation) -> None:

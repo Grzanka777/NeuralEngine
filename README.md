@@ -13,6 +13,7 @@ The first implemented slice is Observation capture:
 neural observe "Pytest is useful" --tags python --tags testing
 neural list
 neural show 11111111-1111-1111-1111-111111111111
+neural observation experiences 11111111-1111-1111-1111-111111111111
 neural search pytest
 ```
 

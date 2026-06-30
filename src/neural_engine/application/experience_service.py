@@ -84,6 +84,16 @@ class ExperienceService:
     def list_experiences(self) -> list[Experience]:
         return self._experience_repository.load_all()
 
+    def list_for_observation(self, observation_id: UUID) -> list[Experience]:
+        if self._observation_repository.get_by_id(observation_id) is None:
+            raise ObservationNotFoundError(observation_id)
+
+        experiences = self._experience_repository.load_all()
+
+        return [
+            experience for experience in experiences if observation_id in experience.observation_ids
+        ]
+
     def get_by_id(self, experience_id: UUID) -> Experience | None:
         return self._experience_repository.get_by_id(experience_id)
 

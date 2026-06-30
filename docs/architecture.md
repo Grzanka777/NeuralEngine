@@ -44,6 +44,12 @@ repository stack and displays the observation ID, timestamp, content, and tags.
 `neural show UUID` retrieves a single observation through
 `ObservationService.get_by_id()` and displays all observation fields.
 
+`neural observation experiences UUID` delegates to
+`ExperienceService.list_for_observation()`. The service verifies the
+observation exists through the `ObservationRepository` port, loads experiences
+through the `ExperienceRepository` port, and returns only experiences linked to
+that observation ID.
+
 `neural search QUERY` reuses `ObservationService.search()` to find observations
 whose content matches the given query (case-insensitive substring match).
 

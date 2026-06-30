@@ -46,6 +46,7 @@ class FakeExperienceService:
             tuple[UUID, str, str, str, ExperienceResult, list[str] | None]
         ] = []
         self.requested_ids: list[UUID] = []
+        self.list_for_observation_calls: list[UUID] = []
 
     def add(
         self,
@@ -106,6 +107,18 @@ class FakeExperienceService:
 
     def list_experiences(self) -> list[Experience]:
         return self.experiences
+
+    def list_for_observation(self, observation_id: UUID) -> list[Experience]:
+        self.list_for_observation_calls.append(observation_id)
+
+        if self.missing_observation_id is not None:
+            raise ObservationNotFoundError(self.missing_observation_id)
+
+        return [
+            experience
+            for experience in self.experiences
+            if observation_id in experience.observation_ids
+        ]
 
     def get_by_id(self, experience_id: UUID) -> Experience | None:
         self.requested_ids.append(experience_id)
@@ -440,6 +453,62 @@ def test_experience_list_handles_empty_repository(monkeypatch: pytest.MonkeyPatc
 
     assert result.exit_code == 0
     assert "No experiences found." in result.output
+
+
+def test_observation_experiences_delegates_and_displays_linked_experiences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observation_id = UUID("88888888-8888-8888-8888-888888888888")
+    experience = Experience(
+        title="Linked experience",
+        context="CLI relation",
+        action="List linked experiences",
+        outcome="Experience is displayed",
+        result=ExperienceResult.SUCCESS,
+        observation_ids=[observation_id],
+    )
+    service = FakeExperienceService([experience])
+    monkeypatch.setattr(cli, "container", FakeContainer(experience_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["observation", "experiences", str(observation_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_observation_calls == [observation_id]
+    assert f"ID: {experience.id}" in result.output
+    assert f"Timestamp: {experience.timestamp}" in result.output
+    assert "Title: Linked experience" in result.output
+    assert "Result: success" in result.output
+
+
+def test_observation_experiences_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observation_id = UUID("99999999-9999-9999-9999-999999999999")
+    service = FakeExperienceService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(experience_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["observation", "experiences", str(observation_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_observation_calls == [observation_id]
+    assert f"No experiences linked to observation: {observation_id}" in result.output
+
+
+def test_observation_experiences_missing_observation_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    service = FakeExperienceService([], missing_observation_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(experience_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["observation", "experiences", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_observation_calls == [missing_id]
+    assert f"Observation not found: {missing_id}" in result.output
 
 
 def test_experience_show_displays_existing_experience(monkeypatch: pytest.MonkeyPatch) -> None:

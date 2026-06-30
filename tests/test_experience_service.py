@@ -14,11 +14,13 @@ from neural_engine.ports.observation_repository import ObservationRepository
 class FakeExperienceRepository(ExperienceRepository):
     def __init__(self) -> None:
         self.saved: list[Experience] = []
+        self.load_all_calls = 0
 
     def save(self, experience: Experience) -> None:
         self.saved.append(experience)
 
     def load_all(self) -> list[Experience]:
+        self.load_all_calls += 1
         return self.saved
 
     def get_by_id(self, experience_id: UUID) -> Experience | None:
@@ -193,6 +195,110 @@ def test_list_experiences_returns_repository_items() -> None:
     )
 
     assert service.list_experiences() == [experience]
+
+
+def test_list_for_observation_returns_one_linked_experience() -> None:
+    observation = Observation(content="Linked observation")
+    linked = Experience(
+        title="Linked experience",
+        context="Context",
+        action="Action",
+        outcome="Outcome",
+        result=ExperienceResult.SUCCESS,
+        observation_ids=[observation.id],
+    )
+    experience_repo = FakeExperienceRepository()
+    experience_repo.saved.append(linked)
+    observation_repo = FakeObservationRepository([observation])
+    service = ExperienceService(experience_repo, observation_repo)
+
+    assert service.list_for_observation(observation.id) == [linked]
+    assert experience_repo.load_all_calls == 1
+
+
+def test_list_for_observation_returns_multiple_linked_experiences() -> None:
+    observation = Observation(content="Linked observation")
+    first = Experience(
+        title="First linked experience",
+        context="Context",
+        action="Action",
+        outcome="Outcome",
+        result=ExperienceResult.SUCCESS,
+        observation_ids=[observation.id],
+    )
+    second = Experience(
+        title="Second linked experience",
+        context="Context",
+        action="Action",
+        outcome="Outcome",
+        result=ExperienceResult.MIXED,
+        observation_ids=[observation.id],
+    )
+    experience_repo = FakeExperienceRepository()
+    experience_repo.saved.extend([first, second])
+    observation_repo = FakeObservationRepository([observation])
+    service = ExperienceService(experience_repo, observation_repo)
+
+    assert service.list_for_observation(observation.id) == [first, second]
+
+
+def test_list_for_observation_excludes_unrelated_experiences() -> None:
+    observation = Observation(content="Linked observation")
+    other_observation = Observation(content="Other observation")
+    linked = Experience(
+        title="Linked experience",
+        context="Context",
+        action="Action",
+        outcome="Outcome",
+        result=ExperienceResult.SUCCESS,
+        observation_ids=[observation.id],
+    )
+    unrelated = Experience(
+        title="Unrelated experience",
+        context="Context",
+        action="Action",
+        outcome="Outcome",
+        result=ExperienceResult.FAILURE,
+        observation_ids=[other_observation.id],
+    )
+    experience_repo = FakeExperienceRepository()
+    experience_repo.saved.extend([linked, unrelated])
+    observation_repo = FakeObservationRepository([observation, other_observation])
+    service = ExperienceService(experience_repo, observation_repo)
+
+    assert service.list_for_observation(observation.id) == [linked]
+
+
+def test_list_for_observation_returns_empty_list_when_no_experiences_are_linked() -> None:
+    observation = Observation(content="Unlinked observation")
+    unrelated = Experience(
+        title="Unrelated experience",
+        context="Context",
+        action="Action",
+        outcome="Outcome",
+        result=ExperienceResult.FAILURE,
+    )
+    experience_repo = FakeExperienceRepository()
+    experience_repo.saved.append(unrelated)
+    observation_repo = FakeObservationRepository([observation])
+    service = ExperienceService(experience_repo, observation_repo)
+
+    assert service.list_for_observation(observation.id) == []
+
+
+def test_list_for_observation_raises_when_observation_is_missing_without_loading_experiences() -> (
+    None
+):
+    missing_id = UUID("44444444-4444-4444-4444-444444444444")
+    experience_repo = FakeExperienceRepository()
+    observation_repo = FakeObservationRepository()
+    service = ExperienceService(experience_repo, observation_repo)
+
+    with pytest.raises(ObservationNotFoundError) as error:
+        service.list_for_observation(missing_id)
+
+    assert error.value.observation_id == missing_id
+    assert experience_repo.load_all_calls == 0
 
 
 def test_get_by_id_returns_matching_experience() -> None:
