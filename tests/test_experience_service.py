@@ -32,6 +32,7 @@ class FakeExperienceRepository(ExperienceRepository):
 class FakeObservationRepository(ObservationRepository):
     def __init__(self, observations: list[Observation] | None = None) -> None:
         self.saved: list[Observation] = observations or []
+        self.requested_ids: list[UUID] = []
 
     def save(self, observation: Observation) -> None:
         self.saved.append(observation)
@@ -40,6 +41,8 @@ class FakeObservationRepository(ObservationRepository):
         return self.saved
 
     def get_by_id(self, observation_id: UUID) -> Observation | None:
+        self.requested_ids.append(observation_id)
+
         for observation in self.saved:
             if observation.id == observation_id:
                 return observation
@@ -129,6 +132,52 @@ def test_add_experience_stops_validation_without_saving_when_any_observation_id_
 
     assert error.value.observation_id == missing_id
     assert experience_repo.saved == []
+
+
+def test_add_from_observation_creates_experience_from_existing_observation() -> None:
+    observation = Observation(content="Exact observation content")
+    experience_repo = FakeExperienceRepository()
+    observation_repo = FakeObservationRepository([observation])
+    service = ExperienceService(experience_repo, observation_repo)
+
+    experience = service.add_from_observation(
+        observation_id=observation.id,
+        title="Derived experience",
+        action="Used observation",
+        outcome="Experience created",
+        result=ExperienceResult.SUCCESS,
+        tags=["derived", "manual"],
+    )
+
+    assert experience_repo.saved == [experience]
+    assert experience.title == "Derived experience"
+    assert experience.context == "Exact observation content"
+    assert experience.action == "Used observation"
+    assert experience.outcome == "Experience created"
+    assert experience.result == ExperienceResult.SUCCESS
+    assert experience.observation_ids == [observation.id]
+    assert experience.tags == ["derived", "manual"]
+    assert observation_repo.requested_ids == [observation.id]
+
+
+def test_add_from_observation_raises_when_observation_is_missing_without_saving() -> None:
+    missing_id = UUID("33333333-3333-3333-3333-333333333333")
+    experience_repo = FakeExperienceRepository()
+    observation_repo = FakeObservationRepository()
+    service = ExperienceService(experience_repo, observation_repo)
+
+    with pytest.raises(ObservationNotFoundError) as error:
+        service.add_from_observation(
+            observation_id=missing_id,
+            title="Missing source",
+            action="Use observation",
+            outcome="Experience rejected",
+            result=ExperienceResult.FAILURE,
+        )
+
+    assert error.value.observation_id == missing_id
+    assert experience_repo.saved == []
+    assert observation_repo.requested_ids == [missing_id]
 
 
 def test_list_experiences_returns_repository_items() -> None:

@@ -31,6 +31,17 @@ neural experience list
 neural experience show 11111111-1111-1111-1111-111111111111
 ```
 
+Create an experience directly from one existing observation:
+
+```bash
+neural experience from-observation 11111111-1111-1111-1111-111111111111 \
+  --title "Fixed flaky test" \
+  --action "Replaced sleep with explicit condition" \
+  --outcome "Test is deterministic" \
+  --result success \
+  --tag testing
+```
+
 When `--observation-id` is supplied, every referenced observation must already
 exist.
 

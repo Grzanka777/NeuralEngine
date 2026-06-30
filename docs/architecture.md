@@ -58,3 +58,9 @@ repository stack.
 
 `neural experience show UUID` retrieves a single experience through
 `ExperienceService.get_by_id()`.
+
+`neural experience from-observation OBSERVATION_UUID` delegates to
+`ExperienceService.add_from_observation()`. The service loads the observation
+through the `ObservationRepository` port, copies `Observation.content` exactly
+into the experience context, links the new experience to that observation ID,
+and persists it through the `ExperienceRepository` port.

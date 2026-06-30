@@ -161,10 +161,38 @@ def add_experience(
             tags=tags,
         )
     except ObservationNotFoundError as error:
-        console.print(f"[red]Observation not found: {error.observation_id}[/red]")
-        raise typer.Exit(code=1) from error
+        _exit_observation_not_found(error)
 
     console.print(f"[green]Experience stored.[/green] ID: [cyan]{experience.id}[/cyan]")
+
+
+@experience_app.command("from-observation")
+def add_experience_from_observation(
+    observation_id: UUID,
+    title: Annotated[str, typer.Option("--title")],
+    action: Annotated[str, typer.Option("--action")],
+    outcome: Annotated[str, typer.Option("--outcome")],
+    result: Annotated[ExperienceResult, typer.Option("--result")],
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Store a new experience from an existing observation."""
+
+    service = container.experience_service()
+    try:
+        experience = service.add_from_observation(
+            observation_id=observation_id,
+            title=title,
+            action=action,
+            outcome=outcome,
+            result=result,
+            tags=tags,
+        )
+    except ObservationNotFoundError as error:
+        _exit_observation_not_found(error)
+
+    console.print(
+        f"[green]Experience stored from observation.[/green] ID: [cyan]{experience.id}[/cyan]"
+    )
 
 
 @experience_app.command("list")
@@ -217,3 +245,8 @@ def _print_experience(experience: Experience) -> None:
         )
     )
     console.print(f"Tags: {', '.join(experience.tags) if experience.tags else '-'}")
+
+
+def _exit_observation_not_found(error: ObservationNotFoundError) -> None:
+    console.print(f"[red]Observation not found: {error.observation_id}[/red]")
+    raise typer.Exit(code=1) from error

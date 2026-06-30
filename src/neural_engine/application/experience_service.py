@@ -53,6 +53,34 @@ class ExperienceService:
 
         return experience
 
+    def add_from_observation(
+        self,
+        observation_id: UUID,
+        title: str,
+        action: str,
+        outcome: str,
+        result: ExperienceResult,
+        tags: list[str] | None = None,
+    ) -> Experience:
+        observation = self._observation_repository.get_by_id(observation_id)
+
+        if observation is None:
+            raise ObservationNotFoundError(observation_id)
+
+        experience = Experience(
+            title=title,
+            context=observation.content,
+            action=action,
+            outcome=outcome,
+            result=result,
+            observation_ids=[observation.id],
+            tags=tags or [],
+        )
+
+        self._experience_repository.save(experience)
+
+        return experience
+
     def list_experiences(self) -> list[Experience]:
         return self._experience_repository.load_all()
 
