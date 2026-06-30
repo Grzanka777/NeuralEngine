@@ -16,6 +16,18 @@ Neural Engine has a first Observation vertical slice:
 Observations are stored as JSON files in the local Neural Engine brain
 observation directory.
 
+Neural Engine also has a minimal Experience vertical slice without CLI commands:
+
+* Domain model: `neural_engine.domain.Experience`
+* Result enum: `neural_engine.domain.ExperienceResult`
+* Application service: `ExperienceService`
+* Port: `ExperienceRepository`
+* Infrastructure implementation: `JsonExperienceRepository`
+* Dependency wiring: `application/container.py`
+
+Experiences are stored as one JSON file per experience under
+`NeuralPaths.EXPERIENCES`.
+
 ## Validation
 
 Latest validation passed:
@@ -25,9 +37,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 7 tests.
+Pytest collected 18 tests.
 
 ## Notes for next work
 
-The next logical step is to define the Experience layer and the rule for turning
-observations into experiences without coupling domain logic to storage.
+The next logical step is to decide how experiences should be surfaced through
+interfaces before adding CLI commands or any automatic Observation-to-Experience
+conversion.

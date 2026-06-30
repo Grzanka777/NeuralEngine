@@ -6,12 +6,13 @@ Neural Engine follows Clean Architecture.
 
 Domain:
 
-* Owns core concepts such as `Observation`.
+* Owns core concepts such as `Observation` and `Experience`.
 * Has no dependency on infrastructure.
 
 Application:
 
-* Coordinates use cases such as adding, listing, and searching observations.
+* Coordinates use cases such as adding, listing, and searching observations,
+  and adding, listing, and retrieving experiences.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -22,6 +23,7 @@ Infrastructure:
 
 * Implements ports using concrete storage mechanisms.
 * The current observation repository stores one JSON file per observation.
+* The current experience repository stores one JSON file per experience.
 
 CLI:
 
@@ -41,3 +43,11 @@ repository stack.
 
 `neural search QUERY` reuses `ObservationService.search()` to find observations
 whose content matches the given query (case-insensitive substring match).
+
+## Experience Flow
+
+Experience has no CLI commands yet. Callers resolve `ExperienceService` through
+`application/container.py`. The service creates a domain `Experience` and
+persists it through the `ExperienceRepository` port. The JSON repository is the
+current infrastructure implementation and stores one file per experience under
+`NeuralPaths.EXPERIENCES`.
