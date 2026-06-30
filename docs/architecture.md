@@ -39,7 +39,10 @@ domain `Observation` and persists it through the `ObservationRepository` port.
 The JSON repository is the current infrastructure implementation of that port.
 
 `neural list` retrieves all observations through the same service and
-repository stack.
+repository stack and displays the observation ID, timestamp, content, and tags.
+
+`neural show UUID` retrieves a single observation through
+`ObservationService.get_by_id()` and displays all observation fields.
 
 `neural search QUERY` reuses `ObservationService.search()` to find observations
 whose content matches the given query (case-insensitive substring match).

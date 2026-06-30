@@ -11,10 +11,12 @@ Neural Engine has a first Observation vertical slice:
 * Port: `ObservationRepository`
 * Infrastructure implementation: `JsonObservationRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: `neural observe`, `neural list`, and `neural search`
+* CLI commands: `neural observe`, `neural list`, `neural show UUID`, and
+  `neural search`
 
 Observations are stored as JSON files in the local Neural Engine brain
-observation directory.
+observation directory. Observation list output includes IDs, and
+`neural show UUID` displays all fields for one observation.
 
 Neural Engine also has a minimal Experience vertical slice:
 
@@ -43,10 +45,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 34 tests.
+Pytest collected 40 tests.
 
 ## Notes for next work
 
 The next logical step is to decide how linked observations should be displayed
-or summarized in experience workflows before adding automatic
-Observation-to-Experience conversion.
+inside experience detail views before adding automatic Observation-to-Experience
+conversion.

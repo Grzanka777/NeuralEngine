@@ -53,3 +53,18 @@ def test_search_observations_matches_content_case_insensitively() -> None:
     service.add("Architecture decision")
 
     assert service.search("PYTHON") == [expected]
+
+
+def test_get_by_id_returns_matching_observation() -> None:
+    repo = FakeObservationRepository()
+    service = ObservationService(repo)
+    expected = service.add("Find this", tags=["lookup"])
+
+    assert service.get_by_id(expected.id) == expected
+
+
+def test_get_by_id_returns_none_when_missing() -> None:
+    repo = FakeObservationRepository()
+    service = ObservationService(repo)
+
+    assert service.get_by_id(UUID("00000000-0000-0000-0000-000000000000")) is None

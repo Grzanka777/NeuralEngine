@@ -9,7 +9,7 @@ from neural_engine import APP_NAME, MISSION, __version__
 from neural_engine.application.container import Container
 from neural_engine.application.experience_service import ObservationNotFoundError
 from neural_engine.core.brain import Brain
-from neural_engine.domain import Experience, ExperienceResult
+from neural_engine.domain import Experience, ExperienceResult, Observation
 
 app = typer.Typer(
     add_completion=False,
@@ -107,13 +107,22 @@ def observations() -> None:
         return
 
     for observation in observations:
-        console.print(f"[cyan]{observation.timestamp}[/cyan]")
-        console.print(observation.content)
-
-        if observation.tags:
-            console.print(f"[dim]Tags: {', '.join(observation.tags)}[/dim]")
-
+        _print_observation_summary(observation)
         console.print()
+
+
+@app.command()
+def show(observation_id: UUID) -> None:
+    """Show one observation."""
+
+    service = container.observation_service()
+    observation = service.get_by_id(observation_id)
+
+    if observation is None:
+        console.print(f"[red]Observation not found: {observation_id}[/red]")
+        raise typer.Exit(code=1)
+
+    _print_observation(observation)
 
 
 @app.command()
@@ -245,6 +254,21 @@ def _print_experience(experience: Experience) -> None:
         )
     )
     console.print(f"Tags: {', '.join(experience.tags) if experience.tags else '-'}")
+
+
+def _print_observation_summary(observation: Observation) -> None:
+    console.print(f"ID: {observation.id}")
+    console.print(f"Timestamp: {observation.timestamp}")
+    console.print(f"Content: {observation.content}")
+    console.print(f"Tags: {', '.join(observation.tags) if observation.tags else '-'}")
+
+
+def _print_observation(observation: Observation) -> None:
+    console.print(f"ID: {observation.id}")
+    console.print(f"Timestamp: {observation.timestamp}")
+    console.print(f"Source: {observation.source}")
+    console.print(f"Content: {observation.content}")
+    console.print(f"Tags: {', '.join(observation.tags) if observation.tags else '-'}")
 
 
 def _exit_observation_not_found(error: ObservationNotFoundError) -> None:

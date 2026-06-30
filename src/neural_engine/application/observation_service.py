@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from neural_engine.domain import Observation
 from neural_engine.ports.observation_repository import ObservationRepository
 
@@ -29,6 +31,9 @@ class ObservationService:
 
     def list_observations(self) -> list[Observation]:
         return self._repository.load_all()
+
+    def get_by_id(self, observation_id: UUID) -> Observation | None:
+        return self._repository.get_by_id(observation_id)
 
     def search(self, query: str) -> list[Observation]:
         results = []

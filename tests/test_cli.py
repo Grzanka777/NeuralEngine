@@ -12,10 +12,23 @@ class FakeObservationService:
     def __init__(self, observations: list[Observation]) -> None:
         self.observations = observations
         self.queries: list[str] = []
+        self.requested_ids: list[UUID] = []
+
+    def list_observations(self) -> list[Observation]:
+        return self.observations
 
     def search(self, query: str) -> list[Observation]:
         self.queries.append(query)
         return self.observations
+
+    def get_by_id(self, observation_id: UUID) -> Observation | None:
+        self.requested_ids.append(observation_id)
+
+        for observation in self.observations:
+            if observation.id == observation_id:
+                return observation
+
+        return None
 
 
 class FakeExperienceService:
@@ -150,6 +163,68 @@ def test_search_handles_no_matching_observations(monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 0
     assert service.queries == ["missing"]
     assert "No matching observations found." in result.output
+
+
+def test_list_displays_observation_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    observation = Observation(content="Observation content", tags=["one", "two"])
+    service = FakeObservationService([observation])
+    monkeypatch.setattr(cli, "container", FakeContainer(observation_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["list"])
+
+    assert result.exit_code == 0
+    assert f"ID: {observation.id}" in result.output
+    assert f"Timestamp: {observation.timestamp}" in result.output
+    assert "Content: Observation content" in result.output
+    assert "Tags: one, two" in result.output
+
+
+def test_list_handles_empty_observation_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = FakeObservationService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(observation_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["list"])
+
+    assert result.exit_code == 0
+    assert "No observations found." in result.output
+
+
+def test_show_observation_delegates_and_displays_all_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observation = Observation(
+        source="test",
+        content="Detailed observation",
+        tags=["detail"],
+    )
+    service = FakeObservationService([observation])
+    monkeypatch.setattr(cli, "container", FakeContainer(observation_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["show", str(observation.id)])
+
+    assert result.exit_code == 0
+    assert service.requested_ids == [observation.id]
+    assert f"ID: {observation.id}" in result.output
+    assert f"Timestamp: {observation.timestamp}" in result.output
+    assert "Source: test" in result.output
+    assert "Content: Detailed observation" in result.output
+    assert "Tags: detail" in result.output
+
+
+def test_show_observation_handles_missing_observation(monkeypatch: pytest.MonkeyPatch) -> None:
+    missing_id = UUID("77777777-7777-7777-7777-777777777777")
+    service = FakeObservationService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(observation_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["show", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.requested_ids == [missing_id]
+    assert f"Observation not found: {missing_id}" in result.output
 
 
 def test_experience_add_delegates_to_service_with_parsed_result(
