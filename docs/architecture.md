@@ -6,14 +6,15 @@ Neural Engine follows Clean Architecture.
 
 Domain:
 
-* Owns core concepts such as `Observation`, `Experience`, and `Knowledge`.
+* Owns core concepts such as `Observation`, `Experience`, `Knowledge`, and
+  `Playbook`.
 * Has no dependency on infrastructure.
 
 Application:
 
 * Coordinates use cases such as adding, listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
-  retrieving knowledge.
+  retrieving knowledge and playbooks.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -26,6 +27,7 @@ Infrastructure:
 * The current observation repository stores one JSON file per observation.
 * The current experience repository stores one JSON file per experience.
 * The current knowledge repository stores one JSON file per knowledge item.
+* The current playbook repository stores one JSON file per playbook.
 
 CLI:
 
@@ -110,3 +112,18 @@ the statement, rationale, confidence, and tags supplied by the caller.
 
 The JSON repository is the current infrastructure implementation and stores one
 file per knowledge item under `NeuralPaths.KNOWLEDGE`.
+
+## Playbook Flow
+
+Playbook is currently application-only and has no CLI commands.
+`PlaybookService.add()` receives an explicit title, situation, objective, steps,
+success criteria, knowledge IDs, optional constraints, and optional tags. The
+service rejects an empty knowledge list, rejects an empty step list, then
+verifies each referenced knowledge item through the `KnowledgeRepository` port
+before it creates or saves a domain `Playbook`. Validation stops on the first
+missing knowledge item and does not persist a playbook when validation fails.
+The JSON repository is the current infrastructure implementation and stores one
+file per playbook under `NeuralPaths.PLAYBOOKS`.
+
+Playbooks are stored procedures only. Neural Engine does not execute playbook
+steps, orchestrate workflows, or generate playbooks automatically.
