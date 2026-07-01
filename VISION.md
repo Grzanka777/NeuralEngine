@@ -1,6 +1,30 @@
-Neural Engine to modelowo niezależny silnik ewolucji jakości, który uczy się z doświadczeń, buduje wiedzę i z czasem podejmuje coraz lepsze decyzje — niezależnie od tego, czy korzysta z OpenCode, Claude Code, ChatGPT, Gemini, lokalnego modelu czy narzędzia, które powstanie za pięć lat.
+# Neural Engine Vision
 
-Filozofia projektu
+## Czym jest Neural Engine
+
+Neural Engine to modelowo niezależny silnik ewolucji jakości, który uczy się z doświadczeń, buduje wiedzę i z czasem podejmuje coraz lepsze decyzje.
+
+Nie jest związany z jednym modelem, dostawcą ani interfejsem.
+
+Może współpracować z:
+
+- OpenCode,
+- Claude Code,
+- ChatGPT,
+- Gemini,
+- GitHub Copilot,
+- lokalnymi modelami,
+- narzędziami terminalowymi,
+- aplikacjami desktopowymi,
+- rozwiązaniami, które powstaną dopiero w przyszłości.
+
+Interfejsy i modele będą się zmieniać.
+
+Silnik pozostanie ten sam.
+
+---
+
+## Filozofia projektu
 
 LLM są inteligencją chwilową.
 
@@ -10,106 +34,122 @@ Model odpowiada na pytanie.
 
 Neural Engine pamięta:
 
-co było pytaniem,
-dlaczego odpowiedź była dobra lub zła,
-jaki był efekt,
-czego się z tego nauczył,
-jak wykorzystać tę wiedzę następnym razem.
+- co było pytaniem,
+- jaki był kontekst,
+- jakie działanie podjęto,
+- dlaczego odpowiedź lub decyzja była dobra albo zła,
+- jaki był rzeczywisty rezultat,
+- czego można się z tego nauczyć,
+- jak wykorzystać tę wiedzę następnym razem,
+- czy kolejne zastosowanie przyniosło lepszy wynik.
 
 To jest zasadnicza różnica.
 
-Czym NIE jest
+Neural Engine nie ma jedynie przechowywać informacji.
+
+Ma przekształcać doświadczenia w coraz lepsze decyzje.
+
+---
+
+## Problem, który rozwiązuje
+
+Modele AI potrafią generować dobre odpowiedzi, ale zwykle nie rozwijają trwałej, przenośnej wiedzy o użytkowniku, projekcie ani skuteczności wcześniejszych decyzji.
+
+Każda nowa sesja może zaczynać się niemal od początku.
+
+Zmiana modelu, interfejsu lub dostawcy może oznaczać utratę:
+
+- kontekstu,
+- wcześniejszych wniosków,
+- historii decyzji,
+- wiedzy o tym, co działało,
+- wiedzy o tym, co zawiodło,
+- sposobu oceny jakości.
+
+Neural Engine ma oddzielić trwałą inteligencję od chwilowego modelu.
+
+Model może się zmienić.
+
+Wiedza, doświadczenia i historia jakości pozostają.
+
+---
+
+## Czym Neural Engine nie jest
 
 Neural Engine nie jest:
 
-bazą promptów,
-RAG-em,
-wektorową bazą danych,
-wrapperem OpenAI,
-agentem AI,
-frameworkiem workflow,
-pamięcią rozmów.
+- bazą promptów,
+- RAG-em,
+- wektorową bazą danych,
+- wrapperem OpenAI,
+- agentem AI,
+- frameworkiem workflow,
+- pamięcią rozmów,
+- magazynem notatek,
+- systemem CRUD do przechowywania rekordów,
+- interfejsem do jednego modelu.
 
 Może wykorzystywać te technologie, ale żadna z nich go nie definiuje.
 
-Czym jest
+RAG może pomóc odnaleźć informacje.
+
+Baza wektorowa może pomóc znaleźć podobieństwa.
+
+Agent może wykonać zadanie.
+
+Model może zaproponować rozwiązanie.
+
+Neural Engine ma natomiast zachowywać wiedzę o tym:
+
+- dlaczego wybrano dane rozwiązanie,
+- jaki był jego wynik,
+- jaka reguła z niego wynika,
+- kiedy warto zastosować ją ponownie,
+- czy jej użycie faktycznie poprawia jakość kolejnych decyzji.
+
+---
+
+## Czym Neural Engine jest
 
 Wyobraź sobie doświadczonego specjalistę.
 
 Po tysiącach projektów nie pamięta każdego szczegółu, ale:
 
-rozpoznaje wzorce,
-wie, co zwykle działa,
-unika wcześniejszych błędów,
-proponuje lepsze rozwiązania.
+- rozpoznaje wzorce,
+- wie, co zwykle działa,
+- unika wcześniejszych błędów,
+- rozumie ograniczenia wcześniejszych rozwiązań,
+- potrafi uzasadnić swoje rekomendacje,
+- dobiera właściwe narzędzia do sytuacji,
+- z czasem proponuje coraz lepsze rozwiązania.
 
 Neural Engine ma robić dokładnie to samo.
 
-Nie przechowywać informacje.
+Nie tylko przechowywać informacje.
 
 Ewoluować jakość decyzji.
 
-Fundamenty
+---
 
-Projekt będzie oparty na pięciu filarach:
+## Model ewolucji jakości
 
-Observation – co się wydarzyło.
-Experience – jaki był wynik.
-Knowledge – jaka reguła z tego wynika.
-Playbook – jak zastosować tę wiedzę.
-Evolution – czy dzięki temu kolejne decyzje są lepsze.
-Dlaczego "Quality Evolution"
+Neural Engine rozwija trwałą inteligencję poprzez pięć kolejnych warstw:
 
-Większość narzędzi AI optymalizuje:
+1. **Observation** — co się wydarzyło.
+2. **Experience** — jakie działanie podjęto i jaki był jego wynik.
+3. **Knowledge** — jaka reguła lub lekcja wynika z doświadczeń.
+4. **Playbook** — jak zastosować tę wiedzę w podobnej sytuacji.
+5. **Evolution** — czy zastosowanie wiedzy poprawiło kolejną decyzję.
 
-szybkość,
-koszt,
-liczbę tokenów.
+Przepływ:
 
-Neural Engine ma optymalizować jedno:
-
-Czy kolejna decyzja jest lepsza od poprzedniej?
-
-To jest jego główna metryka.
-
-Integracje
-
-Neural Engine ma być całkowicie niezależny od interfejsu.
-
-Jeden silnik będzie mógł współpracować z:
-
-OpenCode,
-Claude Code,
-ChatGPT,
-GitHub Copilot,
-Aider,
-VS Code,
-terminalem,
-aplikacjami desktopowymi,
-przyszłymi modelami AI.
-
-Interfejsy będą się zmieniać. Silnik pozostanie ten sam.
-
-Wizja długoterminowa
-
-Za kilka lat chciałbym, żeby użytkownik nie mówił:
-
-"Uruchom ChatGPT."
-
-Tylko:
-
-"Zapytaj mój Neural Engine."
-
-Silnik sam zdecyduje:
-
-którego modelu użyć,
-jakiego kontekstu potrzebuje,
-z jakiej wiedzy skorzystać,
-które wcześniejsze doświadczenia są podobne,
-jak zweryfikować odpowiedź.
-
-Model stanie się tylko jednym z narzędzi.
-
-Motto projektu
-
-Neural Engine nie ma zastąpić modeli AI. Ma sprawić, że każdy model AI będzie z czasem działał mądrzej.
+```text
+Observation
+    ↓
+Experience
+    ↓
+Knowledge
+    ↓
+Playbook
+    ↓
+Evolution
