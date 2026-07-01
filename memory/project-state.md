@@ -87,20 +87,23 @@ Playbooks are not executed, inferred, or generated automatically.
 `PlaybookService.list_for_knowledge()` verifies one existing Knowledge item and
 returns Playbooks linked to it.
 
-Neural Engine now has a minimal PlaybookRun vertical slice without CLI commands:
+Neural Engine now has a minimal PlaybookRun vertical slice:
 
 * Domain model: `neural_engine.domain.PlaybookRun`
 * Application service: `PlaybookRunService`
 * Port: `PlaybookRunRepository`
 * Infrastructure implementation: `JsonPlaybookRunRepository`
 * Dependency wiring: `application/container.py`
+* CLI commands: `neural run add`, `neural run list`, and
+  `neural run show UUID`
 
 A PlaybookRun is an explicit record of manually or externally applying one
 existing Playbook to a concrete situation. `PlaybookRunService.add()` requires
 at least one action taken, validates the referenced Playbook through the
 `PlaybookRepository` port before saving, and stores runs as one JSON file per
 run under `NeuralPaths.PLAYBOOK_RUNS`. PlaybookRun records outcomes; Neural
-Engine does not execute Playbooks or evaluate runs automatically.
+Engine does not execute Playbooks or evaluate runs automatically. `neural run
+add` records an already performed manual or external application.
 
 ## Validation
 
@@ -111,9 +114,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 141 tests.
+Pytest collected 150 tests.
 
 ## Notes for next work
 
-The next logical step is to expose PlaybookRun through a thin CLI adapter
-without adding execution or automatic evaluation.
+The next logical step is to add read-only relation commands for PlaybookRun
+records without adding execution or automatic evaluation.

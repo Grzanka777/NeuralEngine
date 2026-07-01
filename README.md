@@ -101,6 +101,21 @@ Playbook runs record manual or external application of one existing Playbook to
 a concrete situation. They store the actions taken, outcome, success flag,
 evidence, notes, and tags; Neural Engine does not execute Playbooks.
 
+```bash
+neural run add \
+  --playbook-id 11111111-1111-1111-1111-111111111111 \
+  --situation "A test failed intermittently in CI" \
+  --action "Applied the flaky-test playbook manually" \
+  --outcome "The unstable dependency was isolated" \
+  --success true \
+  --evidence "CI log excerpt" \
+  --notes "Follow-up issue created" \
+  --tag testing
+
+neural run list
+neural run show 11111111-1111-1111-1111-111111111111
+```
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. Knowledge is stored locally as JSON files under the knowledge

@@ -145,13 +145,19 @@ steps, orchestrate workflows, or generate playbooks automatically.
 
 ## Playbook Run Flow
 
-PlaybookRun is currently application-only and has no CLI commands.
-`PlaybookRunService.add()` records explicit user-supplied or external-system
-data about applying one existing playbook to a concrete situation. The service
-rejects an empty action list, verifies the referenced playbook through the
-`PlaybookRepository` port, then creates and saves a domain `PlaybookRun`.
-Validation stops before construction or persistence when actions are missing or
-the playbook does not exist.
+`neural run add` calls the application container, receives a
+`PlaybookRunService`, and records explicit user-supplied or external-system data
+about an already performed application of one existing playbook to a concrete
+situation. The service rejects an empty action list, verifies the referenced
+playbook through the `PlaybookRepository` port, then creates and saves a domain
+`PlaybookRun`. Validation stops before construction or persistence when actions
+are missing or the playbook does not exist.
+
+`neural run list` retrieves all playbook runs through the same service and
+repository stack.
+
+`neural run show UUID` retrieves a single playbook run through
+`PlaybookRunService.get_by_id()` and displays all run fields.
 
 Playbook runs do not duplicate playbook data. They store the playbook ID,
 situation, actions taken, outcome, success flag, optional evidence, optional

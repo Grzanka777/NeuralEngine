@@ -10,6 +10,10 @@ from neural_engine.application.knowledge_service import (
     KnowledgeEvidenceRequiredError,
 )
 from neural_engine.application.observation_service import AddObservationResult
+from neural_engine.application.playbook_run_service import (
+    PlaybookNotFoundError,
+    PlaybookRunActionsRequiredError,
+)
 from neural_engine.application.playbook_service import (
     KnowledgeNotFoundError,
     PlaybookKnowledgeRequiredError,
@@ -22,6 +26,7 @@ from neural_engine.domain import (
     KnowledgeConfidence,
     Observation,
     Playbook,
+    PlaybookRun,
 )
 
 
@@ -351,6 +356,85 @@ class FakePlaybookService:
         return None
 
 
+class FakePlaybookRunService:
+    def __init__(
+        self,
+        runs: list[PlaybookRun],
+        missing_playbook_id: UUID | None = None,
+    ) -> None:
+        self.runs = runs
+        self.missing_playbook_id = missing_playbook_id
+        self.add_calls: list[
+            tuple[
+                UUID,
+                str,
+                list[str],
+                str,
+                bool,
+                list[str] | None,
+                str | None,
+                list[str] | None,
+            ]
+        ] = []
+        self.requested_ids: list[UUID] = []
+
+    def add(
+        self,
+        playbook_id: UUID,
+        situation: str,
+        actions_taken: list[str],
+        outcome: str,
+        success: bool,
+        evidence: list[str] | None = None,
+        notes: str | None = None,
+        tags: list[str] | None = None,
+    ) -> PlaybookRun:
+        self.add_calls.append(
+            (
+                playbook_id,
+                situation,
+                actions_taken,
+                outcome,
+                success,
+                evidence,
+                notes,
+                tags,
+            )
+        )
+
+        if not actions_taken:
+            raise PlaybookRunActionsRequiredError()
+
+        if self.missing_playbook_id is not None:
+            raise PlaybookNotFoundError(self.missing_playbook_id)
+
+        run = PlaybookRun(
+            playbook_id=playbook_id,
+            situation=situation,
+            actions_taken=actions_taken,
+            outcome=outcome,
+            success=success,
+            evidence=evidence or [],
+            notes=notes,
+            tags=tags or [],
+        )
+        self.runs.append(run)
+
+        return run
+
+    def list_runs(self) -> list[PlaybookRun]:
+        return self.runs
+
+    def get_by_id(self, run_id: UUID) -> PlaybookRun | None:
+        self.requested_ids.append(run_id)
+
+        for run in self.runs:
+            if run.id == run_id:
+                return run
+
+        return None
+
+
 class FakeContainer:
     def __init__(
         self,
@@ -358,11 +442,13 @@ class FakeContainer:
         experience_service: FakeExperienceService | None = None,
         knowledge_service: FakeKnowledgeService | None = None,
         playbook_service: FakePlaybookService | None = None,
+        playbook_run_service: FakePlaybookRunService | None = None,
     ) -> None:
         self._observation_service = observation_service
         self._experience_service = experience_service
         self._knowledge_service = knowledge_service
         self._playbook_service = playbook_service
+        self._playbook_run_service = playbook_run_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -387,6 +473,12 @@ class FakeContainer:
             raise AssertionError("Playbook service was not expected")
 
         return self._playbook_service
+
+    def playbook_run_service(self) -> FakePlaybookRunService:
+        if self._playbook_run_service is None:
+            raise AssertionError("Playbook run service was not expected")
+
+        return self._playbook_run_service
 
 
 def test_search_displays_matching_observations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1525,3 +1617,267 @@ def test_playbook_show_handles_missing_playbook(monkeypatch: pytest.MonkeyPatch)
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
     assert f"Playbook not found: {missing_id}" in result.output
+
+
+def test_run_add_delegates_with_parsed_values_and_prints_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("45454545-4545-4545-4545-454545454545")
+    service = FakePlaybookRunService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "run",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--situation",
+            "Production incident repeated",
+            "--action",
+            "Applied the playbook manually",
+            "--action",
+            "Collected follow-up evidence",
+            "--outcome",
+            "Service recovered",
+            "--success",
+            "true",
+            "--evidence",
+            "Incident log",
+            "--evidence",
+            "Recovery metric",
+            "--notes",
+            "Manual run recorded after incident",
+            "--tag",
+            "ops",
+            "--tag",
+            "manual",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls == [
+        (
+            playbook_id,
+            "Production incident repeated",
+            ["Applied the playbook manually", "Collected follow-up evidence"],
+            "Service recovered",
+            True,
+            ["Incident log", "Recovery metric"],
+            "Manual run recorded after incident",
+            ["ops", "manual"],
+        )
+    ]
+    assert "Playbook run stored." in result.output
+    assert str(service.runs[0].id) in result.output
+
+
+def test_run_add_parses_success_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    playbook_id = UUID("56565656-5656-5656-5656-565656565656")
+    service = FakePlaybookRunService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "run",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--situation",
+            "Manual application did not work",
+            "--action",
+            "Tried the documented procedure",
+            "--outcome",
+            "Issue remained unresolved",
+            "--success",
+            "false",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls[0][4] is False
+
+
+def test_run_add_handles_empty_actions_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("67676767-6767-6767-6767-676767676767")
+    service = FakePlaybookRunService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "run",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--situation",
+            "No action was supplied",
+            "--outcome",
+            "Run rejected",
+            "--success",
+            "false",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.add_calls == [
+        (
+            playbook_id,
+            "No action was supplied",
+            [],
+            "Run rejected",
+            False,
+            None,
+            None,
+            None,
+        )
+    ]
+    assert service.runs == []
+    assert "Playbook run requires at least one action taken." in result.output
+
+
+def test_run_add_handles_missing_playbook_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("78787878-7878-7878-7878-787878787878")
+    service = FakePlaybookRunService([], missing_playbook_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "run",
+            "add",
+            "--playbook-id",
+            str(missing_id),
+            "--situation",
+            "Missing playbook",
+            "--action",
+            "Tried to record the run",
+            "--outcome",
+            "Run rejected",
+            "--success",
+            "false",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert len(service.add_calls) == 1
+    assert service.runs == []
+    assert f"Playbook not found: {missing_id}" in result.output
+
+
+def test_run_list_displays_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    playbook_id = UUID("89898989-8989-8989-8989-898989898989")
+    run = PlaybookRun(
+        playbook_id=playbook_id,
+        situation="Listed run",
+        actions_taken=["Applied playbook"],
+        outcome="Outcome recorded",
+        success=True,
+    )
+    service = FakePlaybookRunService([run])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["run", "list"])
+
+    assert result.exit_code == 0
+    assert f"ID: {run.id}" in result.output
+    assert f"Timestamp: {run.timestamp}" in result.output
+    assert f"Playbook ID: {playbook_id}" in result.output
+    assert "Situation: Listed run" in result.output
+    assert "Success: true" in result.output
+
+
+def test_run_list_handles_empty_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = FakePlaybookRunService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["run", "list"])
+
+    assert result.exit_code == 0
+    assert "No playbook runs found." in result.output
+
+
+def test_run_show_delegates_and_displays_all_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("90909090-9090-9090-9090-909090909090")
+    run = PlaybookRun(
+        playbook_id=playbook_id,
+        situation="Shown run",
+        actions_taken=["Applied first step", "Recorded result"],
+        outcome="The procedure worked",
+        success=True,
+        evidence=["Log entry", "Metric improved"],
+        notes="No automation was involved",
+        tags=["manual", "ops"],
+    )
+    service = FakePlaybookRunService([run])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["run", "show", str(run.id)])
+
+    assert result.exit_code == 0
+    assert service.requested_ids == [run.id]
+    assert f"ID: {run.id}" in result.output
+    assert f"Timestamp: {run.timestamp}" in result.output
+    assert f"Playbook ID: {playbook_id}" in result.output
+    assert "Situation: Shown run" in result.output
+    assert "Actions taken:" in result.output
+    assert "- Applied first step" in result.output
+    assert "- Recorded result" in result.output
+    assert "Outcome: The procedure worked" in result.output
+    assert "Success: true" in result.output
+    assert "Evidence:" in result.output
+    assert "- Log entry" in result.output
+    assert "- Metric improved" in result.output
+    assert "Notes: No automation was involved" in result.output
+    assert "Tags: manual, ops" in result.output
+
+
+def test_run_show_displays_false_and_empty_optional_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = PlaybookRun(
+        playbook_id=UUID("abababab-abab-abab-abab-abababababab"),
+        situation="Unsuccessful run",
+        actions_taken=["Applied playbook manually"],
+        outcome="The problem remained",
+        success=False,
+    )
+    service = FakePlaybookRunService([run])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["run", "show", str(run.id)])
+
+    assert result.exit_code == 0
+    assert "Success: false" in result.output
+    assert "Evidence:\n-" in result.output
+    assert "Notes: -" in result.output
+    assert "Tags: -" in result.output
+
+
+def test_run_show_handles_missing_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    missing_id = UUID("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd")
+    service = FakePlaybookRunService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["run", "show", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.requested_ids == [missing_id]
+    assert f"Playbook run not found: {missing_id}" in result.output

@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
 import typer
@@ -11,6 +11,10 @@ from neural_engine.application.experience_service import ObservationNotFoundErro
 from neural_engine.application.knowledge_service import (
     ExperienceNotFoundError,
     KnowledgeEvidenceRequiredError,
+)
+from neural_engine.application.playbook_run_service import (
+    PlaybookNotFoundError,
+    PlaybookRunActionsRequiredError,
 )
 from neural_engine.application.playbook_service import (
     KnowledgeNotFoundError,
@@ -25,6 +29,7 @@ from neural_engine.domain import (
     KnowledgeConfidence,
     Observation,
     Playbook,
+    PlaybookRun,
 )
 
 app = typer.Typer(
@@ -43,10 +48,14 @@ observation_app = typer.Typer(
 playbook_app = typer.Typer(
     help="Manage playbooks.",
 )
+run_app = typer.Typer(
+    help="Record and inspect playbook runs.",
+)
 app.add_typer(experience_app, name="experience")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(observation_app, name="observation")
 app.add_typer(playbook_app, name="playbook")
+app.add_typer(run_app, name="run")
 
 console = Console()
 container = Container()
@@ -476,6 +485,82 @@ def show_playbook(playbook_id: UUID) -> None:
     _print_playbook(playbook)
 
 
+def _parse_bool_option(value: str) -> bool:
+    normalized = value.lower()
+
+    if normalized == "true":
+        return True
+
+    if normalized == "false":
+        return False
+
+    raise typer.BadParameter("Expected true or false.")
+
+
+@run_app.command("add")
+def add_run(
+    playbook_id: Annotated[UUID, typer.Option("--playbook-id")],
+    situation: Annotated[str, typer.Option("--situation")],
+    outcome: Annotated[str, typer.Option("--outcome")],
+    success: Annotated[object, typer.Option("--success", parser=_parse_bool_option)],
+    actions_taken: Annotated[list[str] | None, typer.Option("--action")] = None,
+    evidence: Annotated[list[str] | None, typer.Option("--evidence")] = None,
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record a manually or externally applied playbook run."""
+
+    service = container.playbook_run_service()
+    try:
+        run = service.add(
+            playbook_id=playbook_id,
+            situation=situation,
+            actions_taken=actions_taken or [],
+            outcome=outcome,
+            success=cast(bool, success),
+            evidence=evidence,
+            notes=notes,
+            tags=tags,
+        )
+    except PlaybookRunActionsRequiredError as error:
+        console.print("[red]Playbook run requires at least one action taken.[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookNotFoundError as error:
+        _exit_playbook_not_found(error)
+
+    console.print(f"[green]Playbook run stored.[/green] ID: [cyan]{run.id}[/cyan]")
+
+
+@run_app.command("list")
+def list_runs() -> None:
+    """List all playbook runs."""
+
+    service = container.playbook_run_service()
+    runs = service.list_runs()
+
+    if not runs:
+        console.print("[yellow]No playbook runs found.[/yellow]")
+        return
+
+    for run in runs:
+        _print_playbook_run_summary(run)
+        console.print()
+
+
+@run_app.command("show")
+def show_run(run_id: UUID) -> None:
+    """Show one playbook run."""
+
+    service = container.playbook_run_service()
+    run = service.get_by_id(run_id)
+
+    if run is None:
+        console.print(f"[red]Playbook run not found: {run_id}[/red]")
+        raise typer.Exit(code=1)
+
+    _print_playbook_run(run)
+
+
 def _print_experience(experience: Experience) -> None:
     console.print(f"ID: {experience.id}")
     console.print(f"Timestamp: {experience.timestamp}")
@@ -549,6 +634,27 @@ def _print_playbook_summary(playbook: Playbook) -> None:
     console.print(f"Objective: {playbook.objective}")
 
 
+def _print_playbook_run(run: PlaybookRun) -> None:
+    console.print(f"ID: {run.id}")
+    console.print(f"Timestamp: {run.timestamp}")
+    console.print(f"Playbook ID: {run.playbook_id}")
+    console.print(f"Situation: {run.situation}")
+    _print_repeated_field("Actions taken", run.actions_taken)
+    console.print(f"Outcome: {run.outcome}")
+    console.print(f"Success: {str(run.success).lower()}")
+    _print_repeated_field("Evidence", run.evidence)
+    console.print(f"Notes: {run.notes if run.notes is not None else '-'}")
+    console.print(f"Tags: {', '.join(run.tags) if run.tags else '-'}")
+
+
+def _print_playbook_run_summary(run: PlaybookRun) -> None:
+    console.print(f"ID: {run.id}")
+    console.print(f"Timestamp: {run.timestamp}")
+    console.print(f"Playbook ID: {run.playbook_id}")
+    console.print(f"Situation: {run.situation}")
+    console.print(f"Success: {str(run.success).lower()}")
+
+
 def _print_observation_summary(observation: Observation) -> None:
     console.print(f"ID: {observation.id}")
     console.print(f"Timestamp: {observation.timestamp}")
@@ -576,6 +682,11 @@ def _exit_experience_not_found(error: ExperienceNotFoundError) -> None:
 
 def _exit_knowledge_not_found(error: KnowledgeNotFoundError) -> None:
     console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _exit_playbook_not_found(error: PlaybookNotFoundError) -> None:
+    console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
     raise typer.Exit(code=1) from error
 
 
