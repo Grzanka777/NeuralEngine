@@ -1,6 +1,9 @@
 from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.knowledge_service import KnowledgeService
 from neural_engine.application.observation_service import ObservationService
+from neural_engine.application.playbook_evaluation_service import (
+    PlaybookEvaluationService,
+)
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.infrastructure.json_experience_repository import (
@@ -11,6 +14,9 @@ from neural_engine.infrastructure.json_knowledge_repository import (
 )
 from neural_engine.infrastructure.json_observation_repository import (
     JsonObservationRepository,
+)
+from neural_engine.infrastructure.json_playbook_evaluation_repository import (
+    JsonPlaybookEvaluationRepository,
 )
 from neural_engine.infrastructure.json_playbook_repository import (
     JsonPlaybookRepository,
@@ -50,4 +56,10 @@ class Container:
         return PlaybookRunService(
             JsonPlaybookRunRepository(),
             JsonPlaybookRepository(),
+        )
+
+    def playbook_evaluation_service(self) -> PlaybookEvaluationService:
+        return PlaybookEvaluationService(
+            JsonPlaybookEvaluationRepository(),
+            JsonPlaybookRunRepository(),
         )

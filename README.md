@@ -117,12 +117,17 @@ neural run list
 neural run show 11111111-1111-1111-1111-111111111111
 ```
 
+Playbook evaluations are explicit human or external-system assessments of one
+existing PlaybookRun. They record effectiveness, findings, possible
+improvements, evidence, notes, and tags; Neural Engine does not evaluate runs
+automatically or create evolution proposals.
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. Knowledge is stored locally as JSON files under the knowledge
-directory. Playbooks and playbook runs are stored locally as JSON files under
-their brain directories. The CLI delegates behavior to application services and
-does not own business logic.
+directory. Playbooks, playbook runs, and playbook evaluations are stored locally
+as JSON files under their brain directories. The CLI delegates behavior to
+application services and does not own business logic.
 
 ## Validation
 

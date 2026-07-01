@@ -1,4 +1,9 @@
+from pathlib import Path
+
+import pytest
+
 from neural_engine.core.brain import Brain
+from neural_engine.core.paths import NeuralPaths
 
 
 def test_brain_exists() -> None:
@@ -6,3 +11,32 @@ def test_brain_exists() -> None:
     brain.initialize()
 
     assert brain.exists()
+
+
+def test_brain_initializes_playbook_evaluations_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / ".neural"
+    brain_path = home / "brain"
+    monkeypatch.setattr(NeuralPaths, "HOME", home)
+    monkeypatch.setattr(NeuralPaths, "BRAIN", brain_path)
+    monkeypatch.setattr(NeuralPaths, "EXPERIENCES", brain_path / "experiences")
+    monkeypatch.setattr(NeuralPaths, "OBSERVATIONS", brain_path / "observations")
+    monkeypatch.setattr(NeuralPaths, "KNOWLEDGE", brain_path / "knowledge")
+    monkeypatch.setattr(NeuralPaths, "PLAYBOOKS", brain_path / "playbooks")
+    monkeypatch.setattr(NeuralPaths, "PLAYBOOK_RUNS", brain_path / "playbook-runs")
+    monkeypatch.setattr(
+        NeuralPaths,
+        "PLAYBOOK_EVALUATIONS",
+        brain_path / "playbook-evaluations",
+    )
+    monkeypatch.setattr(NeuralPaths, "DECISIONS", brain_path / "decisions")
+    monkeypatch.setattr(NeuralPaths, "PROJECTS", home / "projects")
+    monkeypatch.setattr(NeuralPaths, "LOGS", home / "logs")
+    monkeypatch.setattr(NeuralPaths, "CONFIG", home / "config.toml")
+    monkeypatch.setattr(NeuralPaths, "VERSION", home / "VERSION")
+
+    Brain().initialize()
+
+    assert NeuralPaths.PLAYBOOK_EVALUATIONS.exists()

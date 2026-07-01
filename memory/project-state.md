@@ -109,6 +109,26 @@ add` records an already performed manual or external application.
 `PlaybookRunService.list_for_playbook()` verifies one existing Playbook and
 returns only runs whose `playbook_id` matches it.
 
+Neural Engine now has a minimal PlaybookEvaluation vertical slice:
+
+* Domain model: `neural_engine.domain.PlaybookEvaluation`
+* Effectiveness enum: `neural_engine.domain.PlaybookEffectiveness`
+* Application service: `PlaybookEvaluationService`
+* Port: `PlaybookEvaluationRepository`
+* Infrastructure implementation: `JsonPlaybookEvaluationRepository`
+* Dependency wiring: `application/container.py`
+* CLI commands: none yet
+
+A PlaybookEvaluation is an explicit human or external-system assessment of one
+existing PlaybookRun. `PlaybookEvaluationService.add()` requires at least one
+finding, validates the referenced PlaybookRun through the
+`PlaybookRunRepository` port before saving, and stores evaluations as one JSON
+file per evaluation under `NeuralPaths.PLAYBOOK_EVALUATIONS`. PlaybookEvaluation
+records effectiveness, findings, improvements, evidence, notes, and tags
+supplied by the caller. Neural Engine does not evaluate runs automatically,
+modify Playbooks or PlaybookRuns, create Knowledge or Playbooks, or create
+automatic evolution proposals.
+
 ## Validation
 
 Latest validation passed:
@@ -118,9 +138,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 159 tests.
+Pytest collected 176 tests.
 
 ## Notes for next work
 
-The next logical step is to continue adding read-only relation commands where
-they expose useful navigation without adding execution or automatic evaluation.
+The next logical step is to add explicit CLI commands for PlaybookEvaluation
+only after the application and persistence slice is stable.

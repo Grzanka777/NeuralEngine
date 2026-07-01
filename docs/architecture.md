@@ -7,14 +7,14 @@ Neural Engine follows Clean Architecture.
 Domain:
 
 * Owns core concepts such as `Observation`, `Experience`, `Knowledge`,
-  `Playbook`, and `PlaybookRun`.
+  `Playbook`, `PlaybookRun`, and `PlaybookEvaluation`.
 * Has no dependency on infrastructure.
 
 Application:
 
 * Coordinates use cases such as adding, listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
-  retrieving knowledge, playbooks, and playbook runs.
+  retrieving knowledge, playbooks, playbook runs, and playbook evaluations.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -29,6 +29,8 @@ Infrastructure:
 * The current knowledge repository stores one JSON file per knowledge item.
 * The current playbook repository stores one JSON file per playbook.
 * The current playbook run repository stores one JSON file per playbook run.
+* The current playbook evaluation repository stores one JSON file per playbook
+  evaluation.
 
 CLI:
 
@@ -168,3 +170,25 @@ Playbook runs record manual or external application and do not duplicate
 playbook data. They store the playbook ID, situation, actions taken, outcome,
 success flag, optional evidence, optional notes, and optional tags. Neural
 Engine does not execute playbooks or evaluate runs automatically.
+
+## Playbook Evaluation Flow
+
+`PlaybookEvaluationService.add()` records explicit human-supplied or
+external-system assessment data about one existing playbook run. The service
+rejects an empty findings list, verifies the referenced run through the
+`PlaybookRunRepository` port, then creates and saves a domain
+`PlaybookEvaluation` through the `PlaybookEvaluationRepository` port.
+Validation stops before run lookup when findings are missing and before
+construction or persistence when the run does not exist.
+
+`PlaybookEvaluationService.list_evaluations()` retrieves all playbook
+evaluations through the same service and repository stack.
+
+`PlaybookEvaluationService.get_by_id()` retrieves a single playbook evaluation
+by ID.
+
+Playbook evaluations are supplied manually or externally. They store the run ID,
+effectiveness judgment, findings, optional improvements, optional evidence,
+optional notes, and optional tags. Neural Engine does not evaluate runs
+automatically, modify playbooks or runs, create knowledge or playbooks, or
+create automatic evolution proposals.
