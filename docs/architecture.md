@@ -7,14 +7,15 @@ Neural Engine follows Clean Architecture.
 Domain:
 
 * Owns core concepts such as `Observation`, `Experience`, `Knowledge`,
-  `Playbook`, `PlaybookRun`, and `PlaybookEvaluation`.
+  `Playbook`, `PlaybookRun`, `PlaybookEvaluation`, and `EvolutionProposal`.
 * Has no dependency on infrastructure.
 
 Application:
 
 * Coordinates use cases such as adding, listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
-  retrieving knowledge, playbooks, playbook runs, and playbook evaluations.
+  retrieving knowledge, playbooks, playbook runs, playbook evaluations, and
+  evolution proposals.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -31,6 +32,8 @@ Infrastructure:
 * The current playbook run repository stores one JSON file per playbook run.
 * The current playbook evaluation repository stores one JSON file per playbook
   evaluation.
+* The current evolution proposal repository stores one JSON file per evolution
+  proposal.
 
 CLI:
 
@@ -203,3 +206,26 @@ effectiveness judgment, findings, optional improvements, optional evidence,
 optional notes, and optional tags. Neural Engine does not evaluate runs
 automatically, modify playbooks or runs, create knowledge or playbooks, or
 create automatic evolution proposals.
+
+## Evolution Proposal Flow
+
+`EvolutionProposalService.add()` records explicit human-supplied or
+external-system proposal data for improving one existing playbook based on one
+or more existing playbook evaluations. The service rejects an empty evaluation
+list, rejects an empty proposed change list, verifies the referenced playbook,
+then verifies each referenced evaluation in supplied order. For every
+evaluation, the service loads the referenced playbook run and confirms the run
+belongs to the proposal playbook. Validation stops before persistence on the
+first missing playbook, missing evaluation, or evaluation/playbook mismatch.
+
+`EvolutionProposalService.list_proposals()` retrieves all evolution proposals
+through the same service and repository stack.
+
+`EvolutionProposalService.get_by_id()` retrieves a single evolution proposal by
+ID.
+
+Evolution proposals are supplied manually or externally. They store the
+playbook ID, evaluation IDs, summary, rationale, proposed changes, expected
+benefits, optional risks, status, optional notes, and optional tags. Neural
+Engine does not modify playbooks, apply proposals, approve or reject proposals
+automatically, rank proposals, or perform automatic evolution.

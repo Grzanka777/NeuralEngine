@@ -137,12 +137,17 @@ neural evaluation show 11111111-1111-1111-1111-111111111111
 neural run evaluations 11111111-1111-1111-1111-111111111111
 ```
 
+Evolution proposals are explicit manual or external-system proposals to improve
+one existing Playbook based on one or more existing PlaybookEvaluation records.
+They record proposed changes only; Neural Engine does not apply proposals,
+modify Playbooks, or perform automatic evolution.
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. Knowledge is stored locally as JSON files under the knowledge
-directory. Playbooks, playbook runs, and playbook evaluations are stored locally
-as JSON files under their brain directories. The CLI delegates behavior to
-application services and does not own business logic.
+directory. Playbooks, playbook runs, playbook evaluations, and evolution
+proposals are stored locally as JSON files under their brain directories. The
+CLI delegates behavior to application services and does not own business logic.
 
 ## Validation
 

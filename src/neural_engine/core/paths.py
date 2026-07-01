@@ -14,6 +14,7 @@ class NeuralPaths:
     PLAYBOOKS = BRAIN / "playbooks"
     PLAYBOOK_RUNS = BRAIN / "playbook-runs"
     PLAYBOOK_EVALUATIONS = BRAIN / "playbook-evaluations"
+    EVOLUTION_PROPOSALS = BRAIN / "evolution-proposals"
     DECISIONS = BRAIN / "decisions"
 
     PROJECTS = HOME / "projects"

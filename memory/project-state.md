@@ -138,6 +138,27 @@ external-system evaluation records.
 `PlaybookEvaluationService.list_for_run()` verifies one existing PlaybookRun and
 returns only evaluations whose `run_id` matches it.
 
+Neural Engine now has a minimal EvolutionProposal vertical slice:
+
+* Domain model: `neural_engine.domain.EvolutionProposal`
+* Status enum: `neural_engine.domain.EvolutionProposalStatus`
+* Application service: `EvolutionProposalService`
+* Port: `EvolutionProposalRepository`
+* Infrastructure implementation: `JsonEvolutionProposalRepository`
+* Dependency wiring: `application/container.py`
+* CLI commands: none yet
+
+An EvolutionProposal is an explicit human or external-system proposal to improve
+one existing Playbook based on one or more existing PlaybookEvaluation records.
+`EvolutionProposalService.add()` requires at least one evaluation ID and at
+least one proposed change, validates the referenced Playbook, validates every
+referenced evaluation, loads each evaluation's PlaybookRun, and confirms each
+run belongs to the proposal Playbook before saving. EvolutionProposal records
+summary, rationale, proposed changes, expected benefits, risks, status, notes,
+and tags supplied by the caller. Neural Engine does not modify Playbooks, apply
+proposals, approve or reject proposals automatically, rank proposals, or perform
+automatic evolution.
+
 ## Validation
 
 Latest validation passed:
@@ -147,10 +168,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 195 tests.
+Pytest collected 217 tests.
 
 ## Notes for next work
 
-The next logical step is to decide whether evaluation records should gain
-additional read-only relation navigation without adding automatic evaluation or
-evolution.
+The next logical step is to add explicit CLI commands for EvolutionProposal only
+after the application and persistence slice is stable.
