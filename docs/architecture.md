@@ -81,11 +81,20 @@ and persists it through the `ExperienceRepository` port.
 
 ## Knowledge Flow
 
-Knowledge is currently application-only and has no CLI commands.
-`KnowledgeService.add()` receives an explicit statement, rationale, confidence,
-experience IDs, and optional tags. The service rejects an empty evidence list,
-then verifies each referenced experience through the `ExperienceRepository` port
-before it creates or saves a domain `Knowledge` item. Validation stops on the
-first missing experience and does not persist knowledge when validation fails.
+`neural knowledge add` calls the application container, receives a
+`KnowledgeService`, and asks it to add knowledge from explicit user-supplied
+statement, rationale, confidence, experience IDs, and optional tags. The CLI does
+not generate, infer, summarize, or modify knowledge. The service rejects an empty
+evidence list, then verifies each referenced experience through the
+`ExperienceRepository` port before it creates or saves a domain `Knowledge`
+item. Validation stops on the first missing experience and does not persist
+knowledge when validation fails.
+
+`neural knowledge list` retrieves all knowledge through the same service and
+repository stack.
+
+`neural knowledge show UUID` retrieves a single knowledge item through
+`KnowledgeService.get_by_id()` and displays all knowledge fields.
+
 The JSON repository is the current infrastructure implementation and stores one
 file per knowledge item under `NeuralPaths.KNOWLEDGE`.

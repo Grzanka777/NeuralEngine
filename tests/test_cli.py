@@ -5,8 +5,18 @@ from typer.testing import CliRunner
 
 from neural_engine import cli
 from neural_engine.application.experience_service import ObservationNotFoundError
+from neural_engine.application.knowledge_service import (
+    ExperienceNotFoundError,
+    KnowledgeEvidenceRequiredError,
+)
 from neural_engine.application.observation_service import AddObservationResult
-from neural_engine.domain import Experience, ExperienceResult, Observation
+from neural_engine.domain import (
+    Experience,
+    ExperienceResult,
+    Knowledge,
+    KnowledgeConfidence,
+    Observation,
+)
 
 
 class FakeObservationService:
@@ -149,14 +159,69 @@ class FakeExperienceService:
         return None
 
 
+class FakeKnowledgeService:
+    def __init__(
+        self,
+        knowledge_items: list[Knowledge],
+        missing_experience_id: UUID | None = None,
+    ) -> None:
+        self.knowledge_items = knowledge_items
+        self.missing_experience_id = missing_experience_id
+        self.add_calls: list[
+            tuple[str, str, KnowledgeConfidence, list[UUID], list[str] | None]
+        ] = []
+        self.requested_ids: list[UUID] = []
+
+    def add(
+        self,
+        statement: str,
+        rationale: str,
+        confidence: KnowledgeConfidence,
+        experience_ids: list[UUID],
+        tags: list[str] | None = None,
+    ) -> Knowledge:
+        self.add_calls.append((statement, rationale, confidence, experience_ids, tags))
+
+        if not experience_ids:
+            raise KnowledgeEvidenceRequiredError()
+
+        if self.missing_experience_id is not None:
+            raise ExperienceNotFoundError(self.missing_experience_id)
+
+        knowledge = Knowledge(
+            statement=statement,
+            rationale=rationale,
+            confidence=confidence,
+            experience_ids=experience_ids,
+            tags=tags or [],
+        )
+        self.knowledge_items.append(knowledge)
+
+        return knowledge
+
+    def list_knowledge(self) -> list[Knowledge]:
+        return self.knowledge_items
+
+    def get_by_id(self, knowledge_id: UUID) -> Knowledge | None:
+        self.requested_ids.append(knowledge_id)
+
+        for knowledge in self.knowledge_items:
+            if knowledge.id == knowledge_id:
+                return knowledge
+
+        return None
+
+
 class FakeContainer:
     def __init__(
         self,
         observation_service: FakeObservationService | None = None,
         experience_service: FakeExperienceService | None = None,
+        knowledge_service: FakeKnowledgeService | None = None,
     ) -> None:
         self._observation_service = observation_service
         self._experience_service = experience_service
+        self._knowledge_service = knowledge_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -169,6 +234,12 @@ class FakeContainer:
             raise AssertionError("Experience service was not expected")
 
         return self._experience_service
+
+    def knowledge_service(self) -> FakeKnowledgeService:
+        if self._knowledge_service is None:
+            raise AssertionError("Knowledge service was not expected")
+
+        return self._knowledge_service
 
 
 def test_search_displays_matching_observations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -608,3 +679,209 @@ def test_experience_show_handles_missing_experience(monkeypatch: pytest.MonkeyPa
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
     assert f"Experience not found: {missing_id}" in result.output
+
+
+def test_knowledge_add_delegates_with_parsed_values_and_prints_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_experience_id = UUID("11111111-1111-1111-1111-111111111111")
+    second_experience_id = UUID("22222222-2222-2222-2222-222222222222")
+    service = FakeKnowledgeService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "knowledge",
+            "add",
+            "--statement",
+            "Focused tests reduce debugging time",
+            "--rationale",
+            "Two experiences showed faster isolation with narrow test runs.",
+            "--confidence",
+            "high",
+            "--experience-id",
+            str(first_experience_id),
+            "--experience-id",
+            str(second_experience_id),
+            "--tag",
+            "testing",
+            "--tag",
+            "quality",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls == [
+        (
+            "Focused tests reduce debugging time",
+            "Two experiences showed faster isolation with narrow test runs.",
+            KnowledgeConfidence.HIGH,
+            [first_experience_id, second_experience_id],
+            ["testing", "quality"],
+        )
+    ]
+    assert "Knowledge stored." in result.output
+    assert str(service.knowledge_items[0].id) in result.output
+
+
+def test_knowledge_add_handles_empty_experience_ids_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeKnowledgeService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "knowledge",
+            "add",
+            "--statement",
+            "Needs evidence",
+            "--rationale",
+            "Knowledge must be linked to experience.",
+            "--confidence",
+            "low",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.add_calls == [
+        (
+            "Needs evidence",
+            "Knowledge must be linked to experience.",
+            KnowledgeConfidence.LOW,
+            [],
+            None,
+        )
+    ]
+    assert service.knowledge_items == []
+    assert "Knowledge requires at least one experience ID." in result.output
+
+
+def test_knowledge_add_handles_missing_experience_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("33333333-3333-3333-3333-333333333333")
+    service = FakeKnowledgeService([], missing_experience_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "knowledge",
+            "add",
+            "--statement",
+            "Invalid evidence",
+            "--rationale",
+            "The experience reference is missing.",
+            "--confidence",
+            "medium",
+            "--experience-id",
+            str(missing_id),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert len(service.add_calls) == 1
+    assert service.knowledge_items == []
+    assert f"Experience not found: {missing_id}" in result.output
+
+
+def test_knowledge_list_displays_knowledge(monkeypatch: pytest.MonkeyPatch) -> None:
+    experience_id = UUID("44444444-4444-4444-4444-444444444444")
+    knowledge = Knowledge(
+        statement="Listed knowledge",
+        rationale="CLI list test",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience_id],
+    )
+    service = FakeKnowledgeService([knowledge])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "list"])
+
+    assert result.exit_code == 0
+    assert f"ID: {knowledge.id}" in result.output
+    assert f"Timestamp: {knowledge.timestamp}" in result.output
+    assert "Statement: Listed knowledge" in result.output
+    assert "Confidence: medium" in result.output
+
+
+def test_knowledge_list_handles_empty_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = FakeKnowledgeService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "list"])
+
+    assert result.exit_code == 0
+    assert "No knowledge found." in result.output
+
+
+def test_knowledge_show_delegates_and_displays_all_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_experience_id = UUID("55555555-5555-5555-5555-555555555555")
+    second_experience_id = UUID("66666666-6666-6666-6666-666666666666")
+    knowledge = Knowledge(
+        statement="Shown knowledge",
+        rationale="CLI show should display every field.",
+        confidence=KnowledgeConfidence.HIGH,
+        experience_ids=[first_experience_id, second_experience_id],
+        tags=["manual", "lesson"],
+    )
+    service = FakeKnowledgeService([knowledge])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "show", str(knowledge.id)])
+
+    assert result.exit_code == 0
+    assert service.requested_ids == [knowledge.id]
+    assert f"ID: {knowledge.id}" in result.output
+    assert f"Timestamp: {knowledge.timestamp}" in result.output
+    assert "Statement: Shown knowledge" in result.output
+    assert "Rationale: CLI show should display every field." in result.output
+    assert "Confidence: high" in result.output
+    assert "Experience IDs:" in result.output
+    assert str(first_experience_id) in result.output
+    assert str(second_experience_id) in result.output
+    assert "Tags: manual, lesson" in result.output
+
+
+def test_knowledge_show_displays_dash_for_empty_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experience_id = UUID("77777777-7777-7777-7777-777777777777")
+    knowledge = Knowledge(
+        statement="No tags",
+        rationale="Empty tags should render consistently.",
+        confidence=KnowledgeConfidence.LOW,
+        experience_ids=[experience_id],
+    )
+    service = FakeKnowledgeService([knowledge])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "show", str(knowledge.id)])
+
+    assert result.exit_code == 0
+    assert "Tags: -" in result.output
+
+
+def test_knowledge_show_handles_missing_knowledge(monkeypatch: pytest.MonkeyPatch) -> None:
+    missing_id = UUID("88888888-8888-8888-8888-888888888888")
+    service = FakeKnowledgeService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "show", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.requested_ids == [missing_id]
+    assert f"Knowledge not found: {missing_id}" in result.output

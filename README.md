@@ -50,8 +50,27 @@ neural experience from-observation 11111111-1111-1111-1111-111111111111 \
 When `--observation-id` is supplied, every referenced observation must already
 exist.
 
+Knowledge capture is exposed through a nested CLI group and requires explicit
+human-supplied content:
+
+```bash
+neural knowledge add \
+  --statement "Focused tests reduce debugging time" \
+  --rationale "Linked experiences showed faster isolation with narrow test runs" \
+  --confidence high \
+  --experience-id 11111111-1111-1111-1111-111111111111 \
+  --tag testing
+
+neural knowledge list
+neural knowledge show 11111111-1111-1111-1111-111111111111
+```
+
+Every referenced experience must already exist. The CLI stores only the
+statement, rationale, confidence, experience IDs, and tags provided by the user.
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
+directory. Knowledge is stored locally as JSON files under the knowledge
 directory. The CLI delegates behavior to application services and does not own
 business logic.
 

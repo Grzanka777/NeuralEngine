@@ -39,7 +39,7 @@ observation IDs through the `ObservationRepository` port before saving.
 existing observation by copying `Observation.content` exactly into the
 experience context.
 
-Neural Engine now has a minimal Knowledge vertical slice without CLI commands:
+Neural Engine now has a minimal Knowledge vertical slice:
 
 * Domain model: `neural_engine.domain.Knowledge`
 * Confidence enum: `neural_engine.domain.KnowledgeConfidence`
@@ -47,6 +47,8 @@ Neural Engine now has a minimal Knowledge vertical slice without CLI commands:
 * Port: `KnowledgeRepository`
 * Infrastructure implementation: `JsonKnowledgeRepository`
 * Dependency wiring: `application/container.py`
+* CLI commands: `neural knowledge add`, `neural knowledge list`, and
+  `neural knowledge show UUID`
 
 Knowledge is a durable rule, lesson, or conclusion derived from one or more
 experiences. `KnowledgeService.add()` requires at least one experience ID and
@@ -55,6 +57,8 @@ before creating or saving knowledge. Missing evidence raises
 `KnowledgeEvidenceRequiredError`; a missing experience raises
 `ExperienceNotFoundError` with the missing experience UUID. Knowledge is stored
 as one JSON file per knowledge item under `NeuralPaths.KNOWLEDGE`.
+The Knowledge CLI only records explicit user-supplied statements, rationale,
+confidence, experience IDs, and tags; it does not generate or infer knowledge.
 
 ## Validation
 
@@ -65,9 +69,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 71 tests.
+Pytest collected 79 tests.
 
 ## Notes for next work
 
-The next logical step is to decide how knowledge should be exposed through a
-thin CLI or another adapter without adding automatic knowledge generation.
+The next logical step is to decide how linked knowledge should be displayed from
+experience detail views or other adapters without adding automatic knowledge
+generation.

@@ -8,8 +8,18 @@ from rich.panel import Panel
 from neural_engine import APP_NAME, MISSION, __version__
 from neural_engine.application.container import Container
 from neural_engine.application.experience_service import ObservationNotFoundError
+from neural_engine.application.knowledge_service import (
+    ExperienceNotFoundError,
+    KnowledgeEvidenceRequiredError,
+)
 from neural_engine.core.brain import Brain
-from neural_engine.domain import Experience, ExperienceResult, Observation
+from neural_engine.domain import (
+    Experience,
+    ExperienceResult,
+    Knowledge,
+    KnowledgeConfidence,
+    Observation,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -18,10 +28,14 @@ app = typer.Typer(
 experience_app = typer.Typer(
     help="Manage experiences.",
 )
+knowledge_app = typer.Typer(
+    help="Manage knowledge.",
+)
 observation_app = typer.Typer(
     help="Inspect observations.",
 )
 app.add_typer(experience_app, name="experience")
+app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(observation_app, name="observation")
 
 console = Console()
@@ -262,6 +276,64 @@ def show_experience(experience_id: UUID) -> None:
     _print_experience(experience)
 
 
+@knowledge_app.command("add")
+def add_knowledge(
+    statement: Annotated[str, typer.Option("--statement")],
+    rationale: Annotated[str, typer.Option("--rationale")],
+    confidence: Annotated[KnowledgeConfidence, typer.Option("--confidence")],
+    experience_ids: Annotated[list[UUID] | None, typer.Option("--experience-id")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Store a new knowledge item."""
+
+    service = container.knowledge_service()
+    try:
+        knowledge = service.add(
+            statement=statement,
+            rationale=rationale,
+            confidence=confidence,
+            experience_ids=experience_ids or [],
+            tags=tags,
+        )
+    except KnowledgeEvidenceRequiredError as error:
+        console.print("[red]Knowledge requires at least one experience ID.[/red]")
+        raise typer.Exit(code=1) from error
+    except ExperienceNotFoundError as error:
+        _exit_experience_not_found(error)
+
+    console.print(f"[green]Knowledge stored.[/green] ID: [cyan]{knowledge.id}[/cyan]")
+
+
+@knowledge_app.command("list")
+def list_knowledge() -> None:
+    """List all knowledge."""
+
+    service = container.knowledge_service()
+    knowledge_items = service.list_knowledge()
+
+    if not knowledge_items:
+        console.print("[yellow]No knowledge found.[/yellow]")
+        return
+
+    for knowledge in knowledge_items:
+        _print_knowledge_summary(knowledge)
+        console.print()
+
+
+@knowledge_app.command("show")
+def show_knowledge(knowledge_id: UUID) -> None:
+    """Show one knowledge item."""
+
+    service = container.knowledge_service()
+    knowledge = service.get_by_id(knowledge_id)
+
+    if knowledge is None:
+        console.print(f"[red]Knowledge not found: {knowledge_id}[/red]")
+        raise typer.Exit(code=1)
+
+    _print_knowledge(knowledge)
+
+
 def _print_experience(experience: Experience) -> None:
     console.print(f"ID: {experience.id}")
     console.print(f"Timestamp: {experience.timestamp}")
@@ -288,6 +360,30 @@ def _print_experience_summary(experience: Experience) -> None:
     console.print(f"Result: {experience.result.value}")
 
 
+def _print_knowledge(knowledge: Knowledge) -> None:
+    console.print(f"ID: {knowledge.id}")
+    console.print(f"Timestamp: {knowledge.timestamp}")
+    console.print(f"Statement: {knowledge.statement}")
+    console.print(f"Rationale: {knowledge.rationale}")
+    console.print(f"Confidence: {knowledge.confidence.value}")
+    console.print(
+        "Experience IDs: "
+        + (
+            ", ".join(str(experience_id) for experience_id in knowledge.experience_ids)
+            if knowledge.experience_ids
+            else "-"
+        )
+    )
+    console.print(f"Tags: {', '.join(knowledge.tags) if knowledge.tags else '-'}")
+
+
+def _print_knowledge_summary(knowledge: Knowledge) -> None:
+    console.print(f"ID: {knowledge.id}")
+    console.print(f"Timestamp: {knowledge.timestamp}")
+    console.print(f"Statement: {knowledge.statement}")
+    console.print(f"Confidence: {knowledge.confidence.value}")
+
+
 def _print_observation_summary(observation: Observation) -> None:
     console.print(f"ID: {observation.id}")
     console.print(f"Timestamp: {observation.timestamp}")
@@ -305,4 +401,9 @@ def _print_observation(observation: Observation) -> None:
 
 def _exit_observation_not_found(error: ObservationNotFoundError) -> None:
     console.print(f"[red]Observation not found: {error.observation_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _exit_experience_not_found(error: ExperienceNotFoundError) -> None:
+    console.print(f"[red]Experience not found: {error.experience_id}[/red]")
     raise typer.Exit(code=1) from error
