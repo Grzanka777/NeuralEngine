@@ -79,6 +79,12 @@ through the `ObservationRepository` port, copies `Observation.content` exactly
 into the experience context, links the new experience to that observation ID,
 and persists it through the `ExperienceRepository` port.
 
+`neural experience knowledge EXPERIENCE_UUID` delegates to
+`KnowledgeService.list_for_experience()`. The service verifies the experience
+exists through the `ExperienceRepository` port, loads knowledge through the
+`KnowledgeRepository` port, and returns only knowledge linked to that experience
+ID.
+
 ## Knowledge Flow
 
 `neural knowledge add` calls the application container, receives a

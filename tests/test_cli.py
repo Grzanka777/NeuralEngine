@@ -173,6 +173,7 @@ class FakeKnowledgeService:
         self.add_from_experience_calls: list[
             tuple[UUID, str, str, KnowledgeConfidence, list[str] | None]
         ] = []
+        self.list_for_experience_calls: list[UUID] = []
         self.requested_ids: list[UUID] = []
 
     def add(
@@ -230,6 +231,18 @@ class FakeKnowledgeService:
 
     def list_knowledge(self) -> list[Knowledge]:
         return self.knowledge_items
+
+    def list_for_experience(self, experience_id: UUID) -> list[Knowledge]:
+        self.list_for_experience_calls.append(experience_id)
+
+        if self.missing_experience_id is not None:
+            raise ExperienceNotFoundError(self.missing_experience_id)
+
+        return [
+            knowledge
+            for knowledge in self.knowledge_items
+            if experience_id in knowledge.experience_ids
+        ]
 
     def get_by_id(self, knowledge_id: UUID) -> Knowledge | None:
         self.requested_ids.append(knowledge_id)
@@ -707,6 +720,60 @@ def test_experience_show_handles_missing_experience(monkeypatch: pytest.MonkeyPa
 
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
+    assert f"Experience not found: {missing_id}" in result.output
+
+
+def test_experience_knowledge_delegates_and_displays_linked_knowledge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experience_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    knowledge = Knowledge(
+        statement="Linked knowledge",
+        rationale="CLI relation test",
+        confidence=KnowledgeConfidence.HIGH,
+        experience_ids=[experience_id],
+    )
+    service = FakeKnowledgeService([knowledge])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["experience", "knowledge", str(experience_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_experience_calls == [experience_id]
+    assert f"ID: {knowledge.id}" in result.output
+    assert f"Timestamp: {knowledge.timestamp}" in result.output
+    assert "Statement: Linked knowledge" in result.output
+    assert "Confidence: high" in result.output
+
+
+def test_experience_knowledge_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experience_id = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    service = FakeKnowledgeService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["experience", "knowledge", str(experience_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_experience_calls == [experience_id]
+    assert f"No knowledge linked to experience: {experience_id}" in result.output
+
+
+def test_experience_knowledge_missing_experience_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    service = FakeKnowledgeService([], missing_experience_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["experience", "knowledge", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_experience_calls == [missing_id]
     assert f"Experience not found: {missing_id}" in result.output
 
 

@@ -83,6 +83,16 @@ class KnowledgeService:
     def list_knowledge(self) -> list[Knowledge]:
         return self._knowledge_repository.load_all()
 
+    def list_for_experience(self, experience_id: UUID) -> list[Knowledge]:
+        if self._experience_repository.get_by_id(experience_id) is None:
+            raise ExperienceNotFoundError(experience_id)
+
+        knowledge_items = self._knowledge_repository.load_all()
+
+        return [
+            knowledge for knowledge in knowledge_items if experience_id in knowledge.experience_ids
+        ]
+
     def get_by_id(self, knowledge_id: UUID) -> Knowledge | None:
         return self._knowledge_repository.get_by_id(knowledge_id)
 

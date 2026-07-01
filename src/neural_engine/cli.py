@@ -262,6 +262,25 @@ def list_observation_experiences(observation_id: UUID) -> None:
         console.print()
 
 
+@experience_app.command("knowledge")
+def list_experience_knowledge(experience_id: UUID) -> None:
+    """List knowledge linked to one experience."""
+
+    service = container.knowledge_service()
+    try:
+        knowledge_items = service.list_for_experience(experience_id)
+    except ExperienceNotFoundError as error:
+        _exit_experience_not_found(error)
+
+    if not knowledge_items:
+        console.print(f"[yellow]No knowledge linked to experience: {experience_id}[/yellow]")
+        return
+
+    for knowledge in knowledge_items:
+        _print_knowledge_summary(knowledge)
+        console.print()
+
+
 @experience_app.command("show")
 def show_experience(experience_id: UUID) -> None:
     """Show one experience."""

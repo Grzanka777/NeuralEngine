@@ -251,6 +251,99 @@ def test_list_knowledge_returns_repository_items() -> None:
     assert service.list_knowledge() == [knowledge]
 
 
+def test_list_knowledge_for_experience_returns_one_linked_item() -> None:
+    experience = make_experience()
+    linked = Knowledge(
+        statement="Linked knowledge",
+        rationale="It references the experience.",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    knowledge_repo.saved.append(linked)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+
+    assert service.list_for_experience(experience.id) == [linked]
+    assert knowledge_repo.load_all_calls == 1
+
+
+def test_list_knowledge_for_experience_returns_multiple_linked_items() -> None:
+    experience = make_experience()
+    first = Knowledge(
+        statement="First linked knowledge",
+        rationale="It references the experience.",
+        confidence=KnowledgeConfidence.HIGH,
+        experience_ids=[experience.id],
+    )
+    second = Knowledge(
+        statement="Second linked knowledge",
+        rationale="It also references the experience.",
+        confidence=KnowledgeConfidence.LOW,
+        experience_ids=[experience.id],
+    )
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    knowledge_repo.saved.extend([first, second])
+    service = KnowledgeService(knowledge_repo, experience_repo)
+
+    assert service.list_for_experience(experience.id) == [first, second]
+
+
+def test_list_knowledge_for_experience_excludes_unrelated_items() -> None:
+    experience = make_experience("Linked experience")
+    other_experience = make_experience("Other experience")
+    linked = Knowledge(
+        statement="Linked knowledge",
+        rationale="It references the requested experience.",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+    unrelated = Knowledge(
+        statement="Unrelated knowledge",
+        rationale="It references a different experience.",
+        confidence=KnowledgeConfidence.HIGH,
+        experience_ids=[other_experience.id],
+    )
+    experience_repo = FakeExperienceRepository([experience, other_experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    knowledge_repo.saved.extend([linked, unrelated])
+    service = KnowledgeService(knowledge_repo, experience_repo)
+
+    assert service.list_for_experience(experience.id) == [linked]
+
+
+def test_list_knowledge_for_experience_returns_empty_list_when_none_are_linked() -> None:
+    experience = make_experience("Unlinked experience")
+    other_experience = make_experience("Other experience")
+    unrelated = Knowledge(
+        statement="Unrelated knowledge",
+        rationale="It references a different experience.",
+        confidence=KnowledgeConfidence.LOW,
+        experience_ids=[other_experience.id],
+    )
+    experience_repo = FakeExperienceRepository([experience, other_experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    knowledge_repo.saved.append(unrelated)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+
+    assert service.list_for_experience(experience.id) == []
+    assert knowledge_repo.load_all_calls == 1
+
+
+def test_list_knowledge_for_experience_raises_when_missing_without_loading_knowledge() -> None:
+    missing_id = UUID("55555555-5555-5555-5555-555555555555")
+    experience_repo = FakeExperienceRepository()
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+
+    with pytest.raises(ExperienceNotFoundError) as error:
+        service.list_for_experience(missing_id)
+
+    assert error.value.experience_id == missing_id
+    assert knowledge_repo.load_all_calls == 0
+
+
 def test_get_by_id_returns_matching_knowledge() -> None:
     experience = make_experience()
     experience_repo = FakeExperienceRepository([experience])

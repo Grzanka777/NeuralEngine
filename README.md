@@ -34,6 +34,7 @@ neural experience add \
 
 neural experience list
 neural experience show 11111111-1111-1111-1111-111111111111
+neural experience knowledge 11111111-1111-1111-1111-111111111111
 ```
 
 Create an experience directly from one existing observation:

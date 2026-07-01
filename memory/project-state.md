@@ -30,7 +30,8 @@ Neural Engine also has a minimal Experience vertical slice:
 * Infrastructure implementation: `JsonExperienceRepository`
 * Dependency wiring: `application/container.py`
 * CLI commands: `neural experience add`, `neural experience from-observation`,
-  `neural experience list`, and `neural experience show UUID`
+  `neural experience list`, `neural experience show UUID`, and
+  `neural experience knowledge UUID`
 
 Experiences are stored as one JSON file per experience under
 `NeuralPaths.EXPERIENCES`. Experience creation validates any supplied
@@ -62,6 +63,8 @@ confidence, experience IDs, and tags; it does not generate or infer knowledge.
 `KnowledgeService.add_from_experience()` creates knowledge linked to one
 existing experience after loading that experience through the
 `ExperienceRepository` port.
+`KnowledgeService.list_for_experience()` verifies one existing experience and
+returns knowledge items linked to it.
 
 ## Validation
 
@@ -72,10 +75,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 83 tests.
+Pytest collected 91 tests.
 
 ## Notes for next work
 
-The next logical step is to decide how linked knowledge should be displayed from
-experience detail views or other adapters without adding automatic knowledge
-generation.
+The next logical step is to decide how Knowledge should feed future Playbook
+creation without adding automatic generation.
