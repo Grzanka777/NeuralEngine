@@ -7,6 +7,16 @@ from rich.panel import Panel
 
 from neural_engine import APP_NAME, MISSION, __version__
 from neural_engine.application.container import Container
+from neural_engine.application.evolution_proposal_service import (
+    EvolutionProposalChangesRequiredError,
+    EvolutionProposalEvaluationPlaybookMismatchError,
+    EvolutionProposalEvaluationRunNotFoundError,
+    EvolutionProposalEvaluationsRequiredError,
+    PlaybookEvaluationNotFoundError,
+)
+from neural_engine.application.evolution_proposal_service import (
+    PlaybookNotFoundError as ProposalPlaybookNotFoundError,
+)
 from neural_engine.application.experience_service import ObservationNotFoundError
 from neural_engine.application.knowledge_service import (
     ExperienceNotFoundError,
@@ -27,6 +37,8 @@ from neural_engine.application.playbook_service import (
 )
 from neural_engine.core.brain import Brain
 from neural_engine.domain import (
+    EvolutionProposal,
+    EvolutionProposalStatus,
     Experience,
     ExperienceResult,
     Knowledge,
@@ -48,6 +60,9 @@ experience_app = typer.Typer(
 evaluation_app = typer.Typer(
     help="Record and inspect playbook evaluations.",
 )
+proposal_app = typer.Typer(
+    help="Record and inspect evolution proposals.",
+)
 knowledge_app = typer.Typer(
     help="Manage knowledge.",
 )
@@ -65,6 +80,7 @@ app.add_typer(evaluation_app, name="evaluation")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(observation_app, name="observation")
 app.add_typer(playbook_app, name="playbook")
+app.add_typer(proposal_app, name="proposal")
 app.add_typer(run_app, name="run")
 
 console = Console()
@@ -490,6 +506,97 @@ def show_evaluation(evaluation_id: UUID) -> None:
     _print_playbook_evaluation(evaluation)
 
 
+@proposal_app.command("add")
+def add_proposal(
+    playbook_id: Annotated[UUID, typer.Option("--playbook-id")],
+    summary: Annotated[str, typer.Option("--summary")],
+    rationale: Annotated[str, typer.Option("--rationale")],
+    expected_benefits: Annotated[list[str], typer.Option("--benefit")],
+    evaluation_ids: Annotated[list[UUID] | None, typer.Option("--evaluation-id")] = None,
+    proposed_changes: Annotated[list[str] | None, typer.Option("--change")] = None,
+    risks: Annotated[list[str] | None, typer.Option("--risk")] = None,
+    status: Annotated[
+        EvolutionProposalStatus,
+        typer.Option("--status"),
+    ] = EvolutionProposalStatus.DRAFT,
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record a manual or external evolution proposal."""
+
+    service = container.evolution_proposal_service()
+    try:
+        proposal = service.add(
+            playbook_id=playbook_id,
+            evaluation_ids=evaluation_ids or [],
+            summary=summary,
+            rationale=rationale,
+            proposed_changes=proposed_changes or [],
+            expected_benefits=expected_benefits,
+            risks=risks,
+            status=status,
+            notes=notes,
+            tags=tags,
+        )
+    except EvolutionProposalEvaluationsRequiredError as error:
+        console.print("[red]Evolution proposal requires at least one evaluation ID.[/red]")
+        raise typer.Exit(code=1) from error
+    except EvolutionProposalChangesRequiredError as error:
+        console.print("[red]Evolution proposal requires at least one proposed change.[/red]")
+        raise typer.Exit(code=1) from error
+    except ProposalPlaybookNotFoundError as error:
+        console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookEvaluationNotFoundError as error:
+        console.print(f"[red]Playbook evaluation not found: {error.evaluation_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except EvolutionProposalEvaluationRunNotFoundError as error:
+        console.print(
+            "[red]Playbook run not found: "
+            f"{error.run_id} referenced by evaluation {error.evaluation_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except EvolutionProposalEvaluationPlaybookMismatchError as error:
+        console.print(
+            "[red]Playbook evaluation "
+            f"{error.evaluation_id} belongs to playbook {error.actual_playbook_id}, "
+            f"expected {error.expected_playbook_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+
+    console.print(f"[green]Evolution proposal stored.[/green] ID: [cyan]{proposal.id}[/cyan]")
+
+
+@proposal_app.command("list")
+def list_proposals() -> None:
+    """List all evolution proposals."""
+
+    service = container.evolution_proposal_service()
+    proposals = service.list_proposals()
+
+    if not proposals:
+        console.print("[yellow]No evolution proposals found.[/yellow]")
+        return
+
+    for proposal in proposals:
+        _print_evolution_proposal_summary(proposal)
+        console.print()
+
+
+@proposal_app.command("show")
+def show_proposal(proposal_id: UUID) -> None:
+    """Show one evolution proposal."""
+
+    service = container.evolution_proposal_service()
+    proposal = service.get_by_id(proposal_id)
+
+    if proposal is None:
+        console.print(f"[red]Evolution proposal not found: {proposal_id}[/red]")
+        raise typer.Exit(code=1)
+
+    _print_evolution_proposal(proposal)
+
+
 @playbook_app.command("add")
 def add_playbook(
     title: Annotated[str, typer.Option("--title")],
@@ -782,6 +889,32 @@ def _print_playbook_evaluation_summary(evaluation: PlaybookEvaluation) -> None:
     console.print(f"Timestamp: {evaluation.timestamp}")
     console.print(f"Run ID: {evaluation.run_id}")
     console.print(f"Effectiveness: {evaluation.effectiveness.value}")
+
+
+def _print_evolution_proposal(proposal: EvolutionProposal) -> None:
+    console.print(f"ID: {proposal.id}")
+    console.print(f"Timestamp: {proposal.timestamp}")
+    console.print(f"Playbook ID: {proposal.playbook_id}")
+    _print_repeated_field(
+        "Evaluation IDs",
+        [str(evaluation_id) for evaluation_id in proposal.evaluation_ids],
+    )
+    console.print(f"Summary: {proposal.summary}")
+    console.print(f"Rationale: {proposal.rationale}")
+    _print_repeated_field("Proposed changes", proposal.proposed_changes)
+    _print_repeated_field("Expected benefits", proposal.expected_benefits)
+    _print_repeated_field("Risks", proposal.risks)
+    console.print(f"Status: {proposal.status.value}")
+    console.print(f"Notes: {proposal.notes if proposal.notes is not None else '-'}")
+    console.print(f"Tags: {', '.join(proposal.tags) if proposal.tags else '-'}")
+
+
+def _print_evolution_proposal_summary(proposal: EvolutionProposal) -> None:
+    console.print(f"ID: {proposal.id}")
+    console.print(f"Timestamp: {proposal.timestamp}")
+    console.print(f"Playbook ID: {proposal.playbook_id}")
+    console.print(f"Summary: {proposal.summary}")
+    console.print(f"Status: {proposal.status.value}")
 
 
 def _print_observation_summary(observation: Observation) -> None:

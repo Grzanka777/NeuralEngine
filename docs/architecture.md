@@ -209,20 +209,22 @@ create automatic evolution proposals.
 
 ## Evolution Proposal Flow
 
-`EvolutionProposalService.add()` records explicit human-supplied or
+`neural proposal add` calls the application container, receives an
+`EvolutionProposalService`, and records explicit human-supplied or
 external-system proposal data for improving one existing playbook based on one
 or more existing playbook evaluations. The service rejects an empty evaluation
 list, rejects an empty proposed change list, verifies the referenced playbook,
 then verifies each referenced evaluation in supplied order. For every
 evaluation, the service loads the referenced playbook run and confirms the run
 belongs to the proposal playbook. Validation stops before persistence on the
-first missing playbook, missing evaluation, or evaluation/playbook mismatch.
+first missing playbook, missing evaluation, missing referenced run, or
+evaluation/playbook mismatch.
 
-`EvolutionProposalService.list_proposals()` retrieves all evolution proposals
-through the same service and repository stack.
+`neural proposal list` retrieves all evolution proposals through the same
+service and repository stack.
 
-`EvolutionProposalService.get_by_id()` retrieves a single evolution proposal by
-ID.
+`neural proposal show UUID` retrieves a single evolution proposal through
+`EvolutionProposalService.get_by_id()` and displays all proposal fields.
 
 Evolution proposals are supplied manually or externally. They store the
 playbook ID, evaluation IDs, summary, rationale, proposed changes, expected

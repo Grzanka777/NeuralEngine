@@ -4,6 +4,16 @@ import pytest
 from typer.testing import CliRunner
 
 from neural_engine import cli
+from neural_engine.application.evolution_proposal_service import (
+    EvolutionProposalChangesRequiredError,
+    EvolutionProposalEvaluationPlaybookMismatchError,
+    EvolutionProposalEvaluationRunNotFoundError,
+    EvolutionProposalEvaluationsRequiredError,
+    PlaybookEvaluationNotFoundError,
+)
+from neural_engine.application.evolution_proposal_service import (
+    PlaybookNotFoundError as ProposalPlaybookNotFoundError,
+)
 from neural_engine.application.experience_service import ObservationNotFoundError
 from neural_engine.application.knowledge_service import (
     ExperienceNotFoundError,
@@ -24,6 +34,8 @@ from neural_engine.application.playbook_service import (
     PlaybookStepsRequiredError,
 )
 from neural_engine.domain import (
+    EvolutionProposal,
+    EvolutionProposalStatus,
     Experience,
     ExperienceResult,
     Knowledge,
@@ -534,6 +546,117 @@ class FakePlaybookEvaluationService:
         return None
 
 
+class FakeEvolutionProposalService:
+    def __init__(
+        self,
+        proposals: list[EvolutionProposal],
+        missing_playbook_id: UUID | None = None,
+        missing_evaluation_id: UUID | None = None,
+        missing_run: tuple[UUID, UUID] | None = None,
+        playbook_mismatch: tuple[UUID, UUID, UUID] | None = None,
+    ) -> None:
+        self.proposals = proposals
+        self.missing_playbook_id = missing_playbook_id
+        self.missing_evaluation_id = missing_evaluation_id
+        self.missing_run = missing_run
+        self.playbook_mismatch = playbook_mismatch
+        self.add_calls: list[
+            tuple[
+                UUID,
+                list[UUID],
+                str,
+                str,
+                list[str],
+                list[str],
+                list[str] | None,
+                EvolutionProposalStatus,
+                str | None,
+                list[str] | None,
+            ]
+        ] = []
+        self.requested_ids: list[UUID] = []
+
+    def add(
+        self,
+        playbook_id: UUID,
+        evaluation_ids: list[UUID],
+        summary: str,
+        rationale: str,
+        proposed_changes: list[str],
+        expected_benefits: list[str],
+        risks: list[str] | None = None,
+        status: EvolutionProposalStatus = EvolutionProposalStatus.DRAFT,
+        notes: str | None = None,
+        tags: list[str] | None = None,
+    ) -> EvolutionProposal:
+        self.add_calls.append(
+            (
+                playbook_id,
+                evaluation_ids,
+                summary,
+                rationale,
+                proposed_changes,
+                expected_benefits,
+                risks,
+                status,
+                notes,
+                tags,
+            )
+        )
+
+        if not evaluation_ids:
+            raise EvolutionProposalEvaluationsRequiredError()
+
+        if not proposed_changes:
+            raise EvolutionProposalChangesRequiredError()
+
+        if self.missing_playbook_id is not None:
+            raise ProposalPlaybookNotFoundError(self.missing_playbook_id)
+
+        if self.missing_evaluation_id is not None:
+            raise PlaybookEvaluationNotFoundError(self.missing_evaluation_id)
+
+        if self.missing_run is not None:
+            evaluation_id, run_id = self.missing_run
+            raise EvolutionProposalEvaluationRunNotFoundError(evaluation_id, run_id)
+
+        if self.playbook_mismatch is not None:
+            evaluation_id, expected_playbook_id, actual_playbook_id = self.playbook_mismatch
+            raise EvolutionProposalEvaluationPlaybookMismatchError(
+                evaluation_id,
+                expected_playbook_id,
+                actual_playbook_id,
+            )
+
+        proposal = EvolutionProposal(
+            playbook_id=playbook_id,
+            evaluation_ids=evaluation_ids,
+            summary=summary,
+            rationale=rationale,
+            proposed_changes=proposed_changes,
+            expected_benefits=expected_benefits,
+            risks=risks or [],
+            status=status,
+            notes=notes,
+            tags=tags or [],
+        )
+        self.proposals.append(proposal)
+
+        return proposal
+
+    def list_proposals(self) -> list[EvolutionProposal]:
+        return self.proposals
+
+    def get_by_id(self, proposal_id: UUID) -> EvolutionProposal | None:
+        self.requested_ids.append(proposal_id)
+
+        for proposal in self.proposals:
+            if proposal.id == proposal_id:
+                return proposal
+
+        return None
+
+
 class FakeContainer:
     def __init__(
         self,
@@ -543,6 +666,7 @@ class FakeContainer:
         playbook_service: FakePlaybookService | None = None,
         playbook_run_service: FakePlaybookRunService | None = None,
         playbook_evaluation_service: FakePlaybookEvaluationService | None = None,
+        evolution_proposal_service: FakeEvolutionProposalService | None = None,
     ) -> None:
         self._observation_service = observation_service
         self._experience_service = experience_service
@@ -550,6 +674,7 @@ class FakeContainer:
         self._playbook_service = playbook_service
         self._playbook_run_service = playbook_run_service
         self._playbook_evaluation_service = playbook_evaluation_service
+        self._evolution_proposal_service = evolution_proposal_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -586,6 +711,12 @@ class FakeContainer:
             raise AssertionError("Playbook evaluation service was not expected")
 
         return self._playbook_evaluation_service
+
+    def evolution_proposal_service(self) -> FakeEvolutionProposalService:
+        if self._evolution_proposal_service is None:
+            raise AssertionError("Evolution proposal service was not expected")
+
+        return self._evolution_proposal_service
 
 
 def test_search_displays_matching_observations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2377,3 +2508,617 @@ def test_evaluation_show_handles_missing_evaluation(
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
     assert f"Playbook evaluation not found: {missing_id}" in result.output
+
+
+def test_proposal_add_delegates_with_parsed_values_and_prints_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("88888888-9999-aaaa-bbbb-cccccccccccc")
+    first_evaluation_id = UUID("99999999-aaaa-bbbb-cccc-dddddddddddd")
+    second_evaluation_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--evaluation-id",
+            str(first_evaluation_id),
+            "--evaluation-id",
+            str(second_evaluation_id),
+            "--summary",
+            "Clarify rollback",
+            "--rationale",
+            "Evaluations found unclear recovery steps",
+            "--change",
+            "Add rollback criteria",
+            "--change",
+            "Add verification step",
+            "--benefit",
+            "Faster recovery",
+            "--benefit",
+            "Clearer evidence",
+            "--risk",
+            "Longer checklist",
+            "--notes",
+            "Manual proposal",
+            "--tag",
+            "ops",
+            "--tag",
+            "manual",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls == [
+        (
+            playbook_id,
+            [first_evaluation_id, second_evaluation_id],
+            "Clarify rollback",
+            "Evaluations found unclear recovery steps",
+            ["Add rollback criteria", "Add verification step"],
+            ["Faster recovery", "Clearer evidence"],
+            ["Longer checklist"],
+            EvolutionProposalStatus.DRAFT,
+            "Manual proposal",
+            ["ops", "manual"],
+        )
+    ]
+    assert "Evolution proposal stored." in result.output
+    assert str(service.proposals[0].id) in result.output
+
+
+@pytest.mark.parametrize(
+    ("status_value", "status"),
+    [
+        ("draft", EvolutionProposalStatus.DRAFT),
+        ("accepted", EvolutionProposalStatus.ACCEPTED),
+        ("rejected", EvolutionProposalStatus.REJECTED),
+    ],
+)
+def test_proposal_add_parses_status_values(
+    status_value: str,
+    status: EvolutionProposalStatus,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+    evaluation_id = UUID("cccccccc-dddd-eeee-ffff-111111111111")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--evaluation-id",
+            str(evaluation_id),
+            "--summary",
+            "Status proposal",
+            "--rationale",
+            "Check status parsing",
+            "--change",
+            "Change",
+            "--benefit",
+            "Benefit",
+            "--status",
+            status_value,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls[0][7] == status
+
+
+def test_proposal_add_omitted_evaluations_returns_error_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("dddddddd-eeee-ffff-1111-222222222222")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--summary",
+            "No evaluations",
+            "--rationale",
+            "Reject missing evaluations",
+            "--change",
+            "Change",
+            "--benefit",
+            "Benefit",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.add_calls[0][1] == []
+    assert service.proposals == []
+    assert "Evolution proposal requires at least one evaluation ID." in result.output
+
+
+def test_proposal_add_omitted_changes_returns_error_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("eeeeeeee-ffff-1111-2222-333333333333")
+    evaluation_id = UUID("ffffffff-1111-2222-3333-444444444444")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--evaluation-id",
+            str(evaluation_id),
+            "--summary",
+            "No changes",
+            "--rationale",
+            "Reject missing changes",
+            "--benefit",
+            "Benefit",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.add_calls[0][4] == []
+    assert service.proposals == []
+    assert "Evolution proposal requires at least one proposed change." in result.output
+
+
+def test_proposal_add_missing_playbook_returns_error_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("11111111-2222-3333-4444-555555555555")
+    evaluation_id = UUID("22222222-3333-4444-5555-666666666666")
+    service = FakeEvolutionProposalService([], missing_playbook_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(missing_id),
+            "--evaluation-id",
+            str(evaluation_id),
+            "--summary",
+            "Missing playbook",
+            "--rationale",
+            "Reject missing playbook",
+            "--change",
+            "Change",
+            "--benefit",
+            "Benefit",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.proposals == []
+    assert f"Playbook not found: {missing_id}" in result.output
+
+
+def test_proposal_add_missing_evaluation_returns_error_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("33333333-4444-5555-6666-777777777777")
+    missing_id = UUID("44444444-5555-6666-7777-888888888888")
+    service = FakeEvolutionProposalService([], missing_evaluation_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--evaluation-id",
+            str(missing_id),
+            "--summary",
+            "Missing evaluation",
+            "--rationale",
+            "Reject missing evaluation",
+            "--change",
+            "Change",
+            "--benefit",
+            "Benefit",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.proposals == []
+    assert f"Playbook evaluation not found: {missing_id}" in result.output
+
+
+def test_proposal_add_missing_run_returns_error_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("55555555-6666-7777-8888-999999999999")
+    evaluation_id = UUID("66666666-7777-8888-9999-aaaaaaaaaaaa")
+    run_id = UUID("77777777-8888-9999-aaaa-bbbbbbbbbbbb")
+    service = FakeEvolutionProposalService([], missing_run=(evaluation_id, run_id))
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--evaluation-id",
+            str(evaluation_id),
+            "--summary",
+            "Missing run",
+            "--rationale",
+            "Reject missing run",
+            "--change",
+            "Change",
+            "--benefit",
+            "Benefit",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.proposals == []
+    assert str(evaluation_id) in result.output
+    assert str(run_id) in result.output
+
+
+def test_proposal_add_playbook_mismatch_returns_error_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluation_id = UUID("88888888-9999-aaaa-bbbb-cccccccccccc")
+    expected_id = UUID("99999999-aaaa-bbbb-cccc-dddddddddddd")
+    actual_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    service = FakeEvolutionProposalService(
+        [],
+        playbook_mismatch=(evaluation_id, expected_id, actual_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(expected_id),
+            "--evaluation-id",
+            str(evaluation_id),
+            "--summary",
+            "Mismatch",
+            "--rationale",
+            "Reject mismatch",
+            "--change",
+            "Change",
+            "--benefit",
+            "Benefit",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.proposals == []
+    assert str(evaluation_id) in result.output
+    assert str(expected_id) in result.output
+    assert str(actual_id) in result.output
+
+
+def test_proposal_list_displays_proposal_summaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+    proposal = EvolutionProposal(
+        playbook_id=playbook_id,
+        evaluation_ids=[UUID("cccccccc-dddd-eeee-ffff-111111111111")],
+        summary="Listed proposal",
+        rationale="List all proposals",
+        proposed_changes=["Change"],
+        expected_benefits=["Benefit"],
+        status=EvolutionProposalStatus.ACCEPTED,
+    )
+    service = FakeEvolutionProposalService([proposal])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "list"])
+
+    assert result.exit_code == 0
+    assert f"ID: {proposal.id}" in result.output
+    assert f"Timestamp: {proposal.timestamp}" in result.output
+    assert f"Playbook ID: {playbook_id}" in result.output
+    assert "Summary: Listed proposal" in result.output
+    assert "Status: accepted" in result.output
+
+
+def test_proposal_list_handles_empty_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "list"])
+
+    assert result.exit_code == 0
+    assert "No evolution proposals found." in result.output
+
+
+def test_proposal_show_delegates_and_displays_all_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("dddddddd-eeee-ffff-1111-222222222222")
+    first_evaluation_id = UUID("eeeeeeee-ffff-1111-2222-333333333333")
+    second_evaluation_id = UUID("ffffffff-1111-2222-3333-444444444444")
+    proposal = EvolutionProposal(
+        playbook_id=playbook_id,
+        evaluation_ids=[first_evaluation_id, second_evaluation_id],
+        summary="Shown proposal",
+        rationale="Show all fields",
+        proposed_changes=["Clarify step", "Add verification"],
+        expected_benefits=["Faster recovery", "Better audit trail"],
+        risks=["Longer checklist", "More manual work"],
+        status=EvolutionProposalStatus.REJECTED,
+        notes="Manual review rejected this",
+        tags=["ops", "review"],
+    )
+    service = FakeEvolutionProposalService([proposal])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "show", str(proposal.id)])
+
+    assert result.exit_code == 0
+    assert service.requested_ids == [proposal.id]
+    assert f"ID: {proposal.id}" in result.output
+    assert f"Timestamp: {proposal.timestamp}" in result.output
+    assert f"Playbook ID: {playbook_id}" in result.output
+    assert "Evaluation IDs:" in result.output
+    assert f"- {first_evaluation_id}" in result.output
+    assert f"- {second_evaluation_id}" in result.output
+    assert "Summary: Shown proposal" in result.output
+    assert "Rationale: Show all fields" in result.output
+    assert "Proposed changes:" in result.output
+    assert "- Clarify step" in result.output
+    assert "- Add verification" in result.output
+    assert "Expected benefits:" in result.output
+    assert "- Faster recovery" in result.output
+    assert "- Better audit trail" in result.output
+    assert "Risks:" in result.output
+    assert "- Longer checklist" in result.output
+    assert "- More manual work" in result.output
+    assert "Status: rejected" in result.output
+    assert "Notes: Manual review rejected this" in result.output
+    assert "Tags: ops, review" in result.output
+
+
+def test_proposal_show_displays_empty_optional_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = EvolutionProposal(
+        playbook_id=UUID("11111111-2222-3333-4444-555555555555"),
+        evaluation_ids=[UUID("22222222-3333-4444-5555-666666666666")],
+        summary="No optional fields",
+        rationale="Render empty optional values",
+        proposed_changes=["Change"],
+        expected_benefits=["Benefit"],
+    )
+    service = FakeEvolutionProposalService([proposal])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "show", str(proposal.id)])
+
+    assert result.exit_code == 0
+    assert "Status: draft" in result.output
+    assert "Risks:\n-" in result.output
+    assert "Notes: -" in result.output
+    assert "Tags: -" in result.output
+
+
+def test_proposal_show_handles_missing_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("33333333-4444-5555-6666-777777777777")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "show", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.requested_ids == [missing_id]
+    assert f"Evolution proposal not found: {missing_id}" in result.output
+
+
+def test_proposal_add_omitted_benefit_returns_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("aaaaaaaa-1111-2222-3333-444444444444")
+    evaluation_id = UUID("bbbbbbbb-1111-2222-3333-444444444444")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--evaluation-id",
+            str(evaluation_id),
+            "--summary",
+            "No benefit",
+            "--rationale",
+            "Reject omitted benefit",
+            "--change",
+            "Change",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Error" in result.output
+    assert service.add_calls == []
+
+
+def test_proposal_add_one_benefit_is_delegated_correctly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("cccccccc-2222-3333-4444-555555555555")
+    evaluation_id = UUID("dddddddd-2222-3333-4444-555555555555")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--evaluation-id",
+            str(evaluation_id),
+            "--summary",
+            "One benefit",
+            "--rationale",
+            "Check single benefit",
+            "--change",
+            "Change",
+            "--benefit",
+            "Reduce downtime",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls[0][5] == ["Reduce downtime"]
+
+
+def test_proposal_add_multiple_benefits_in_supplied_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("eeeeeeee-3333-4444-5555-666666666666")
+    evaluation_id = UUID("ffffffff-3333-4444-5555-666666666666")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "proposal",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--evaluation-id",
+            str(evaluation_id),
+            "--summary",
+            "Multiple benefits",
+            "--rationale",
+            "Check benefit order",
+            "--change",
+            "Change",
+            "--benefit",
+            "Faster recovery",
+            "--benefit",
+            "Clearer audit trail",
+            "--benefit",
+            "Less manual work",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls[0][5] == [
+        "Faster recovery",
+        "Clearer audit trail",
+        "Less manual work",
+    ]

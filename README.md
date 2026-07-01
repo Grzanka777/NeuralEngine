@@ -142,6 +142,21 @@ one existing Playbook based on one or more existing PlaybookEvaluation records.
 They record proposed changes only; Neural Engine does not apply proposals,
 modify Playbooks, or perform automatic evolution.
 
+```bash
+neural proposal add \
+  --playbook-id 11111111-1111-1111-1111-111111111111 \
+  --evaluation-id 22222222-2222-2222-2222-222222222222 \
+  --summary "Clarify verification step" \
+  --rationale "Manual evaluations found unclear success checks" \
+  --change "Add explicit verification criteria" \
+  --benefit "More consistent manual application" \
+  --risk "Longer checklist" \
+  --tag testing
+
+neural proposal list
+neural proposal show 11111111-1111-1111-1111-111111111111
+```
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. Knowledge is stored locally as JSON files under the knowledge

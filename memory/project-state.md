@@ -146,7 +146,8 @@ Neural Engine now has a minimal EvolutionProposal vertical slice:
 * Port: `EvolutionProposalRepository`
 * Infrastructure implementation: `JsonEvolutionProposalRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: none yet
+* CLI commands: `neural proposal add`, `neural proposal list`, and
+  `neural proposal show UUID`
 
 An EvolutionProposal is an explicit human or external-system proposal to improve
 one existing Playbook based on one or more existing PlaybookEvaluation records.
@@ -158,6 +159,9 @@ summary, rationale, proposed changes, expected benefits, risks, status, notes,
 and tags supplied by the caller. Neural Engine does not modify Playbooks, apply
 proposals, approve or reject proposals automatically, rank proposals, or perform
 automatic evolution.
+The Proposal CLI delegates to the application service, lets Typer parse UUIDs
+and `EvolutionProposalStatus`, and only renders manually or externally supplied
+proposal records.
 
 ## Validation
 
@@ -168,9 +172,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 217 tests.
+Pytest collected 237 tests.
 
 ## Notes for next work
 
-The next logical step is to add explicit CLI commands for EvolutionProposal only
-after the application and persistence slice is stable.
+The next logical step is to add read-only relation navigation for
+EvolutionProposal records where useful, without adding automatic evolution.
