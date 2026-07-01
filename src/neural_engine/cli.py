@@ -12,6 +12,11 @@ from neural_engine.application.knowledge_service import (
     ExperienceNotFoundError,
     KnowledgeEvidenceRequiredError,
 )
+from neural_engine.application.playbook_service import (
+    KnowledgeNotFoundError,
+    PlaybookKnowledgeRequiredError,
+    PlaybookStepsRequiredError,
+)
 from neural_engine.core.brain import Brain
 from neural_engine.domain import (
     Experience,
@@ -19,6 +24,7 @@ from neural_engine.domain import (
     Knowledge,
     KnowledgeConfidence,
     Observation,
+    Playbook,
 )
 
 app = typer.Typer(
@@ -34,9 +40,13 @@ knowledge_app = typer.Typer(
 observation_app = typer.Typer(
     help="Inspect observations.",
 )
+playbook_app = typer.Typer(
+    help="Manage playbooks.",
+)
 app.add_typer(experience_app, name="experience")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(observation_app, name="observation")
+app.add_typer(playbook_app, name="playbook")
 
 console = Console()
 container = Container()
@@ -380,6 +390,73 @@ def show_knowledge(knowledge_id: UUID) -> None:
     _print_knowledge(knowledge)
 
 
+@playbook_app.command("add")
+def add_playbook(
+    title: Annotated[str, typer.Option("--title")],
+    situation: Annotated[str, typer.Option("--situation")],
+    objective: Annotated[str, typer.Option("--objective")],
+    success_criteria: Annotated[list[str], typer.Option("--success-criterion")],
+    steps: Annotated[list[str] | None, typer.Option("--step")] = None,
+    knowledge_ids: Annotated[list[UUID] | None, typer.Option("--knowledge-id")] = None,
+    constraints: Annotated[list[str] | None, typer.Option("--constraint")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Store a new playbook."""
+
+    service = container.playbook_service()
+    try:
+        playbook = service.add(
+            title=title,
+            situation=situation,
+            objective=objective,
+            steps=steps or [],
+            success_criteria=success_criteria,
+            knowledge_ids=knowledge_ids or [],
+            constraints=constraints,
+            tags=tags,
+        )
+    except PlaybookKnowledgeRequiredError as error:
+        console.print("[red]Playbook requires at least one knowledge ID.[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookStepsRequiredError as error:
+        console.print("[red]Playbook requires at least one step.[/red]")
+        raise typer.Exit(code=1) from error
+    except KnowledgeNotFoundError as error:
+        _exit_knowledge_not_found(error)
+
+    console.print(f"[green]Playbook stored.[/green] ID: [cyan]{playbook.id}[/cyan]")
+
+
+@playbook_app.command("list")
+def list_playbooks() -> None:
+    """List all playbooks."""
+
+    service = container.playbook_service()
+    playbooks = service.list_playbooks()
+
+    if not playbooks:
+        console.print("[yellow]No playbooks found.[/yellow]")
+        return
+
+    for playbook in playbooks:
+        _print_playbook_summary(playbook)
+        console.print()
+
+
+@playbook_app.command("show")
+def show_playbook(playbook_id: UUID) -> None:
+    """Show one playbook."""
+
+    service = container.playbook_service()
+    playbook = service.get_by_id(playbook_id)
+
+    if playbook is None:
+        console.print(f"[red]Playbook not found: {playbook_id}[/red]")
+        raise typer.Exit(code=1)
+
+    _print_playbook(playbook)
+
+
 def _print_experience(experience: Experience) -> None:
     console.print(f"ID: {experience.id}")
     console.print(f"Timestamp: {experience.timestamp}")
@@ -430,6 +507,29 @@ def _print_knowledge_summary(knowledge: Knowledge) -> None:
     console.print(f"Confidence: {knowledge.confidence.value}")
 
 
+def _print_playbook(playbook: Playbook) -> None:
+    console.print(f"ID: {playbook.id}")
+    console.print(f"Timestamp: {playbook.timestamp}")
+    console.print(f"Title: {playbook.title}")
+    console.print(f"Situation: {playbook.situation}")
+    console.print(f"Objective: {playbook.objective}")
+    _print_repeated_field("Steps", playbook.steps)
+    _print_repeated_field("Success criteria", playbook.success_criteria)
+    _print_repeated_field("Constraints", playbook.constraints)
+    _print_repeated_field(
+        "Knowledge IDs",
+        [str(knowledge_id) for knowledge_id in playbook.knowledge_ids],
+    )
+    console.print(f"Tags: {', '.join(playbook.tags) if playbook.tags else '-'}")
+
+
+def _print_playbook_summary(playbook: Playbook) -> None:
+    console.print(f"ID: {playbook.id}")
+    console.print(f"Timestamp: {playbook.timestamp}")
+    console.print(f"Title: {playbook.title}")
+    console.print(f"Objective: {playbook.objective}")
+
+
 def _print_observation_summary(observation: Observation) -> None:
     console.print(f"ID: {observation.id}")
     console.print(f"Timestamp: {observation.timestamp}")
@@ -453,3 +553,19 @@ def _exit_observation_not_found(error: ObservationNotFoundError) -> None:
 def _exit_experience_not_found(error: ExperienceNotFoundError) -> None:
     console.print(f"[red]Experience not found: {error.experience_id}[/red]")
     raise typer.Exit(code=1) from error
+
+
+def _exit_knowledge_not_found(error: KnowledgeNotFoundError) -> None:
+    console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _print_repeated_field(label: str, values: list[str]) -> None:
+    console.print(f"{label}:")
+
+    if not values:
+        console.print("-")
+        return
+
+    for value in values:
+        console.print(f"- {value}")

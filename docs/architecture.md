@@ -115,13 +115,21 @@ file per knowledge item under `NeuralPaths.KNOWLEDGE`.
 
 ## Playbook Flow
 
-Playbook is currently application-only and has no CLI commands.
-`PlaybookService.add()` receives an explicit title, situation, objective, steps,
-success criteria, knowledge IDs, optional constraints, and optional tags. The
-service rejects an empty knowledge list, rejects an empty step list, then
-verifies each referenced knowledge item through the `KnowledgeRepository` port
-before it creates or saves a domain `Playbook`. Validation stops on the first
-missing knowledge item and does not persist a playbook when validation fails.
+`neural playbook add` calls the application container, receives a
+`PlaybookService`, and asks it to add a playbook from explicit user-supplied
+title, situation, objective, steps, success criteria, knowledge IDs, optional
+constraints, and optional tags. The service rejects an empty knowledge list,
+rejects an empty step list, then verifies each referenced knowledge item through
+the `KnowledgeRepository` port before it creates or saves a domain `Playbook`.
+Validation stops on the first missing knowledge item and does not persist a
+playbook when validation fails.
+
+`neural playbook list` retrieves all playbooks through the same service and
+repository stack.
+
+`neural playbook show UUID` retrieves a single playbook through
+`PlaybookService.get_by_id()` and displays all playbook fields.
+
 The JSON repository is the current infrastructure implementation and stores one
 file per playbook under `NeuralPaths.PLAYBOOKS`.
 

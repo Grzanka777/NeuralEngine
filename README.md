@@ -75,9 +75,31 @@ neural knowledge show 11111111-1111-1111-1111-111111111111
 Every referenced experience must already exist. The CLI stores only the
 statement, rationale, confidence, experience IDs, and tags provided by the user.
 
+Playbook capture is exposed through a nested CLI group and stores explicit
+operational procedures:
+
+```bash
+neural playbook add \
+  --title "Debug flaky test" \
+  --situation "A test fails intermittently" \
+  --objective "Find the unstable dependency" \
+  --step "Run the failing test repeatedly" \
+  --success-criterion "Failure source is isolated" \
+  --knowledge-id 11111111-1111-1111-1111-111111111111 \
+  --constraint "Do not skip the test" \
+  --tag testing
+
+neural playbook list
+neural playbook show 11111111-1111-1111-1111-111111111111
+```
+
+Every referenced knowledge item must already exist. Playbooks are stored
+procedures; the CLI does not execute or generate them.
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. Knowledge is stored locally as JSON files under the knowledge
+directory. Playbooks are stored locally as JSON files under the playbook
 directory. The CLI delegates behavior to application services and does not own
 business logic.
 

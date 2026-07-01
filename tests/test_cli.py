@@ -10,12 +10,18 @@ from neural_engine.application.knowledge_service import (
     KnowledgeEvidenceRequiredError,
 )
 from neural_engine.application.observation_service import AddObservationResult
+from neural_engine.application.playbook_service import (
+    KnowledgeNotFoundError,
+    PlaybookKnowledgeRequiredError,
+    PlaybookStepsRequiredError,
+)
 from neural_engine.domain import (
     Experience,
     ExperienceResult,
     Knowledge,
     KnowledgeConfidence,
     Observation,
+    Playbook,
 )
 
 
@@ -254,16 +260,100 @@ class FakeKnowledgeService:
         return None
 
 
+class FakePlaybookService:
+    def __init__(
+        self,
+        playbooks: list[Playbook],
+        missing_knowledge_id: UUID | None = None,
+    ) -> None:
+        self.playbooks = playbooks
+        self.missing_knowledge_id = missing_knowledge_id
+        self.add_calls: list[
+            tuple[
+                str,
+                str,
+                str,
+                list[str],
+                list[str],
+                list[UUID],
+                list[str] | None,
+                list[str] | None,
+            ]
+        ] = []
+        self.requested_ids: list[UUID] = []
+
+    def add(
+        self,
+        title: str,
+        situation: str,
+        objective: str,
+        steps: list[str],
+        success_criteria: list[str],
+        knowledge_ids: list[UUID],
+        constraints: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> Playbook:
+        self.add_calls.append(
+            (
+                title,
+                situation,
+                objective,
+                steps,
+                success_criteria,
+                knowledge_ids,
+                constraints,
+                tags,
+            )
+        )
+
+        if not knowledge_ids:
+            raise PlaybookKnowledgeRequiredError()
+
+        if not steps:
+            raise PlaybookStepsRequiredError()
+
+        if self.missing_knowledge_id is not None:
+            raise KnowledgeNotFoundError(self.missing_knowledge_id)
+
+        playbook = Playbook(
+            title=title,
+            situation=situation,
+            objective=objective,
+            steps=steps,
+            success_criteria=success_criteria,
+            constraints=constraints or [],
+            knowledge_ids=knowledge_ids,
+            tags=tags or [],
+        )
+        self.playbooks.append(playbook)
+
+        return playbook
+
+    def list_playbooks(self) -> list[Playbook]:
+        return self.playbooks
+
+    def get_by_id(self, playbook_id: UUID) -> Playbook | None:
+        self.requested_ids.append(playbook_id)
+
+        for playbook in self.playbooks:
+            if playbook.id == playbook_id:
+                return playbook
+
+        return None
+
+
 class FakeContainer:
     def __init__(
         self,
         observation_service: FakeObservationService | None = None,
         experience_service: FakeExperienceService | None = None,
         knowledge_service: FakeKnowledgeService | None = None,
+        playbook_service: FakePlaybookService | None = None,
     ) -> None:
         self._observation_service = observation_service
         self._experience_service = experience_service
         self._knowledge_service = knowledge_service
+        self._playbook_service = playbook_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -282,6 +372,12 @@ class FakeContainer:
             raise AssertionError("Knowledge service was not expected")
 
         return self._knowledge_service
+
+    def playbook_service(self) -> FakePlaybookService:
+        if self._playbook_service is None:
+            raise AssertionError("Playbook service was not expected")
+
+        return self._playbook_service
 
 
 def test_search_displays_matching_observations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1052,3 +1148,315 @@ def test_knowledge_show_handles_missing_knowledge(monkeypatch: pytest.MonkeyPatc
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
     assert f"Knowledge not found: {missing_id}" in result.output
+
+
+def test_playbook_add_delegates_with_parsed_repeatable_values_and_prints_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_knowledge_id = UUID("99999999-9999-9999-9999-999999999999")
+    second_knowledge_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    service = FakePlaybookService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "playbook",
+            "add",
+            "--title",
+            "Debug flaky tests",
+            "--situation",
+            "A test fails intermittently",
+            "--objective",
+            "Find the unstable dependency",
+            "--step",
+            "Run the failing test repeatedly",
+            "--step",
+            "Inspect shared state",
+            "--success-criterion",
+            "Failure source is isolated",
+            "--success-criterion",
+            "The fix is verified",
+            "--knowledge-id",
+            str(first_knowledge_id),
+            "--knowledge-id",
+            str(second_knowledge_id),
+            "--constraint",
+            "Do not skip the test",
+            "--constraint",
+            "Keep changes focused",
+            "--tag",
+            "testing",
+            "--tag",
+            "debugging",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls == [
+        (
+            "Debug flaky tests",
+            "A test fails intermittently",
+            "Find the unstable dependency",
+            ["Run the failing test repeatedly", "Inspect shared state"],
+            ["Failure source is isolated", "The fix is verified"],
+            [first_knowledge_id, second_knowledge_id],
+            ["Do not skip the test", "Keep changes focused"],
+            ["testing", "debugging"],
+        )
+    ]
+    assert "Playbook stored." in result.output
+    assert str(service.playbooks[0].id) in result.output
+
+
+def test_playbook_add_handles_empty_knowledge_ids_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "playbook",
+            "add",
+            "--title",
+            "Needs knowledge",
+            "--situation",
+            "No knowledge was supplied",
+            "--objective",
+            "Reject the playbook",
+            "--step",
+            "Do one thing",
+            "--success-criterion",
+            "It is rejected",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.add_calls == [
+        (
+            "Needs knowledge",
+            "No knowledge was supplied",
+            "Reject the playbook",
+            ["Do one thing"],
+            ["It is rejected"],
+            [],
+            None,
+            None,
+        )
+    ]
+    assert service.playbooks == []
+    assert "Playbook requires at least one knowledge ID." in result.output
+
+
+def test_playbook_add_handles_empty_steps_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    service = FakePlaybookService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "playbook",
+            "add",
+            "--title",
+            "Needs steps",
+            "--situation",
+            "No steps were supplied",
+            "--objective",
+            "Reject the playbook",
+            "--success-criterion",
+            "It is rejected",
+            "--knowledge-id",
+            str(knowledge_id),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert len(service.add_calls) == 1
+    assert service.add_calls[0][3] == []
+    assert service.playbooks == []
+    assert "Playbook requires at least one step." in result.output
+
+
+def test_playbook_add_requires_success_criterion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_id = UUID("56565656-5656-5656-5656-565656565656")
+    service = FakePlaybookService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "playbook",
+            "add",
+            "--title",
+            "Missing criterion",
+            "--situation",
+            "No success criterion was supplied",
+            "--objective",
+            "Reject incomplete CLI input",
+            "--step",
+            "Perform one action",
+            "--knowledge-id",
+            str(knowledge_id),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert service.add_calls == []
+
+
+def test_playbook_add_handles_missing_knowledge_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    service = FakePlaybookService([], missing_knowledge_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "playbook",
+            "add",
+            "--title",
+            "Missing knowledge",
+            "--situation",
+            "A linked knowledge item is absent",
+            "--objective",
+            "Reject the playbook",
+            "--step",
+            "Validate knowledge",
+            "--success-criterion",
+            "It is rejected",
+            "--knowledge-id",
+            str(missing_id),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert len(service.add_calls) == 1
+    assert service.playbooks == []
+    assert f"Knowledge not found: {missing_id}" in result.output
+
+
+def test_playbook_list_displays_playbooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    knowledge_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    playbook = Playbook(
+        title="Listed playbook",
+        situation="CLI list",
+        objective="Display summary fields",
+        steps=["List playbooks"],
+        success_criteria=["Playbook is visible"],
+        knowledge_ids=[knowledge_id],
+    )
+    service = FakePlaybookService([playbook])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "list"])
+
+    assert result.exit_code == 0
+    assert f"ID: {playbook.id}" in result.output
+    assert f"Timestamp: {playbook.timestamp}" in result.output
+    assert "Title: Listed playbook" in result.output
+    assert "Objective: Display summary fields" in result.output
+
+
+def test_playbook_list_handles_empty_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = FakePlaybookService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "list"])
+
+    assert result.exit_code == 0
+    assert "No playbooks found." in result.output
+
+
+def test_playbook_show_delegates_and_displays_all_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_knowledge_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+    second_knowledge_id = UUID("ffffffff-ffff-ffff-ffff-ffffffffffff")
+    playbook = Playbook(
+        title="Shown playbook",
+        situation="A production issue repeats",
+        objective="Resolve it consistently",
+        steps=["Collect evidence", "Apply the fix"],
+        success_criteria=["Root cause is known", "Regression is covered"],
+        constraints=["No broad refactor", "Keep logs"],
+        knowledge_ids=[first_knowledge_id, second_knowledge_id],
+        tags=["ops", "debugging"],
+    )
+    service = FakePlaybookService([playbook])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "show", str(playbook.id)])
+
+    assert result.exit_code == 0
+    assert service.requested_ids == [playbook.id]
+    assert f"ID: {playbook.id}" in result.output
+    assert f"Timestamp: {playbook.timestamp}" in result.output
+    assert "Title: Shown playbook" in result.output
+    assert "Situation: A production issue repeats" in result.output
+    assert "Objective: Resolve it consistently" in result.output
+    assert "Steps:" in result.output
+    assert "- Collect evidence" in result.output
+    assert "- Apply the fix" in result.output
+    assert "Success criteria:" in result.output
+    assert "- Root cause is known" in result.output
+    assert "- Regression is covered" in result.output
+    assert "Constraints:" in result.output
+    assert "- No broad refactor" in result.output
+    assert "- Keep logs" in result.output
+    assert "Knowledge IDs:" in result.output
+    assert str(first_knowledge_id) in result.output
+    assert str(second_knowledge_id) in result.output
+    assert "Tags: ops, debugging" in result.output
+
+
+def test_playbook_show_displays_dash_for_empty_constraints_and_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_id = UUID("12121212-1212-1212-1212-121212121212")
+    playbook = Playbook(
+        title="No optional fields",
+        situation="Optional fields are empty",
+        objective="Render empty fields clearly",
+        steps=["Show playbook"],
+        success_criteria=["Output is clear"],
+        knowledge_ids=[knowledge_id],
+    )
+    service = FakePlaybookService([playbook])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "show", str(playbook.id)])
+
+    assert result.exit_code == 0
+    assert "Constraints:\n-" in result.output
+    assert "Tags: -" in result.output
+
+
+def test_playbook_show_handles_missing_playbook(monkeypatch: pytest.MonkeyPatch) -> None:
+    missing_id = UUID("34343434-3434-3434-3434-343434343434")
+    service = FakePlaybookService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "show", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.requested_ids == [missing_id]
+    assert f"Playbook not found: {missing_id}" in result.output

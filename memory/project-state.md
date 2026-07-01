@@ -66,19 +66,22 @@ existing experience after loading that experience through the
 `KnowledgeService.list_for_experience()` verifies one existing experience and
 returns knowledge items linked to it.
 
-Neural Engine now has a minimal Playbook vertical slice without CLI commands:
+Neural Engine now has a minimal Playbook vertical slice:
 
 * Domain model: `neural_engine.domain.Playbook`
 * Application service: `PlaybookService`
 * Port: `PlaybookRepository`
 * Infrastructure implementation: `JsonPlaybookRepository`
 * Dependency wiring: `application/container.py`
+* CLI commands: `neural playbook add`, `neural playbook list`, and
+  `neural playbook show UUID`
 
 A Playbook is an explicit operational procedure that applies one or more
 Knowledge items to a class of situations. `PlaybookService.add()` requires at
 least one knowledge ID and at least one step, validates every referenced
 Knowledge item through the `KnowledgeRepository` port before saving, and stores
 Playbooks as one JSON file per playbook under `NeuralPaths.PLAYBOOKS`.
+The Playbook CLI only records explicit user-supplied operational procedures.
 Playbooks are not executed, inferred, or generated automatically.
 
 ## Validation
@@ -90,9 +93,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 108 tests.
+Pytest collected 117 tests.
 
 ## Notes for next work
 
-The next logical step is to expose Playbooks through a thin CLI adapter without
-adding execution or automatic generation.
+The next logical step is to add read-only relation commands for Playbooks and
+Knowledge without adding execution or automatic generation.
