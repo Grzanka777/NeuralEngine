@@ -49,7 +49,8 @@ Neural Engine now has a minimal Knowledge vertical slice:
 * Infrastructure implementation: `JsonKnowledgeRepository`
 * Dependency wiring: `application/container.py`
 * CLI commands: `neural knowledge add`, `neural knowledge from-experience`,
-  `neural knowledge list`, and `neural knowledge show UUID`
+  `neural knowledge list`, `neural knowledge show UUID`, and
+  `neural knowledge playbooks UUID`
 
 Knowledge is a durable rule, lesson, or conclusion derived from one or more
 experiences. `KnowledgeService.add()` requires at least one experience ID and
@@ -83,6 +84,8 @@ Knowledge item through the `KnowledgeRepository` port before saving, and stores
 Playbooks as one JSON file per playbook under `NeuralPaths.PLAYBOOKS`.
 The Playbook CLI only records explicit user-supplied operational procedures.
 Playbooks are not executed, inferred, or generated automatically.
+`PlaybookService.list_for_knowledge()` verifies one existing Knowledge item and
+returns Playbooks linked to it.
 
 ## Validation
 
@@ -93,9 +96,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 117 tests.
+Pytest collected 126 tests.
 
 ## Notes for next work
 
-The next logical step is to add read-only relation commands for Playbooks and
-Knowledge without adding execution or automatic generation.
+The next logical step is to decide how Playbooks should feed future Evolution
+records without adding execution or automatic generation.

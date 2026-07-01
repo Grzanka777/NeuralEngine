@@ -71,6 +71,14 @@ class PlaybookService:
     def list_playbooks(self) -> list[Playbook]:
         return self._playbook_repository.load_all()
 
+    def list_for_knowledge(self, knowledge_id: UUID) -> list[Playbook]:
+        if self._knowledge_repository.get_by_id(knowledge_id) is None:
+            raise KnowledgeNotFoundError(knowledge_id)
+
+        playbooks = self._playbook_repository.load_all()
+
+        return [playbook for playbook in playbooks if knowledge_id in playbook.knowledge_ids]
+
     def get_by_id(self, playbook_id: UUID) -> Playbook | None:
         return self._playbook_repository.get_by_id(playbook_id)
 

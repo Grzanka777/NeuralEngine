@@ -376,6 +376,25 @@ def list_knowledge() -> None:
         console.print()
 
 
+@knowledge_app.command("playbooks")
+def list_knowledge_playbooks(knowledge_id: UUID) -> None:
+    """List playbooks linked to one knowledge item."""
+
+    service = container.playbook_service()
+    try:
+        playbooks = service.list_for_knowledge(knowledge_id)
+    except KnowledgeNotFoundError as error:
+        _exit_knowledge_not_found(error)
+
+    if not playbooks:
+        console.print(f"[yellow]No playbooks linked to knowledge: {knowledge_id}[/yellow]")
+        return
+
+    for playbook in playbooks:
+        _print_playbook_summary(playbook)
+        console.print()
+
+
 @knowledge_app.command("show")
 def show_knowledge(knowledge_id: UUID) -> None:
     """Show one knowledge item."""

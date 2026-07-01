@@ -280,6 +280,7 @@ class FakePlaybookService:
                 list[str] | None,
             ]
         ] = []
+        self.list_for_knowledge_calls: list[UUID] = []
         self.requested_ids: list[UUID] = []
 
     def add(
@@ -331,6 +332,14 @@ class FakePlaybookService:
 
     def list_playbooks(self) -> list[Playbook]:
         return self.playbooks
+
+    def list_for_knowledge(self, knowledge_id: UUID) -> list[Playbook]:
+        self.list_for_knowledge_calls.append(knowledge_id)
+
+        if self.missing_knowledge_id is not None:
+            raise KnowledgeNotFoundError(self.missing_knowledge_id)
+
+        return [playbook for playbook in self.playbooks if knowledge_id in playbook.knowledge_ids]
 
     def get_by_id(self, playbook_id: UUID) -> Playbook | None:
         self.requested_ids.append(playbook_id)
@@ -1084,6 +1093,62 @@ def test_knowledge_list_handles_empty_repository(monkeypatch: pytest.MonkeyPatch
 
     assert result.exit_code == 0
     assert "No knowledge found." in result.output
+
+
+def test_knowledge_playbooks_delegates_and_displays_linked_playbooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_id = UUID("45454545-4545-4545-4545-454545454545")
+    playbook = Playbook(
+        title="Linked playbook",
+        situation="CLI relation test",
+        objective="Display linked playbooks",
+        steps=["List playbooks"],
+        success_criteria=["Playbook is displayed"],
+        knowledge_ids=[knowledge_id],
+    )
+    service = FakePlaybookService([playbook])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "playbooks", str(knowledge_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_knowledge_calls == [knowledge_id]
+    assert f"ID: {playbook.id}" in result.output
+    assert f"Timestamp: {playbook.timestamp}" in result.output
+    assert "Title: Linked playbook" in result.output
+    assert "Objective: Display linked playbooks" in result.output
+
+
+def test_knowledge_playbooks_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_id = UUID("67676767-6767-6767-6767-676767676767")
+    service = FakePlaybookService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "playbooks", str(knowledge_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_knowledge_calls == [knowledge_id]
+    assert f"No playbooks linked to knowledge: {knowledge_id}" in result.output
+
+
+def test_knowledge_playbooks_missing_knowledge_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("78787878-7878-7878-7878-787878787878")
+    service = FakePlaybookService([], missing_knowledge_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "playbooks", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_knowledge_calls == [missing_id]
+    assert f"Knowledge not found: {missing_id}" in result.output
 
 
 def test_knowledge_show_delegates_and_displays_all_fields(

@@ -251,6 +251,111 @@ def test_list_playbooks_returns_repository_items() -> None:
     assert playbook_repo.load_all_calls == 1
 
 
+def test_list_playbooks_for_knowledge_returns_one_linked_item() -> None:
+    knowledge = make_knowledge()
+    linked = Playbook(
+        title="Linked playbook",
+        situation="It references the knowledge",
+        objective="Return linked playbook",
+        steps=["Use the knowledge"],
+        success_criteria=["Linked playbook is returned"],
+        knowledge_ids=[knowledge.id],
+    )
+    knowledge_repo = FakeKnowledgeRepository([knowledge])
+    playbook_repo = FakePlaybookRepository(knowledge_repo)
+    playbook_repo.saved.append(linked)
+    service = PlaybookService(playbook_repo, knowledge_repo)
+
+    assert service.list_for_knowledge(knowledge.id) == [linked]
+    assert playbook_repo.load_all_calls == 1
+
+
+def test_list_playbooks_for_knowledge_returns_multiple_linked_items() -> None:
+    knowledge = make_knowledge()
+    first = Playbook(
+        title="First linked playbook",
+        situation="It references the knowledge",
+        objective="Return first playbook",
+        steps=["Use first procedure"],
+        success_criteria=["First playbook is returned"],
+        knowledge_ids=[knowledge.id],
+    )
+    second = Playbook(
+        title="Second linked playbook",
+        situation="It also references the knowledge",
+        objective="Return second playbook",
+        steps=["Use second procedure"],
+        success_criteria=["Second playbook is returned"],
+        knowledge_ids=[knowledge.id],
+    )
+    knowledge_repo = FakeKnowledgeRepository([knowledge])
+    playbook_repo = FakePlaybookRepository(knowledge_repo)
+    playbook_repo.saved.extend([first, second])
+    service = PlaybookService(playbook_repo, knowledge_repo)
+
+    assert service.list_for_knowledge(knowledge.id) == [first, second]
+
+
+def test_list_playbooks_for_knowledge_excludes_unrelated_items() -> None:
+    knowledge = make_knowledge("Linked knowledge")
+    other_knowledge = make_knowledge("Other knowledge")
+    linked = Playbook(
+        title="Linked playbook",
+        situation="It references the requested knowledge",
+        objective="Return linked playbook",
+        steps=["Use linked knowledge"],
+        success_criteria=["Linked playbook is returned"],
+        knowledge_ids=[knowledge.id],
+    )
+    unrelated = Playbook(
+        title="Unrelated playbook",
+        situation="It references different knowledge",
+        objective="Do not return unrelated playbook",
+        steps=["Use unrelated knowledge"],
+        success_criteria=["Unrelated playbook is excluded"],
+        knowledge_ids=[other_knowledge.id],
+    )
+    knowledge_repo = FakeKnowledgeRepository([knowledge, other_knowledge])
+    playbook_repo = FakePlaybookRepository(knowledge_repo)
+    playbook_repo.saved.extend([linked, unrelated])
+    service = PlaybookService(playbook_repo, knowledge_repo)
+
+    assert service.list_for_knowledge(knowledge.id) == [linked]
+
+
+def test_list_playbooks_for_knowledge_returns_empty_list_when_none_are_linked() -> None:
+    knowledge = make_knowledge("Unlinked knowledge")
+    other_knowledge = make_knowledge("Other knowledge")
+    unrelated = Playbook(
+        title="Unrelated playbook",
+        situation="It references different knowledge",
+        objective="Return no playbooks",
+        steps=["Use unrelated knowledge"],
+        success_criteria=["No linked playbooks are returned"],
+        knowledge_ids=[other_knowledge.id],
+    )
+    knowledge_repo = FakeKnowledgeRepository([knowledge, other_knowledge])
+    playbook_repo = FakePlaybookRepository(knowledge_repo)
+    playbook_repo.saved.append(unrelated)
+    service = PlaybookService(playbook_repo, knowledge_repo)
+
+    assert service.list_for_knowledge(knowledge.id) == []
+    assert playbook_repo.load_all_calls == 1
+
+
+def test_list_playbooks_for_knowledge_raises_when_missing_without_loading_playbooks() -> None:
+    missing_id = UUID("55555555-5555-5555-5555-555555555555")
+    knowledge_repo = FakeKnowledgeRepository()
+    playbook_repo = FakePlaybookRepository(knowledge_repo)
+    service = PlaybookService(playbook_repo, knowledge_repo)
+
+    with pytest.raises(KnowledgeNotFoundError) as error:
+        service.list_for_knowledge(missing_id)
+
+    assert error.value.knowledge_id == missing_id
+    assert playbook_repo.load_all_calls == 0
+
+
 def test_get_by_id_returns_matching_playbook() -> None:
     knowledge = make_knowledge()
     knowledge_repo = FakeKnowledgeRepository([knowledge])

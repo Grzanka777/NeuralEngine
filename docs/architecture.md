@@ -110,6 +110,12 @@ the statement, rationale, confidence, and tags supplied by the caller.
 `neural knowledge show UUID` retrieves a single knowledge item through
 `KnowledgeService.get_by_id()` and displays all knowledge fields.
 
+`neural knowledge playbooks UUID` delegates to
+`PlaybookService.list_for_knowledge()`. The service verifies the knowledge item
+exists through the `KnowledgeRepository` port, loads playbooks through the
+`PlaybookRepository` port, and returns only playbooks linked to that knowledge
+ID.
+
 The JSON repository is the current infrastructure implementation and stores one
 file per knowledge item under `NeuralPaths.KNOWLEDGE`.
 
