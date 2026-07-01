@@ -93,6 +93,12 @@ knowledge when validation fails.
 `neural knowledge list` retrieves all knowledge through the same service and
 repository stack.
 
+`neural knowledge from-experience EXPERIENCE_UUID` delegates to
+`KnowledgeService.add_from_experience()`. The service loads the source
+experience through the `ExperienceRepository` port once, rejects a missing
+experience, and creates knowledge linked to that single experience ID using only
+the statement, rationale, confidence, and tags supplied by the caller.
+
 `neural knowledge show UUID` retrieves a single knowledge item through
 `KnowledgeService.get_by_id()` and displays all knowledge fields.
 

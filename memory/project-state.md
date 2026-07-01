@@ -47,8 +47,8 @@ Neural Engine now has a minimal Knowledge vertical slice:
 * Port: `KnowledgeRepository`
 * Infrastructure implementation: `JsonKnowledgeRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: `neural knowledge add`, `neural knowledge list`, and
-  `neural knowledge show UUID`
+* CLI commands: `neural knowledge add`, `neural knowledge from-experience`,
+  `neural knowledge list`, and `neural knowledge show UUID`
 
 Knowledge is a durable rule, lesson, or conclusion derived from one or more
 experiences. `KnowledgeService.add()` requires at least one experience ID and
@@ -59,6 +59,9 @@ before creating or saving knowledge. Missing evidence raises
 as one JSON file per knowledge item under `NeuralPaths.KNOWLEDGE`.
 The Knowledge CLI only records explicit user-supplied statements, rationale,
 confidence, experience IDs, and tags; it does not generate or infer knowledge.
+`KnowledgeService.add_from_experience()` creates knowledge linked to one
+existing experience after loading that experience through the
+`ExperienceRepository` port.
 
 ## Validation
 
@@ -69,7 +72,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 79 tests.
+Pytest collected 83 tests.
 
 ## Notes for next work
 

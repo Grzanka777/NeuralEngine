@@ -304,6 +304,33 @@ def add_knowledge(
     console.print(f"[green]Knowledge stored.[/green] ID: [cyan]{knowledge.id}[/cyan]")
 
 
+@knowledge_app.command("from-experience")
+def add_knowledge_from_experience(
+    experience_id: UUID,
+    statement: Annotated[str, typer.Option("--statement")],
+    rationale: Annotated[str, typer.Option("--rationale")],
+    confidence: Annotated[KnowledgeConfidence, typer.Option("--confidence")],
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Store a new knowledge item from an existing experience."""
+
+    service = container.knowledge_service()
+    try:
+        knowledge = service.add_from_experience(
+            experience_id=experience_id,
+            statement=statement,
+            rationale=rationale,
+            confidence=confidence,
+            tags=tags,
+        )
+    except ExperienceNotFoundError as error:
+        _exit_experience_not_found(error)
+
+    console.print(
+        f"[green]Knowledge stored from experience.[/green] ID: [cyan]{knowledge.id}[/cyan]"
+    )
+
+
 @knowledge_app.command("list")
 def list_knowledge() -> None:
     """List all knowledge."""

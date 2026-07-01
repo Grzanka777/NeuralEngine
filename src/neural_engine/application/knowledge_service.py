@@ -55,6 +55,31 @@ class KnowledgeService:
 
         return knowledge
 
+    def add_from_experience(
+        self,
+        experience_id: UUID,
+        statement: str,
+        rationale: str,
+        confidence: KnowledgeConfidence,
+        tags: list[str] | None = None,
+    ) -> Knowledge:
+        experience = self._experience_repository.get_by_id(experience_id)
+
+        if experience is None:
+            raise ExperienceNotFoundError(experience_id)
+
+        knowledge = Knowledge(
+            statement=statement,
+            rationale=rationale,
+            confidence=confidence,
+            experience_ids=[experience.id],
+            tags=tags or [],
+        )
+
+        self._knowledge_repository.save(knowledge)
+
+        return knowledge
+
     def list_knowledge(self) -> list[Knowledge]:
         return self._knowledge_repository.load_all()
 

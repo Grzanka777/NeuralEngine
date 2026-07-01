@@ -194,6 +194,48 @@ def test_add_knowledge_validates_all_experiences_before_saving() -> None:
     assert knowledge_repo.lookup_order_at_save == [first.id, second.id]
 
 
+def test_add_knowledge_from_experience_preserves_supplied_fields() -> None:
+    experience = make_experience()
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+
+    knowledge = service.add_from_experience(
+        experience_id=experience.id,
+        statement="Use narrow tests first",
+        rationale="The source experience isolated the issue faster.",
+        confidence=KnowledgeConfidence.HIGH,
+        tags=["testing", "manual"],
+    )
+
+    assert knowledge_repo.saved == [knowledge]
+    assert knowledge.statement == "Use narrow tests first"
+    assert knowledge.rationale == "The source experience isolated the issue faster."
+    assert knowledge.confidence == KnowledgeConfidence.HIGH
+    assert knowledge.tags == ["testing", "manual"]
+    assert knowledge.experience_ids == [experience.id]
+    assert experience_repo.requested_ids == [experience.id]
+
+
+def test_add_knowledge_from_experience_raises_when_experience_is_missing() -> None:
+    missing_id = UUID("44444444-4444-4444-4444-444444444444")
+    experience_repo = FakeExperienceRepository()
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+
+    with pytest.raises(ExperienceNotFoundError) as error:
+        service.add_from_experience(
+            experience_id=missing_id,
+            statement="Missing source",
+            rationale="The source experience does not exist.",
+            confidence=KnowledgeConfidence.LOW,
+        )
+
+    assert error.value.experience_id == missing_id
+    assert knowledge_repo.saved == []
+    assert experience_repo.requested_ids == [missing_id]
+
+
 def test_list_knowledge_returns_repository_items() -> None:
     experience = make_experience()
     experience_repo = FakeExperienceRepository([experience])

@@ -61,6 +61,12 @@ neural knowledge add \
   --experience-id 11111111-1111-1111-1111-111111111111 \
   --tag testing
 
+neural knowledge from-experience 11111111-1111-1111-1111-111111111111 \
+  --statement "Focused tests reduce debugging time" \
+  --rationale "The linked experience showed faster isolation with narrow test runs" \
+  --confidence high \
+  --tag testing
+
 neural knowledge list
 neural knowledge show 11111111-1111-1111-1111-111111111111
 ```
