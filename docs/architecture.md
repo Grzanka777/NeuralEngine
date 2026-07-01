@@ -6,13 +6,14 @@ Neural Engine follows Clean Architecture.
 
 Domain:
 
-* Owns core concepts such as `Observation` and `Experience`.
+* Owns core concepts such as `Observation`, `Experience`, and `Knowledge`.
 * Has no dependency on infrastructure.
 
 Application:
 
 * Coordinates use cases such as adding, listing, and searching observations,
-  and adding, listing, and retrieving experiences.
+  adding, listing, and retrieving experiences, and adding, listing, and
+  retrieving knowledge.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -24,6 +25,7 @@ Infrastructure:
 * Implements ports using concrete storage mechanisms.
 * The current observation repository stores one JSON file per observation.
 * The current experience repository stores one JSON file per experience.
+* The current knowledge repository stores one JSON file per knowledge item.
 
 CLI:
 
@@ -76,3 +78,14 @@ repository stack.
 through the `ObservationRepository` port, copies `Observation.content` exactly
 into the experience context, links the new experience to that observation ID,
 and persists it through the `ExperienceRepository` port.
+
+## Knowledge Flow
+
+Knowledge is currently application-only and has no CLI commands.
+`KnowledgeService.add()` receives an explicit statement, rationale, confidence,
+experience IDs, and optional tags. The service rejects an empty evidence list,
+then verifies each referenced experience through the `ExperienceRepository` port
+before it creates or saves a domain `Knowledge` item. Validation stops on the
+first missing experience and does not persist knowledge when validation fails.
+The JSON repository is the current infrastructure implementation and stores one
+file per knowledge item under `NeuralPaths.KNOWLEDGE`.
