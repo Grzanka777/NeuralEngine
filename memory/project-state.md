@@ -117,7 +117,8 @@ Neural Engine now has a minimal PlaybookEvaluation vertical slice:
 * Port: `PlaybookEvaluationRepository`
 * Infrastructure implementation: `JsonPlaybookEvaluationRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: none yet
+* CLI commands: `neural evaluation add`, `neural evaluation list`, and
+  `neural evaluation show UUID`
 
 A PlaybookEvaluation is an explicit human or external-system assessment of one
 existing PlaybookRun. `PlaybookEvaluationService.add()` requires at least one
@@ -128,6 +129,9 @@ records effectiveness, findings, improvements, evidence, notes, and tags
 supplied by the caller. Neural Engine does not evaluate runs automatically,
 modify Playbooks or PlaybookRuns, create Knowledge or Playbooks, or create
 automatic evolution proposals.
+The Evaluation CLI delegates to the application service, lets Typer parse UUIDs
+and `PlaybookEffectiveness`, and only renders explicit user-supplied or
+external-system evaluation records.
 
 ## Validation
 
@@ -138,9 +142,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 176 tests.
+Pytest collected 186 tests.
 
 ## Notes for next work
 
-The next logical step is to add explicit CLI commands for PlaybookEvaluation
-only after the application and persistence slice is stable.
+The next logical step is to add read-only relation navigation from PlaybookRun
+to linked PlaybookEvaluation records, without adding automatic evaluation or
+evolution.

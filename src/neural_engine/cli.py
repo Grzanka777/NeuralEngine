@@ -12,6 +12,10 @@ from neural_engine.application.knowledge_service import (
     ExperienceNotFoundError,
     KnowledgeEvidenceRequiredError,
 )
+from neural_engine.application.playbook_evaluation_service import (
+    PlaybookEvaluationFindingsRequiredError,
+    PlaybookRunNotFoundError,
+)
 from neural_engine.application.playbook_run_service import (
     PlaybookNotFoundError,
     PlaybookRunActionsRequiredError,
@@ -29,6 +33,8 @@ from neural_engine.domain import (
     KnowledgeConfidence,
     Observation,
     Playbook,
+    PlaybookEffectiveness,
+    PlaybookEvaluation,
     PlaybookRun,
 )
 
@@ -38,6 +44,9 @@ app = typer.Typer(
 )
 experience_app = typer.Typer(
     help="Manage experiences.",
+)
+evaluation_app = typer.Typer(
+    help="Record and inspect playbook evaluations.",
 )
 knowledge_app = typer.Typer(
     help="Manage knowledge.",
@@ -52,6 +61,7 @@ run_app = typer.Typer(
     help="Record and inspect playbook runs.",
 )
 app.add_typer(experience_app, name="experience")
+app.add_typer(evaluation_app, name="evaluation")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(observation_app, name="observation")
 app.add_typer(playbook_app, name="playbook")
@@ -418,6 +428,68 @@ def show_knowledge(knowledge_id: UUID) -> None:
     _print_knowledge(knowledge)
 
 
+@evaluation_app.command("add")
+def add_evaluation(
+    run_id: Annotated[UUID, typer.Option("--run-id")],
+    effectiveness: Annotated[PlaybookEffectiveness, typer.Option("--effectiveness")],
+    findings: Annotated[list[str] | None, typer.Option("--finding")] = None,
+    improvements: Annotated[list[str] | None, typer.Option("--improvement")] = None,
+    evidence: Annotated[list[str] | None, typer.Option("--evidence")] = None,
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record a manual or external playbook evaluation."""
+
+    service = container.playbook_evaluation_service()
+    try:
+        evaluation = service.add(
+            run_id=run_id,
+            effectiveness=effectiveness,
+            findings=findings or [],
+            improvements=improvements,
+            evidence=evidence,
+            notes=notes,
+            tags=tags,
+        )
+    except PlaybookEvaluationFindingsRequiredError as error:
+        console.print("[red]Playbook evaluation requires at least one finding.[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRunNotFoundError as error:
+        _exit_playbook_run_not_found(error)
+
+    console.print(f"[green]Playbook evaluation stored.[/green] ID: [cyan]{evaluation.id}[/cyan]")
+
+
+@evaluation_app.command("list")
+def list_evaluations() -> None:
+    """List all playbook evaluations."""
+
+    service = container.playbook_evaluation_service()
+    evaluations = service.list_evaluations()
+
+    if not evaluations:
+        console.print("[yellow]No playbook evaluations found.[/yellow]")
+        return
+
+    for evaluation in evaluations:
+        _print_playbook_evaluation_summary(evaluation)
+        console.print()
+
+
+@evaluation_app.command("show")
+def show_evaluation(evaluation_id: UUID) -> None:
+    """Show one playbook evaluation."""
+
+    service = container.playbook_evaluation_service()
+    evaluation = service.get_by_id(evaluation_id)
+
+    if evaluation is None:
+        console.print(f"[red]Playbook evaluation not found: {evaluation_id}[/red]")
+        raise typer.Exit(code=1)
+
+    _print_playbook_evaluation(evaluation)
+
+
 @playbook_app.command("add")
 def add_playbook(
     title: Annotated[str, typer.Option("--title")],
@@ -674,6 +746,25 @@ def _print_playbook_run_summary(run: PlaybookRun) -> None:
     console.print(f"Success: {str(run.success).lower()}")
 
 
+def _print_playbook_evaluation(evaluation: PlaybookEvaluation) -> None:
+    console.print(f"ID: {evaluation.id}")
+    console.print(f"Timestamp: {evaluation.timestamp}")
+    console.print(f"Run ID: {evaluation.run_id}")
+    console.print(f"Effectiveness: {evaluation.effectiveness.value}")
+    _print_repeated_field("Findings", evaluation.findings)
+    _print_repeated_field("Improvements", evaluation.improvements)
+    _print_repeated_field("Evidence", evaluation.evidence)
+    console.print(f"Notes: {evaluation.notes if evaluation.notes is not None else '-'}")
+    console.print(f"Tags: {', '.join(evaluation.tags) if evaluation.tags else '-'}")
+
+
+def _print_playbook_evaluation_summary(evaluation: PlaybookEvaluation) -> None:
+    console.print(f"ID: {evaluation.id}")
+    console.print(f"Timestamp: {evaluation.timestamp}")
+    console.print(f"Run ID: {evaluation.run_id}")
+    console.print(f"Effectiveness: {evaluation.effectiveness.value}")
+
+
 def _print_observation_summary(observation: Observation) -> None:
     console.print(f"ID: {observation.id}")
     console.print(f"Timestamp: {observation.timestamp}")
@@ -706,6 +797,11 @@ def _exit_knowledge_not_found(error: KnowledgeNotFoundError) -> None:
 
 def _exit_playbook_not_found(error: PlaybookNotFoundError) -> None:
     console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _exit_playbook_run_not_found(error: PlaybookRunNotFoundError) -> None:
+    console.print(f"[red]Playbook run not found: {error.run_id}[/red]")
     raise typer.Exit(code=1) from error
 
 

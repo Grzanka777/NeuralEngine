@@ -173,7 +173,8 @@ Engine does not execute playbooks or evaluate runs automatically.
 
 ## Playbook Evaluation Flow
 
-`PlaybookEvaluationService.add()` records explicit human-supplied or
+`neural evaluation add` calls the application container, receives a
+`PlaybookEvaluationService`, and records explicit human-supplied or
 external-system assessment data about one existing playbook run. The service
 rejects an empty findings list, verifies the referenced run through the
 `PlaybookRunRepository` port, then creates and saves a domain
@@ -181,11 +182,11 @@ rejects an empty findings list, verifies the referenced run through the
 Validation stops before run lookup when findings are missing and before
 construction or persistence when the run does not exist.
 
-`PlaybookEvaluationService.list_evaluations()` retrieves all playbook
-evaluations through the same service and repository stack.
+`neural evaluation list` retrieves all playbook evaluations through the same
+service and repository stack.
 
-`PlaybookEvaluationService.get_by_id()` retrieves a single playbook evaluation
-by ID.
+`neural evaluation show UUID` retrieves a single playbook evaluation through
+`PlaybookEvaluationService.get_by_id()` and displays all evaluation fields.
 
 Playbook evaluations are supplied manually or externally. They store the run ID,
 effectiveness judgment, findings, optional improvements, optional evidence,

@@ -122,6 +122,20 @@ existing PlaybookRun. They record effectiveness, findings, possible
 improvements, evidence, notes, and tags; Neural Engine does not evaluate runs
 automatically or create evolution proposals.
 
+```bash
+neural evaluation add \
+  --run-id 11111111-1111-1111-1111-111111111111 \
+  --effectiveness partial \
+  --finding "The playbook isolated the likely cause" \
+  --improvement "Clarify the verification step" \
+  --evidence "Manual review note" \
+  --notes "Assessment supplied after the run" \
+  --tag testing
+
+neural evaluation list
+neural evaluation show 11111111-1111-1111-1111-111111111111
+```
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. Knowledge is stored locally as JSON files under the knowledge

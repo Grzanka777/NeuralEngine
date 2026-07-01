@@ -10,6 +10,10 @@ from neural_engine.application.knowledge_service import (
     KnowledgeEvidenceRequiredError,
 )
 from neural_engine.application.observation_service import AddObservationResult
+from neural_engine.application.playbook_evaluation_service import (
+    PlaybookEvaluationFindingsRequiredError,
+    PlaybookRunNotFoundError,
+)
 from neural_engine.application.playbook_run_service import (
     PlaybookNotFoundError,
     PlaybookRunActionsRequiredError,
@@ -26,6 +30,8 @@ from neural_engine.domain import (
     KnowledgeConfidence,
     Observation,
     Playbook,
+    PlaybookEffectiveness,
+    PlaybookEvaluation,
     PlaybookRun,
 )
 
@@ -444,6 +450,81 @@ class FakePlaybookRunService:
         return None
 
 
+class FakePlaybookEvaluationService:
+    def __init__(
+        self,
+        evaluations: list[PlaybookEvaluation],
+        missing_run_id: UUID | None = None,
+    ) -> None:
+        self.evaluations = evaluations
+        self.missing_run_id = missing_run_id
+        self.add_calls: list[
+            tuple[
+                UUID,
+                PlaybookEffectiveness,
+                list[str],
+                list[str] | None,
+                list[str] | None,
+                str | None,
+                list[str] | None,
+            ]
+        ] = []
+        self.requested_ids: list[UUID] = []
+
+    def add(
+        self,
+        run_id: UUID,
+        effectiveness: PlaybookEffectiveness,
+        findings: list[str],
+        improvements: list[str] | None = None,
+        evidence: list[str] | None = None,
+        notes: str | None = None,
+        tags: list[str] | None = None,
+    ) -> PlaybookEvaluation:
+        self.add_calls.append(
+            (
+                run_id,
+                effectiveness,
+                findings,
+                improvements,
+                evidence,
+                notes,
+                tags,
+            )
+        )
+
+        if not findings:
+            raise PlaybookEvaluationFindingsRequiredError()
+
+        if self.missing_run_id is not None:
+            raise PlaybookRunNotFoundError(self.missing_run_id)
+
+        evaluation = PlaybookEvaluation(
+            run_id=run_id,
+            effectiveness=effectiveness,
+            findings=findings,
+            improvements=improvements or [],
+            evidence=evidence or [],
+            notes=notes,
+            tags=tags or [],
+        )
+        self.evaluations.append(evaluation)
+
+        return evaluation
+
+    def list_evaluations(self) -> list[PlaybookEvaluation]:
+        return self.evaluations
+
+    def get_by_id(self, evaluation_id: UUID) -> PlaybookEvaluation | None:
+        self.requested_ids.append(evaluation_id)
+
+        for evaluation in self.evaluations:
+            if evaluation.id == evaluation_id:
+                return evaluation
+
+        return None
+
+
 class FakeContainer:
     def __init__(
         self,
@@ -452,12 +533,14 @@ class FakeContainer:
         knowledge_service: FakeKnowledgeService | None = None,
         playbook_service: FakePlaybookService | None = None,
         playbook_run_service: FakePlaybookRunService | None = None,
+        playbook_evaluation_service: FakePlaybookEvaluationService | None = None,
     ) -> None:
         self._observation_service = observation_service
         self._experience_service = experience_service
         self._knowledge_service = knowledge_service
         self._playbook_service = playbook_service
         self._playbook_run_service = playbook_run_service
+        self._playbook_evaluation_service = playbook_evaluation_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -488,6 +571,12 @@ class FakeContainer:
             raise AssertionError("Playbook run service was not expected")
 
         return self._playbook_run_service
+
+    def playbook_evaluation_service(self) -> FakePlaybookEvaluationService:
+        if self._playbook_evaluation_service is None:
+            raise AssertionError("Playbook evaluation service was not expected")
+
+        return self._playbook_evaluation_service
 
 
 def test_search_displays_matching_observations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1945,3 +2034,273 @@ def test_run_show_handles_missing_run(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
     assert f"Playbook run not found: {missing_id}" in result.output
+
+
+@pytest.mark.parametrize(
+    ("effectiveness_value", "effectiveness"),
+    [
+        ("ineffective", PlaybookEffectiveness.INEFFECTIVE),
+        ("partial", PlaybookEffectiveness.PARTIAL),
+        ("effective", PlaybookEffectiveness.EFFECTIVE),
+    ],
+)
+def test_evaluation_add_delegates_with_parsed_values_and_prints_id(
+    effectiveness_value: str,
+    effectiveness: PlaybookEffectiveness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = UUID("11111111-2222-3333-4444-555555555555")
+    service = FakePlaybookEvaluationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "evaluation",
+            "add",
+            "--run-id",
+            str(run_id),
+            "--effectiveness",
+            effectiveness_value,
+            "--finding",
+            "The playbook isolated the issue",
+            "--finding",
+            "The rollback step was unclear",
+            "--improvement",
+            "Clarify rollback criteria",
+            "--improvement",
+            "Add verification evidence",
+            "--evidence",
+            "Incident log",
+            "--evidence",
+            "Reviewer note",
+            "--notes",
+            "Manual assessment",
+            "--tag",
+            "ops",
+            "--tag",
+            "review",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls == [
+        (
+            run_id,
+            effectiveness,
+            ["The playbook isolated the issue", "The rollback step was unclear"],
+            ["Clarify rollback criteria", "Add verification evidence"],
+            ["Incident log", "Reviewer note"],
+            "Manual assessment",
+            ["ops", "review"],
+        )
+    ]
+    assert "Playbook evaluation stored." in result.output
+    assert str(service.evaluations[0].id) in result.output
+
+
+def test_evaluation_add_omitted_findings_returns_error_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = UUID("22222222-3333-4444-5555-666666666666")
+    service = FakePlaybookEvaluationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "evaluation",
+            "add",
+            "--run-id",
+            str(run_id),
+            "--effectiveness",
+            "ineffective",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert service.add_calls == [
+        (
+            run_id,
+            PlaybookEffectiveness.INEFFECTIVE,
+            [],
+            None,
+            None,
+            None,
+            None,
+        )
+    ]
+    assert service.evaluations == []
+    assert "Playbook evaluation requires at least one finding." in result.output
+
+
+def test_evaluation_add_missing_run_returns_error_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("33333333-4444-5555-6666-777777777777")
+    service = FakePlaybookEvaluationService([], missing_run_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "evaluation",
+            "add",
+            "--run-id",
+            str(missing_id),
+            "--effectiveness",
+            "partial",
+            "--finding",
+            "The run could not be assessed",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert len(service.add_calls) == 1
+    assert service.evaluations == []
+    assert f"Playbook run not found: {missing_id}" in result.output
+
+
+def test_evaluation_list_displays_evaluation_summaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = UUID("44444444-5555-6666-7777-888888888888")
+    evaluation = PlaybookEvaluation(
+        run_id=run_id,
+        effectiveness=PlaybookEffectiveness.EFFECTIVE,
+        findings=["The playbook worked"],
+    )
+    service = FakePlaybookEvaluationService([evaluation])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["evaluation", "list"])
+
+    assert result.exit_code == 0
+    assert f"ID: {evaluation.id}" in result.output
+    assert f"Timestamp: {evaluation.timestamp}" in result.output
+    assert f"Run ID: {run_id}" in result.output
+    assert "Effectiveness: effective" in result.output
+
+
+def test_evaluation_list_handles_empty_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookEvaluationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["evaluation", "list"])
+
+    assert result.exit_code == 0
+    assert "No playbook evaluations found." in result.output
+
+
+def test_evaluation_show_delegates_and_displays_all_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = UUID("55555555-6666-7777-8888-999999999999")
+    evaluation = PlaybookEvaluation(
+        run_id=run_id,
+        effectiveness=PlaybookEffectiveness.PARTIAL,
+        findings=["The first step helped", "The second step was unclear"],
+        improvements=["Clarify step two", "Add evidence guidance"],
+        evidence=["Incident report", "Reviewer note"],
+        notes="External assessment",
+        tags=["ops", "manual"],
+    )
+    service = FakePlaybookEvaluationService([evaluation])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["evaluation", "show", str(evaluation.id)])
+
+    assert result.exit_code == 0
+    assert service.requested_ids == [evaluation.id]
+    assert f"ID: {evaluation.id}" in result.output
+    assert f"Timestamp: {evaluation.timestamp}" in result.output
+    assert f"Run ID: {run_id}" in result.output
+    assert "Effectiveness: partial" in result.output
+    assert "Findings:" in result.output
+    assert "- The first step helped" in result.output
+    assert "- The second step was unclear" in result.output
+    assert "Improvements:" in result.output
+    assert "- Clarify step two" in result.output
+    assert "- Add evidence guidance" in result.output
+    assert "Evidence:" in result.output
+    assert "- Incident report" in result.output
+    assert "- Reviewer note" in result.output
+    assert "Notes: External assessment" in result.output
+    assert "Tags: ops, manual" in result.output
+
+
+def test_evaluation_show_displays_empty_optional_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluation = PlaybookEvaluation(
+        run_id=UUID("66666666-7777-8888-9999-aaaaaaaaaaaa"),
+        effectiveness=PlaybookEffectiveness.INEFFECTIVE,
+        findings=["The playbook did not help"],
+    )
+    service = FakePlaybookEvaluationService([evaluation])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["evaluation", "show", str(evaluation.id)])
+
+    assert result.exit_code == 0
+    assert "Effectiveness: ineffective" in result.output
+    assert "Improvements:\n-" in result.output
+    assert "Evidence:\n-" in result.output
+    assert "Notes: -" in result.output
+    assert "Tags: -" in result.output
+
+
+def test_evaluation_show_handles_missing_evaluation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("77777777-8888-9999-aaaa-bbbbbbbbbbbb")
+    service = FakePlaybookEvaluationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["evaluation", "show", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.requested_ids == [missing_id]
+    assert f"Playbook evaluation not found: {missing_id}" in result.output
