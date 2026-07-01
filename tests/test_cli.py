@@ -470,6 +470,7 @@ class FakePlaybookEvaluationService:
             ]
         ] = []
         self.requested_ids: list[UUID] = []
+        self.list_for_run_calls: list[UUID] = []
 
     def add(
         self,
@@ -514,6 +515,14 @@ class FakePlaybookEvaluationService:
 
     def list_evaluations(self) -> list[PlaybookEvaluation]:
         return self.evaluations
+
+    def list_for_run(self, run_id: UUID) -> list[PlaybookEvaluation]:
+        self.list_for_run_calls.append(run_id)
+
+        if self.missing_run_id is not None:
+            raise PlaybookRunNotFoundError(self.missing_run_id)
+
+        return [evaluation for evaluation in self.evaluations if evaluation.run_id == run_id]
 
     def get_by_id(self, evaluation_id: UUID) -> PlaybookEvaluation | None:
         self.requested_ids.append(evaluation_id)
@@ -2033,6 +2042,70 @@ def test_run_show_handles_missing_run(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
+    assert f"Playbook run not found: {missing_id}" in result.output
+
+
+def test_run_evaluations_delegates_positional_uuid_and_displays_linked_evaluations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = UUID("11111111-2222-3333-4444-555555555555")
+    evaluation = PlaybookEvaluation(
+        run_id=run_id,
+        effectiveness=PlaybookEffectiveness.EFFECTIVE,
+        findings=["The run was effective"],
+    )
+    service = FakePlaybookEvaluationService([evaluation])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["run", "evaluations", str(run_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_run_calls == [run_id]
+    assert f"ID: {evaluation.id}" in result.output
+    assert f"Timestamp: {evaluation.timestamp}" in result.output
+    assert "Effectiveness: effective" in result.output
+
+
+def test_run_evaluations_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = UUID("22222222-3333-4444-5555-666666666666")
+    service = FakePlaybookEvaluationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["run", "evaluations", str(run_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_run_calls == [run_id]
+    assert f"No playbook evaluations linked to run: {run_id}" in result.output
+
+
+def test_run_evaluations_missing_run_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("33333333-4444-5555-6666-777777777777")
+    service = FakePlaybookEvaluationService([], missing_run_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_evaluation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["run", "evaluations", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_run_calls == [missing_id]
     assert f"Playbook run not found: {missing_id}" in result.output
 
 

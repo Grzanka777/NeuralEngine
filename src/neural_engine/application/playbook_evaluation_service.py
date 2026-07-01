@@ -62,6 +62,14 @@ class PlaybookEvaluationService:
     def list_evaluations(self) -> list[PlaybookEvaluation]:
         return self._evaluation_repository.load_all()
 
+    def list_for_run(self, run_id: UUID) -> list[PlaybookEvaluation]:
+        if self._run_repository.get_by_id(run_id) is None:
+            raise PlaybookRunNotFoundError(run_id)
+
+        evaluations = self._evaluation_repository.load_all()
+
+        return [evaluation for evaluation in evaluations if evaluation.run_id == run_id]
+
     def get_by_id(self, evaluation_id: UUID) -> PlaybookEvaluation | None:
         return self._evaluation_repository.get_by_id(evaluation_id)
 

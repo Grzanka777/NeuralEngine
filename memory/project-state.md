@@ -97,7 +97,7 @@ Neural Engine now has a minimal PlaybookRun vertical slice:
 * Infrastructure implementation: `JsonPlaybookRunRepository`
 * Dependency wiring: `application/container.py`
 * CLI commands: `neural run add`, `neural run list`, and
-  `neural run show UUID`
+  `neural run show UUID`, and `neural run evaluations UUID`
 
 A PlaybookRun is an explicit record of manually or externally applying one
 existing Playbook to a concrete situation. `PlaybookRunService.add()` requires
@@ -108,6 +108,9 @@ Engine does not execute Playbooks or evaluate runs automatically. `neural run
 add` records an already performed manual or external application.
 `PlaybookRunService.list_for_playbook()` verifies one existing Playbook and
 returns only runs whose `playbook_id` matches it.
+`neural run evaluations UUID` delegates to
+`PlaybookEvaluationService.list_for_run()` to list manual or external
+PlaybookEvaluation records linked to one existing PlaybookRun.
 
 Neural Engine now has a minimal PlaybookEvaluation vertical slice:
 
@@ -132,6 +135,8 @@ automatic evolution proposals.
 The Evaluation CLI delegates to the application service, lets Typer parse UUIDs
 and `PlaybookEffectiveness`, and only renders explicit user-supplied or
 external-system evaluation records.
+`PlaybookEvaluationService.list_for_run()` verifies one existing PlaybookRun and
+returns only evaluations whose `run_id` matches it.
 
 ## Validation
 
@@ -142,10 +147,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 186 tests.
+Pytest collected 195 tests.
 
 ## Notes for next work
 
-The next logical step is to add read-only relation navigation from PlaybookRun
-to linked PlaybookEvaluation records, without adding automatic evaluation or
+The next logical step is to decide whether evaluation records should gain
+additional read-only relation navigation without adding automatic evaluation or
 evolution.

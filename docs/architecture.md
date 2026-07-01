@@ -166,6 +166,12 @@ repository stack.
 `neural run show UUID` retrieves a single playbook run through
 `PlaybookRunService.get_by_id()` and displays all run fields.
 
+`neural run evaluations UUID` delegates to
+`PlaybookEvaluationService.list_for_run()`. The service verifies the playbook
+run exists through the `PlaybookRunRepository` port, loads evaluations through
+the `PlaybookEvaluationRepository` port, and returns only evaluations linked to
+that run ID.
+
 Playbook runs record manual or external application and do not duplicate
 playbook data. They store the playbook ID, situation, actions taken, outcome,
 success flag, optional evidence, optional notes, and optional tags. Neural
@@ -187,6 +193,10 @@ service and repository stack.
 
 `neural evaluation show UUID` retrieves a single playbook evaluation through
 `PlaybookEvaluationService.get_by_id()` and displays all evaluation fields.
+
+`PlaybookEvaluationService.list_for_run()` verifies one existing playbook run
+and returns evaluations linked to it. Evaluations remain manual or external
+records; this relation lookup does not evaluate the run or infer findings.
 
 Playbook evaluations are supplied manually or externally. They store the run ID,
 effectiveness judgment, findings, optional improvements, optional evidence,

@@ -134,6 +134,7 @@ neural evaluation add \
 
 neural evaluation list
 neural evaluation show 11111111-1111-1111-1111-111111111111
+neural run evaluations 11111111-1111-1111-1111-111111111111
 ```
 
 Observations are stored locally as JSON files under the Neural Engine brain

@@ -175,6 +175,102 @@ def test_list_evaluations_returns_repository_items() -> None:
     assert evaluation_repo.load_all_calls == 1
 
 
+def test_list_evaluations_for_run_returns_one_linked_evaluation() -> None:
+    run = make_run()
+    run_repo = FakePlaybookRunRepository([run])
+    evaluation_repo = FakePlaybookEvaluationRepository(run_repo)
+    service = PlaybookEvaluationService(evaluation_repo, run_repo)
+    evaluation = service.add(
+        run_id=run.id,
+        effectiveness=PlaybookEffectiveness.EFFECTIVE,
+        findings=["Linked evaluation"],
+    )
+
+    assert service.list_for_run(run.id) == [evaluation]
+    assert run_repo.requested_ids == [run.id, run.id]
+    assert evaluation_repo.load_all_calls == 1
+
+
+def test_list_evaluations_for_run_returns_multiple_linked_evaluations() -> None:
+    run = make_run()
+    run_repo = FakePlaybookRunRepository([run])
+    evaluation_repo = FakePlaybookEvaluationRepository(run_repo)
+    service = PlaybookEvaluationService(evaluation_repo, run_repo)
+    first = service.add(
+        run_id=run.id,
+        effectiveness=PlaybookEffectiveness.PARTIAL,
+        findings=["First evaluation"],
+    )
+    second = service.add(
+        run_id=run.id,
+        effectiveness=PlaybookEffectiveness.EFFECTIVE,
+        findings=["Second evaluation"],
+    )
+
+    assert service.list_for_run(run.id) == [first, second]
+
+
+def test_list_evaluations_for_run_excludes_unrelated_evaluations() -> None:
+    run = make_run()
+    other_run = make_run()
+    run_repo = FakePlaybookRunRepository([run, other_run])
+    evaluation_repo = FakePlaybookEvaluationRepository(run_repo)
+    service = PlaybookEvaluationService(evaluation_repo, run_repo)
+    linked = service.add(
+        run_id=run.id,
+        effectiveness=PlaybookEffectiveness.EFFECTIVE,
+        findings=["Linked evaluation"],
+    )
+    service.add(
+        run_id=other_run.id,
+        effectiveness=PlaybookEffectiveness.INEFFECTIVE,
+        findings=["Unrelated evaluation"],
+    )
+
+    assert service.list_for_run(run.id) == [linked]
+
+
+def test_list_evaluations_for_run_returns_empty_list_when_none_are_linked() -> None:
+    run = make_run()
+    other_run = make_run()
+    run_repo = FakePlaybookRunRepository([run, other_run])
+    evaluation_repo = FakePlaybookEvaluationRepository(run_repo)
+    service = PlaybookEvaluationService(evaluation_repo, run_repo)
+    service.add(
+        run_id=other_run.id,
+        effectiveness=PlaybookEffectiveness.PARTIAL,
+        findings=["Unrelated evaluation"],
+    )
+
+    assert service.list_for_run(run.id) == []
+    assert evaluation_repo.load_all_calls == 1
+
+
+def test_list_evaluations_for_run_raises_when_missing_without_loading_evaluations() -> None:
+    missing_id = UUID("33333333-3333-3333-3333-333333333333")
+    run_repo = FakePlaybookRunRepository()
+    evaluation_repo = FakePlaybookEvaluationRepository(run_repo)
+    service = PlaybookEvaluationService(evaluation_repo, run_repo)
+
+    with pytest.raises(PlaybookRunNotFoundError) as error:
+        service.list_for_run(missing_id)
+
+    assert error.value.run_id == missing_id
+    assert run_repo.requested_ids == [missing_id]
+    assert evaluation_repo.load_all_calls == 0
+
+
+def test_list_evaluations_for_run_looks_up_run_once() -> None:
+    run = make_run()
+    run_repo = FakePlaybookRunRepository([run])
+    evaluation_repo = FakePlaybookEvaluationRepository(run_repo)
+    service = PlaybookEvaluationService(evaluation_repo, run_repo)
+
+    service.list_for_run(run.id)
+
+    assert run_repo.requested_ids == [run.id]
+
+
 def test_get_by_id_returns_matching_evaluation() -> None:
     run = make_run()
     run_repo = FakePlaybookRunRepository([run])

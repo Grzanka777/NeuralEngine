@@ -638,6 +638,25 @@ def list_runs() -> None:
         console.print()
 
 
+@run_app.command("evaluations")
+def list_run_evaluations(run_id: UUID) -> None:
+    """List playbook evaluations linked to one playbook run."""
+
+    service = container.playbook_evaluation_service()
+    try:
+        evaluations = service.list_for_run(run_id)
+    except PlaybookRunNotFoundError as error:
+        _exit_playbook_run_not_found(error)
+
+    if not evaluations:
+        console.print(f"[yellow]No playbook evaluations linked to run: {run_id}[/yellow]")
+        return
+
+    for evaluation in evaluations:
+        _print_playbook_evaluation_summary(evaluation)
+        console.print()
+
+
 @run_app.command("show")
 def show_run(run_id: UUID) -> None:
     """Show one playbook run."""
