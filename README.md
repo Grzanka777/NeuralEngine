@@ -97,12 +97,16 @@ neural playbook show 11111111-1111-1111-1111-111111111111
 Every referenced knowledge item must already exist. Playbooks are stored
 procedures; the CLI does not execute or generate them.
 
+Playbook runs record manual or external application of one existing Playbook to
+a concrete situation. They store the actions taken, outcome, success flag,
+evidence, notes, and tags; Neural Engine does not execute Playbooks.
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. Knowledge is stored locally as JSON files under the knowledge
-directory. Playbooks are stored locally as JSON files under the playbook
-directory. The CLI delegates behavior to application services and does not own
-business logic.
+directory. Playbooks and playbook runs are stored locally as JSON files under
+their brain directories. The CLI delegates behavior to application services and
+does not own business logic.
 
 ## Validation
 

@@ -2,6 +2,7 @@ from .experience import Experience, ExperienceResult
 from .knowledge import Knowledge, KnowledgeConfidence
 from .observation import Observation
 from .playbook import Playbook
+from .playbook_run import PlaybookRun
 
 __all__ = [
     "Experience",
@@ -10,4 +11,5 @@ __all__ = [
     "KnowledgeConfidence",
     "Observation",
     "Playbook",
+    "PlaybookRun",
 ]

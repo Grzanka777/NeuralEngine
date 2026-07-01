@@ -6,15 +6,15 @@ Neural Engine follows Clean Architecture.
 
 Domain:
 
-* Owns core concepts such as `Observation`, `Experience`, `Knowledge`, and
-  `Playbook`.
+* Owns core concepts such as `Observation`, `Experience`, `Knowledge`,
+  `Playbook`, and `PlaybookRun`.
 * Has no dependency on infrastructure.
 
 Application:
 
 * Coordinates use cases such as adding, listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
-  retrieving knowledge and playbooks.
+  retrieving knowledge, playbooks, and playbook runs.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -28,6 +28,7 @@ Infrastructure:
 * The current experience repository stores one JSON file per experience.
 * The current knowledge repository stores one JSON file per knowledge item.
 * The current playbook repository stores one JSON file per playbook.
+* The current playbook run repository stores one JSON file per playbook run.
 
 CLI:
 
@@ -141,3 +142,18 @@ file per playbook under `NeuralPaths.PLAYBOOKS`.
 
 Playbooks are stored procedures only. Neural Engine does not execute playbook
 steps, orchestrate workflows, or generate playbooks automatically.
+
+## Playbook Run Flow
+
+PlaybookRun is currently application-only and has no CLI commands.
+`PlaybookRunService.add()` records explicit user-supplied or external-system
+data about applying one existing playbook to a concrete situation. The service
+rejects an empty action list, verifies the referenced playbook through the
+`PlaybookRepository` port, then creates and saves a domain `PlaybookRun`.
+Validation stops before construction or persistence when actions are missing or
+the playbook does not exist.
+
+Playbook runs do not duplicate playbook data. They store the playbook ID,
+situation, actions taken, outcome, success flag, optional evidence, optional
+notes, and optional tags. Neural Engine does not execute playbooks or evaluate
+runs automatically.

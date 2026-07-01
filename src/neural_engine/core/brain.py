@@ -13,6 +13,7 @@ class Brain:
             NeuralPaths.OBSERVATIONS,
             NeuralPaths.KNOWLEDGE,
             NeuralPaths.PLAYBOOKS,
+            NeuralPaths.PLAYBOOK_RUNS,
             NeuralPaths.DECISIONS,
             NeuralPaths.PROJECTS,
             NeuralPaths.LOGS,

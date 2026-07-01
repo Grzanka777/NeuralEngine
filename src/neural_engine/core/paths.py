@@ -12,6 +12,7 @@ class NeuralPaths:
     OBSERVATIONS = BRAIN / "observations"
     KNOWLEDGE = BRAIN / "knowledge"
     PLAYBOOKS = BRAIN / "playbooks"
+    PLAYBOOK_RUNS = BRAIN / "playbook-runs"
     DECISIONS = BRAIN / "decisions"
 
     PROJECTS = HOME / "projects"
