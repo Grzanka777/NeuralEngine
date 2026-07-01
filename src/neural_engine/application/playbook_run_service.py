@@ -64,6 +64,14 @@ class PlaybookRunService:
     def list_runs(self) -> list[PlaybookRun]:
         return self._run_repository.load_all()
 
+    def list_for_playbook(self, playbook_id: UUID) -> list[PlaybookRun]:
+        if self._playbook_repository.get_by_id(playbook_id) is None:
+            raise PlaybookNotFoundError(playbook_id)
+
+        runs = self._run_repository.load_all()
+
+        return [run for run in runs if run.playbook_id == playbook_id]
+
     def get_by_id(self, run_id: UUID) -> PlaybookRun | None:
         return self._run_repository.get_by_id(run_id)
 

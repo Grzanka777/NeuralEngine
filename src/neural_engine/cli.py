@@ -471,6 +471,25 @@ def list_playbooks() -> None:
         console.print()
 
 
+@playbook_app.command("runs")
+def list_playbook_runs(playbook_id: UUID) -> None:
+    """List playbook runs linked to one playbook."""
+
+    service = container.playbook_run_service()
+    try:
+        runs = service.list_for_playbook(playbook_id)
+    except PlaybookNotFoundError as error:
+        _exit_playbook_not_found(error)
+
+    if not runs:
+        console.print(f"[yellow]No playbook runs linked to playbook: {playbook_id}[/yellow]")
+        return
+
+    for run in runs:
+        _print_playbook_run_summary(run)
+        console.print()
+
+
 @playbook_app.command("show")
 def show_playbook(playbook_id: UUID) -> None:
     """Show one playbook."""

@@ -137,6 +137,11 @@ repository stack.
 `neural playbook show UUID` retrieves a single playbook through
 `PlaybookService.get_by_id()` and displays all playbook fields.
 
+`neural playbook runs UUID` delegates to
+`PlaybookRunService.list_for_playbook()`. The service verifies the playbook
+exists through the `PlaybookRepository` port, loads playbook runs through the
+`PlaybookRunRepository` port, and returns only runs linked to that playbook ID.
+
 The JSON repository is the current infrastructure implementation and stores one
 file per playbook under `NeuralPaths.PLAYBOOKS`.
 
@@ -159,7 +164,7 @@ repository stack.
 `neural run show UUID` retrieves a single playbook run through
 `PlaybookRunService.get_by_id()` and displays all run fields.
 
-Playbook runs do not duplicate playbook data. They store the playbook ID,
-situation, actions taken, outcome, success flag, optional evidence, optional
-notes, and optional tags. Neural Engine does not execute playbooks or evaluate
-runs automatically.
+Playbook runs record manual or external application and do not duplicate
+playbook data. They store the playbook ID, situation, actions taken, outcome,
+success flag, optional evidence, optional notes, and optional tags. Neural
+Engine does not execute playbooks or evaluate runs automatically.

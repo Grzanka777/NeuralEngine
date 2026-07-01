@@ -376,6 +376,7 @@ class FakePlaybookRunService:
                 list[str] | None,
             ]
         ] = []
+        self.list_for_playbook_calls: list[UUID] = []
         self.requested_ids: list[UUID] = []
 
     def add(
@@ -424,6 +425,14 @@ class FakePlaybookRunService:
 
     def list_runs(self) -> list[PlaybookRun]:
         return self.runs
+
+    def list_for_playbook(self, playbook_id: UUID) -> list[PlaybookRun]:
+        self.list_for_playbook_calls.append(playbook_id)
+
+        if self.missing_playbook_id is not None:
+            raise PlaybookNotFoundError(self.missing_playbook_id)
+
+        return [run for run in self.runs if run.playbook_id == playbook_id]
 
     def get_by_id(self, run_id: UUID) -> PlaybookRun | None:
         self.requested_ids.append(run_id)
@@ -1616,6 +1625,61 @@ def test_playbook_show_handles_missing_playbook(monkeypatch: pytest.MonkeyPatch)
 
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
+    assert f"Playbook not found: {missing_id}" in result.output
+
+
+def test_playbook_runs_delegates_positional_uuid_and_displays_linked_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("45454545-4545-4545-4545-454545454545")
+    run = PlaybookRun(
+        playbook_id=playbook_id,
+        situation="Linked playbook run",
+        actions_taken=["Applied playbook manually"],
+        outcome="Run outcome recorded",
+        success=True,
+    )
+    service = FakePlaybookRunService([run])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "runs", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert f"ID: {run.id}" in result.output
+    assert f"Timestamp: {run.timestamp}" in result.output
+    assert "Situation: Linked playbook run" in result.output
+    assert "Success: true" in result.output
+
+
+def test_playbook_runs_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("56565656-5656-5656-5656-565656565656")
+    service = FakePlaybookRunService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "runs", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert f"No playbook runs linked to playbook: {playbook_id}" in result.output
+
+
+def test_playbook_runs_missing_playbook_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("67676767-6767-6767-6767-676767676767")
+    service = FakePlaybookRunService([], missing_playbook_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "runs", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_playbook_calls == [missing_id]
     assert f"Playbook not found: {missing_id}" in result.output
 
 

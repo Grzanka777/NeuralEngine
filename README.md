@@ -92,6 +92,7 @@ neural playbook add \
 
 neural playbook list
 neural playbook show 11111111-1111-1111-1111-111111111111
+neural playbook runs 11111111-1111-1111-1111-111111111111
 ```
 
 Every referenced knowledge item must already exist. Playbooks are stored

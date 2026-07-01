@@ -75,7 +75,7 @@ Neural Engine now has a minimal Playbook vertical slice:
 * Infrastructure implementation: `JsonPlaybookRepository`
 * Dependency wiring: `application/container.py`
 * CLI commands: `neural playbook add`, `neural playbook list`, and
-  `neural playbook show UUID`
+  `neural playbook show UUID`, and `neural playbook runs UUID`
 
 A Playbook is an explicit operational procedure that applies one or more
 Knowledge items to a class of situations. `PlaybookService.add()` requires at
@@ -86,6 +86,8 @@ The Playbook CLI only records explicit user-supplied operational procedures.
 Playbooks are not executed, inferred, or generated automatically.
 `PlaybookService.list_for_knowledge()` verifies one existing Knowledge item and
 returns Playbooks linked to it.
+`neural playbook runs UUID` delegates to `PlaybookRunService.list_for_playbook()`
+to list PlaybookRun records linked to one existing Playbook.
 
 Neural Engine now has a minimal PlaybookRun vertical slice:
 
@@ -104,6 +106,8 @@ at least one action taken, validates the referenced Playbook through the
 run under `NeuralPaths.PLAYBOOK_RUNS`. PlaybookRun records outcomes; Neural
 Engine does not execute Playbooks or evaluate runs automatically. `neural run
 add` records an already performed manual or external application.
+`PlaybookRunService.list_for_playbook()` verifies one existing Playbook and
+returns only runs whose `playbook_id` matches it.
 
 ## Validation
 
@@ -114,9 +118,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 150 tests.
+Pytest collected 159 tests.
 
 ## Notes for next work
 
-The next logical step is to add read-only relation commands for PlaybookRun
-records without adding execution or automatic evaluation.
+The next logical step is to continue adding read-only relation commands where
+they expose useful navigation without adding execution or automatic evaluation.

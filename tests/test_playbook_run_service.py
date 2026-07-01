@@ -185,6 +185,114 @@ def test_list_runs_returns_repository_items() -> None:
     assert run_repo.load_all_calls == 1
 
 
+def test_list_runs_for_playbook_returns_one_linked_run() -> None:
+    playbook = make_playbook()
+    playbook_repo = FakePlaybookRepository([playbook])
+    run_repo = FakePlaybookRunRepository(playbook_repo)
+    service = PlaybookRunService(run_repo, playbook_repo)
+    run = service.add(
+        playbook_id=playbook.id,
+        situation="Linked run",
+        actions_taken=["Applied playbook"],
+        outcome="Run linked",
+        success=True,
+    )
+
+    assert service.list_for_playbook(playbook.id) == [run]
+    assert playbook_repo.requested_ids == [playbook.id, playbook.id]
+    assert run_repo.load_all_calls == 1
+
+
+def test_list_runs_for_playbook_returns_multiple_linked_runs() -> None:
+    playbook = make_playbook()
+    playbook_repo = FakePlaybookRepository([playbook])
+    run_repo = FakePlaybookRunRepository(playbook_repo)
+    service = PlaybookRunService(run_repo, playbook_repo)
+    first = service.add(
+        playbook_id=playbook.id,
+        situation="First linked run",
+        actions_taken=["Applied first"],
+        outcome="First listed",
+        success=True,
+    )
+    second = service.add(
+        playbook_id=playbook.id,
+        situation="Second linked run",
+        actions_taken=["Applied second"],
+        outcome="Second listed",
+        success=False,
+    )
+
+    assert service.list_for_playbook(playbook.id) == [first, second]
+
+
+def test_list_runs_for_playbook_excludes_unrelated_runs() -> None:
+    playbook = make_playbook()
+    other_playbook = make_playbook()
+    playbook_repo = FakePlaybookRepository([playbook, other_playbook])
+    run_repo = FakePlaybookRunRepository(playbook_repo)
+    service = PlaybookRunService(run_repo, playbook_repo)
+    linked = service.add(
+        playbook_id=playbook.id,
+        situation="Linked run",
+        actions_taken=["Applied linked playbook"],
+        outcome="Linked run listed",
+        success=True,
+    )
+    service.add(
+        playbook_id=other_playbook.id,
+        situation="Unrelated run",
+        actions_taken=["Applied other playbook"],
+        outcome="Unrelated run excluded",
+        success=True,
+    )
+
+    assert service.list_for_playbook(playbook.id) == [linked]
+
+
+def test_list_runs_for_playbook_returns_empty_list_when_none_are_linked() -> None:
+    playbook = make_playbook()
+    other_playbook = make_playbook()
+    playbook_repo = FakePlaybookRepository([playbook, other_playbook])
+    run_repo = FakePlaybookRunRepository(playbook_repo)
+    service = PlaybookRunService(run_repo, playbook_repo)
+    service.add(
+        playbook_id=other_playbook.id,
+        situation="Unrelated run",
+        actions_taken=["Applied other playbook"],
+        outcome="No linked runs",
+        success=True,
+    )
+
+    assert service.list_for_playbook(playbook.id) == []
+    assert run_repo.load_all_calls == 1
+
+
+def test_list_runs_for_playbook_raises_when_missing_without_loading_runs() -> None:
+    missing_id = UUID("33333333-3333-3333-3333-333333333333")
+    playbook_repo = FakePlaybookRepository()
+    run_repo = FakePlaybookRunRepository(playbook_repo)
+    service = PlaybookRunService(run_repo, playbook_repo)
+
+    with pytest.raises(PlaybookNotFoundError) as error:
+        service.list_for_playbook(missing_id)
+
+    assert error.value.playbook_id == missing_id
+    assert playbook_repo.requested_ids == [missing_id]
+    assert run_repo.load_all_calls == 0
+
+
+def test_list_runs_for_playbook_looks_up_playbook_once() -> None:
+    playbook = make_playbook()
+    playbook_repo = FakePlaybookRepository([playbook])
+    run_repo = FakePlaybookRunRepository(playbook_repo)
+    service = PlaybookRunService(run_repo, playbook_repo)
+
+    service.list_for_playbook(playbook.id)
+
+    assert playbook_repo.requested_ids == [playbook.id]
+
+
 def test_get_by_id_returns_matching_run() -> None:
     playbook = make_playbook()
     playbook_repo = FakePlaybookRepository([playbook])
