@@ -4,6 +4,7 @@ from .knowledge import Knowledge, KnowledgeConfidence
 from .observation import Observation
 from .playbook import Playbook
 from .playbook_evaluation import PlaybookEffectiveness, PlaybookEvaluation
+from .playbook_revision import PlaybookRevision
 from .playbook_run import PlaybookRun
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "Playbook",
     "PlaybookEffectiveness",
     "PlaybookEvaluation",
+    "PlaybookRevision",
     "PlaybookRun",
 ]

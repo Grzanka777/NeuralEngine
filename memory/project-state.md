@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-07-01
+Last updated: 2026-07-02
 
 ## Current implementation
 
@@ -187,6 +187,24 @@ proposals whose `evaluation_ids` contain it. This is read-only relation
 navigation; proposals are supplied manually or externally, proposal status is
 not changed, and proposals do not modify Playbooks.
 
+Neural Engine now has a minimal PlaybookRevision vertical slice:
+
+* Domain model: `neural_engine.domain.PlaybookRevision`
+* Application service: `PlaybookRevisionService`
+* Port: `PlaybookRevisionRepository`
+* Infrastructure implementation: `JsonPlaybookRevisionRepository`
+* Dependency wiring: `application/container.py`
+
+A PlaybookRevision is an immutable candidate snapshot of revised Playbook
+content supplied manually or by an external system. `PlaybookRevisionService.add()`
+requires at least one step and at least one success criterion, validates the
+referenced EvolutionProposal (exists, accepted status, belongs to the target
+Playbook), validates the referenced Playbook, then validates each
+referenced Knowledge item in supplied order before saving. Proposal-level
+failures are detected before any Playbook or Knowledge read. PlaybookRevision
+records do not modify or replace Playbooks, do not change proposal status, do
+not infer revised content, and do not perform automatic evolution.
+
 ## Validation
 
 Latest validation passed:
@@ -196,7 +214,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 278 tests.
+Pytest collected 314 tests.
 
 ## Notes for next work
 

@@ -5,6 +5,7 @@ from neural_engine.application.observation_service import ObservationService
 from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationService,
 )
+from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
@@ -24,6 +25,9 @@ from neural_engine.infrastructure.json_playbook_evaluation_repository import (
 )
 from neural_engine.infrastructure.json_playbook_repository import (
     JsonPlaybookRepository,
+)
+from neural_engine.infrastructure.json_playbook_revision_repository import (
+    JsonPlaybookRevisionRepository,
 )
 from neural_engine.infrastructure.json_playbook_run_repository import (
     JsonPlaybookRunRepository,
@@ -74,4 +78,12 @@ class Container:
             JsonPlaybookRepository(),
             JsonPlaybookEvaluationRepository(),
             JsonPlaybookRunRepository(),
+        )
+
+    def playbook_revision_service(self) -> PlaybookRevisionService:
+        return PlaybookRevisionService(
+            JsonPlaybookRevisionRepository(),
+            JsonPlaybookRepository(),
+            JsonEvolutionProposalRepository(),
+            JsonKnowledgeRepository(),
         )

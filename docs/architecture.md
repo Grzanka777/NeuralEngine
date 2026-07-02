@@ -7,7 +7,8 @@ Neural Engine follows Clean Architecture.
 Domain:
 
 * Owns core concepts such as `Observation`, `Experience`, `Knowledge`,
-  `Playbook`, `PlaybookRun`, `PlaybookEvaluation`, and `EvolutionProposal`.
+  `Playbook`, `PlaybookRun`, `PlaybookEvaluation`, `EvolutionProposal`, and
+  `PlaybookRevision`.
 * Has no dependency on infrastructure.
 
 Application:
@@ -15,7 +16,7 @@ Application:
 * Coordinates use cases such as adding, listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
   retrieving knowledge, playbooks, playbook runs, playbook evaluations, and
-  evolution proposals.
+  evolution proposals and playbook revisions.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -34,6 +35,8 @@ Infrastructure:
   evaluation.
 * The current evolution proposal repository stores one JSON file per evolution
   proposal.
+* The current playbook revision repository stores one JSON file per playbook
+  revision.
 
 CLI:
 
@@ -261,3 +264,34 @@ benefits, optional risks, status, optional notes, and optional tags. Neural
 Engine does not modify playbooks, apply proposals, approve or reject proposals
 automatically, infer proposal status, rank proposals, or perform automatic
 evolution.
+
+## Playbook Revision Flow
+
+`PlaybookRevisionService.add()` records explicit manually supplied or
+external-system supplied revised Playbook content as an immutable candidate
+snapshot. Validation runs in the following order:
+
+1. local content invariants: rejects empty `steps` or empty `success_criteria`,
+2. loads the referenced EvolutionProposal,
+3. rejects a missing EvolutionProposal,
+4. requires the proposal status to be `accepted`,
+5. confirms the proposal belongs to the target Playbook,
+6. verifies the referenced Playbook exists,
+7. verifies every referenced Knowledge item in supplied order,
+8. saves the `PlaybookRevision`.
+
+Validation is ordered so that proposal-level failures (missing, wrong status,
+wrong Playbook) are detected before any Playbook or Knowledge read. All
+validation steps complete before `save()` is called.
+
+Playbook revisions store the original Playbook ID, accepted proposal ID, revised
+title, situation, objective, steps, success criteria, knowledge IDs, optional
+notes, and optional tags supplied by the caller. A revision does not replace or
+modify the original Playbook, does not change proposal status, does not infer or
+generate revised content, and does not perform automatic evolution.
+
+`PlaybookRevisionService.list_revisions()` retrieves all playbook revisions
+through the same service and repository stack.
+
+`PlaybookRevisionService.get_by_id()` retrieves one playbook revision through
+the `PlaybookRevisionRepository` port.

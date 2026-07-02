@@ -16,6 +16,7 @@ class Brain:
             NeuralPaths.PLAYBOOK_RUNS,
             NeuralPaths.PLAYBOOK_EVALUATIONS,
             NeuralPaths.EVOLUTION_PROPOSALS,
+            NeuralPaths.PLAYBOOK_REVISIONS,
             NeuralPaths.DECISIONS,
             NeuralPaths.PROJECTS,
             NeuralPaths.LOGS,

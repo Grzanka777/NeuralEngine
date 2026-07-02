@@ -164,12 +164,17 @@ Proposal status is supplied manually or by an external system. Setting a
 proposal to `accepted` records the decision only; it does not apply changes to a
 Playbook.
 
+Playbook revisions are immutable candidate snapshots of revised Playbook
+content supplied manually or by an external system. They must reference one
+accepted EvolutionProposal and do not replace or modify the original Playbook.
+
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
 directory. Knowledge is stored locally as JSON files under the knowledge
-directory. Playbooks, playbook runs, playbook evaluations, and evolution
-proposals are stored locally as JSON files under their brain directories. The
-CLI delegates behavior to application services and does not own business logic.
+directory. Playbooks, playbook runs, playbook evaluations, evolution proposals,
+and playbook revisions are stored locally as JSON files under their brain
+directories. The CLI delegates behavior to application services and does not own
+business logic.
 
 ## Validation
 
