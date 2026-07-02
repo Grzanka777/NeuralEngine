@@ -207,6 +207,12 @@ service and repository stack.
 and returns evaluations linked to it. Evaluations remain manual or external
 records; this relation lookup does not evaluate the run or infer findings.
 
+`neural evaluation proposals UUID` delegates to
+`EvolutionProposalService.list_for_evaluation()`. The service verifies the
+playbook evaluation exists through the `PlaybookEvaluationRepository` port,
+loads evolution proposals through the `EvolutionProposalRepository` port, and
+returns only proposals that reference that evaluation ID.
+
 Playbook evaluations are supplied manually or externally. They store the run ID,
 effectiveness judgment, findings, optional improvements, optional evidence,
 optional notes, and optional tags. Neural Engine does not evaluate runs
@@ -236,6 +242,11 @@ service and repository stack.
 and returns proposals linked to it. Proposals remain supplied manually or
 externally; this relation lookup does not infer proposal content, apply
 proposals, or modify playbooks.
+
+`EvolutionProposalService.list_for_evaluation()` verifies one existing playbook
+evaluation and returns proposals that reference it. Proposals remain supplied
+manually or externally; this relation lookup does not infer proposal content,
+change proposal status, apply proposals, or modify playbooks.
 
 Evolution proposals are supplied manually or externally. They store the
 playbook ID, evaluation IDs, summary, rationale, proposed changes, expected

@@ -125,8 +125,8 @@ Neural Engine now has a minimal PlaybookEvaluation vertical slice:
 * Port: `PlaybookEvaluationRepository`
 * Infrastructure implementation: `JsonPlaybookEvaluationRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: `neural evaluation add`, `neural evaluation list`, and
-  `neural evaluation show UUID`
+* CLI commands: `neural evaluation add`, `neural evaluation list`,
+  `neural evaluation show UUID`, and `neural evaluation proposals UUID`
 
 A PlaybookEvaluation is an explicit human or external-system assessment of one
 existing PlaybookRun. `PlaybookEvaluationService.add()` requires at least one
@@ -142,6 +142,9 @@ and `PlaybookEffectiveness`, and only renders explicit user-supplied or
 external-system evaluation records.
 `PlaybookEvaluationService.list_for_run()` verifies one existing PlaybookRun and
 returns only evaluations whose `run_id` matches it.
+`neural evaluation proposals UUID` delegates to
+`EvolutionProposalService.list_for_evaluation()` to list manually or externally
+supplied EvolutionProposal records that reference one existing PlaybookEvaluation.
 
 Neural Engine now has a minimal EvolutionProposal vertical slice:
 
@@ -172,6 +175,12 @@ through the `PlaybookRepository` port, loads proposals through the
 `EvolutionProposalRepository` port, and returns only proposals whose
 `playbook_id` matches it. This is read-only relation navigation; proposals do
 not modify Playbooks and Neural Engine does not perform automatic evolution.
+`EvolutionProposalService.list_for_evaluation()` verifies one existing
+PlaybookEvaluation through the `PlaybookEvaluationRepository` port, loads
+proposals through the `EvolutionProposalRepository` port, and returns only
+proposals whose `evaluation_ids` contain it. This is read-only relation
+navigation; proposals are supplied manually or externally, proposal status is
+not changed, and proposals do not modify Playbooks.
 
 ## Validation
 
@@ -182,7 +191,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 249 tests.
+Pytest collected 260 tests.
 
 ## Notes for next work
 

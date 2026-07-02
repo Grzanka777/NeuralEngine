@@ -129,6 +129,14 @@ class EvolutionProposalService:
 
         return [proposal for proposal in proposals if proposal.playbook_id == playbook_id]
 
+    def list_for_evaluation(self, evaluation_id: UUID) -> list[EvolutionProposal]:
+        if self._evaluation_repository.get_by_id(evaluation_id) is None:
+            raise PlaybookEvaluationNotFoundError(evaluation_id)
+
+        proposals = self._proposal_repository.load_all()
+
+        return [proposal for proposal in proposals if evaluation_id in proposal.evaluation_ids]
+
     def get_by_id(self, proposal_id: UUID) -> EvolutionProposal | None:
         return self._proposal_repository.get_by_id(proposal_id)
 

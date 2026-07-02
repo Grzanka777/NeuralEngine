@@ -155,10 +155,14 @@ def make_evaluation(run_id: UUID, finding: str = "Evaluation finding") -> Playbo
     )
 
 
-def make_proposal(playbook_id: UUID, summary: str = "Proposal") -> EvolutionProposal:
+def make_proposal(
+    playbook_id: UUID,
+    summary: str = "Proposal",
+    evaluation_ids: list[UUID] | None = None,
+) -> EvolutionProposal:
     return EvolutionProposal(
         playbook_id=playbook_id,
-        evaluation_ids=[UUID("22222222-2222-2222-2222-222222222222")],
+        evaluation_ids=evaluation_ids or [UUID("22222222-2222-2222-2222-222222222222")],
         summary=summary,
         rationale="Manual or external proposal",
         proposed_changes=["Change"],
@@ -628,6 +632,99 @@ def test_list_for_playbook_looks_up_playbook_exactly_once() -> None:
     service.list_for_playbook(playbook.id)
 
     assert playbook_repo.requested_ids == [playbook.id]
+
+
+def test_list_for_evaluation_returns_one_referencing_proposal() -> None:
+    playbook = make_playbook()
+    evaluation = make_evaluation(UUID("aaaaaaaa-1111-2222-3333-444444444444"))
+    linked = make_proposal(playbook.id, "Linked", [evaluation.id])
+    service, proposal_repo, _, evaluation_repo, _ = make_service([playbook], [evaluation])
+    proposal_repo.saved = [linked]
+
+    assert service.list_for_evaluation(evaluation.id) == [linked]
+    assert evaluation_repo.requested_ids == [evaluation.id]
+    assert proposal_repo.load_all_calls == 1
+
+
+def test_list_for_evaluation_returns_multiple_referencing_proposals() -> None:
+    playbook = make_playbook()
+    evaluation = make_evaluation(UUID("bbbbbbbb-1111-2222-3333-444444444444"))
+    first = make_proposal(playbook.id, "First", [evaluation.id])
+    second = make_proposal(playbook.id, "Second", [evaluation.id])
+    service, proposal_repo, _, _, _ = make_service([playbook], [evaluation])
+    proposal_repo.saved = [first, second]
+
+    assert service.list_for_evaluation(evaluation.id) == [first, second]
+
+
+def test_list_for_evaluation_excludes_unrelated_proposals() -> None:
+    playbook = make_playbook()
+    evaluation = make_evaluation(UUID("cccccccc-1111-2222-3333-444444444444"))
+    other_evaluation_id = UUID("dddddddd-1111-2222-3333-444444444444")
+    linked = make_proposal(playbook.id, "Linked", [evaluation.id])
+    unrelated = make_proposal(playbook.id, "Unrelated", [other_evaluation_id])
+    service, proposal_repo, _, _, _ = make_service([playbook], [evaluation])
+    proposal_repo.saved = [unrelated, linked]
+
+    assert service.list_for_evaluation(evaluation.id) == [linked]
+
+
+def test_list_for_evaluation_returns_duplicate_reference_proposal_once() -> None:
+    playbook = make_playbook()
+    evaluation = make_evaluation(UUID("eeeeeeee-1111-2222-3333-444444444444"))
+    proposal = make_proposal(playbook.id, "Duplicate reference", [evaluation.id, evaluation.id])
+    service, proposal_repo, _, _, _ = make_service([playbook], [evaluation])
+    proposal_repo.saved = [proposal]
+
+    assert service.list_for_evaluation(evaluation.id) == [proposal]
+
+
+def test_list_for_evaluation_returns_empty_list_when_no_proposals_reference_it() -> None:
+    playbook = make_playbook()
+    evaluation = make_evaluation(UUID("ffffffff-1111-2222-3333-444444444444"))
+    service, proposal_repo, _, _, _ = make_service([playbook], [evaluation])
+
+    assert service.list_for_evaluation(evaluation.id) == []
+    assert proposal_repo.load_all_calls == 1
+
+
+def test_list_for_evaluation_raises_when_evaluation_is_missing() -> None:
+    missing_id = UUID("11111111-aaaa-bbbb-cccc-222222222222")
+    service, proposal_repo, _, evaluation_repo, _ = make_service()
+
+    with pytest.raises(PlaybookEvaluationNotFoundError) as error:
+        service.list_for_evaluation(missing_id)
+
+    assert error.value.evaluation_id == missing_id
+    assert evaluation_repo.requested_ids == [missing_id]
+    assert proposal_repo.load_all_calls == 0
+
+
+def test_list_for_evaluation_looks_up_evaluation_exactly_once() -> None:
+    playbook = make_playbook()
+    evaluation = make_evaluation(UUID("33333333-aaaa-bbbb-cccc-444444444444"))
+    service, proposal_repo, _, evaluation_repo, _ = make_service([playbook], [evaluation])
+    proposal_repo.saved = [make_proposal(playbook.id, evaluation_ids=[evaluation.id])]
+
+    service.list_for_evaluation(evaluation.id)
+
+    assert evaluation_repo.requested_ids == [evaluation.id]
+
+
+def test_list_for_evaluation_preserves_repository_order() -> None:
+    playbook = make_playbook()
+    evaluation = make_evaluation(UUID("55555555-aaaa-bbbb-cccc-666666666666"))
+    first = make_proposal(playbook.id, "First", [evaluation.id])
+    unrelated = make_proposal(
+        playbook.id,
+        "Unrelated",
+        [UUID("77777777-aaaa-bbbb-cccc-888888888888")],
+    )
+    second = make_proposal(playbook.id, "Second", [evaluation.id])
+    service, proposal_repo, _, _, _ = make_service([playbook], [evaluation])
+    proposal_repo.saved = [first, unrelated, second]
+
+    assert service.list_for_evaluation(evaluation.id) == [first, second]
 
 
 def test_get_by_id_returns_matching_proposal() -> None:

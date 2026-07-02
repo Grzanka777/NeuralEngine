@@ -576,6 +576,7 @@ class FakeEvolutionProposalService:
         ] = []
         self.requested_ids: list[UUID] = []
         self.list_for_playbook_calls: list[UUID] = []
+        self.list_for_evaluation_calls: list[UUID] = []
 
     def add(
         self,
@@ -655,6 +656,14 @@ class FakeEvolutionProposalService:
             raise ProposalPlaybookNotFoundError(self.missing_playbook_id)
 
         return [proposal for proposal in self.proposals if proposal.playbook_id == playbook_id]
+
+    def list_for_evaluation(self, evaluation_id: UUID) -> list[EvolutionProposal]:
+        self.list_for_evaluation_calls.append(evaluation_id)
+
+        if self.missing_evaluation_id is not None:
+            raise PlaybookEvaluationNotFoundError(self.missing_evaluation_id)
+
+        return [proposal for proposal in self.proposals if evaluation_id in proposal.evaluation_ids]
 
     def get_by_id(self, proposal_id: UUID) -> EvolutionProposal | None:
         self.requested_ids.append(proposal_id)
@@ -2487,6 +2496,77 @@ def test_evaluation_list_handles_empty_repository(
 
     assert result.exit_code == 0
     assert "No playbook evaluations found." in result.output
+
+
+def test_evaluation_proposals_delegates_positional_uuid_and_displays_linked_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("abababab-1111-2222-3333-444444444444")
+    evaluation_id = UUID("bcbcbcbc-1111-2222-3333-444444444444")
+    proposal = EvolutionProposal(
+        playbook_id=playbook_id,
+        evaluation_ids=[evaluation_id],
+        summary="Referenced evaluation proposal",
+        rationale="Manual relation lookup",
+        proposed_changes=["Clarify finding"],
+        expected_benefits=["Better manual review"],
+        status=EvolutionProposalStatus.ACCEPTED,
+    )
+    service = FakeEvolutionProposalService([proposal])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["evaluation", "proposals", str(evaluation_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_evaluation_calls == [evaluation_id]
+    assert f"ID: {proposal.id}" in result.output
+    assert f"Timestamp: {proposal.timestamp}" in result.output
+    assert f"Playbook ID: {playbook_id}" in result.output
+    assert "Summary: Referenced evaluation proposal" in result.output
+    assert "Status: accepted" in result.output
+
+
+def test_evaluation_proposals_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluation_id = UUID("cdcdcdcd-1111-2222-3333-444444444444")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["evaluation", "proposals", str(evaluation_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_evaluation_calls == [evaluation_id]
+    assert f"No proposals reference evaluation: {evaluation_id}" in result.output
+
+
+def test_evaluation_proposals_missing_evaluation_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("dededede-1111-2222-3333-444444444444")
+    service = FakeEvolutionProposalService([], missing_evaluation_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["evaluation", "proposals", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_evaluation_calls == [missing_id]
+    assert f"Playbook evaluation not found: {missing_id}" in result.output
 
 
 def test_evaluation_show_delegates_and_displays_all_fields(

@@ -492,6 +492,26 @@ def list_evaluations() -> None:
         console.print()
 
 
+@evaluation_app.command("proposals")
+def list_evaluation_proposals(evaluation_id: UUID) -> None:
+    """List evolution proposals that reference one playbook evaluation."""
+
+    service = container.evolution_proposal_service()
+    try:
+        proposals = service.list_for_evaluation(evaluation_id)
+    except PlaybookEvaluationNotFoundError as error:
+        console.print(f"[red]Playbook evaluation not found: {error.evaluation_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not proposals:
+        console.print(f"[yellow]No proposals reference evaluation: {evaluation_id}[/yellow]")
+        return
+
+    for proposal in proposals:
+        _print_evolution_proposal_summary(proposal)
+        console.print()
+
+
 @evaluation_app.command("show")
 def show_evaluation(evaluation_id: UUID) -> None:
     """Show one playbook evaluation."""

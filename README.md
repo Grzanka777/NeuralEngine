@@ -156,6 +156,7 @@ neural proposal add \
 neural proposal list
 neural proposal show 11111111-1111-1111-1111-111111111111
 neural playbook proposals 11111111-1111-1111-1111-111111111111
+neural evaluation proposals 22222222-2222-2222-2222-222222222222
 ```
 
 Observations are stored locally as JSON files under the Neural Engine brain
