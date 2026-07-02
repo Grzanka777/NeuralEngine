@@ -575,6 +575,7 @@ class FakeEvolutionProposalService:
             ]
         ] = []
         self.requested_ids: list[UUID] = []
+        self.list_for_playbook_calls: list[UUID] = []
 
     def add(
         self,
@@ -646,6 +647,14 @@ class FakeEvolutionProposalService:
 
     def list_proposals(self) -> list[EvolutionProposal]:
         return self.proposals
+
+    def list_for_playbook(self, playbook_id: UUID) -> list[EvolutionProposal]:
+        self.list_for_playbook_calls.append(playbook_id)
+
+        if self.missing_playbook_id is not None:
+            raise ProposalPlaybookNotFoundError(self.missing_playbook_id)
+
+        return [proposal for proposal in self.proposals if proposal.playbook_id == playbook_id]
 
     def get_by_id(self, proposal_id: UUID) -> EvolutionProposal | None:
         self.requested_ids.append(proposal_id)
@@ -1906,6 +1915,63 @@ def test_playbook_runs_missing_playbook_returns_error(
     runner = CliRunner()
 
     result = runner.invoke(cli.app, ["playbook", "runs", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_playbook_calls == [missing_id]
+    assert f"Playbook not found: {missing_id}" in result.output
+
+
+def test_playbook_proposals_delegates_positional_uuid_and_displays_linked_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("78787878-7878-7878-7878-787878787878")
+    proposal = EvolutionProposal(
+        playbook_id=playbook_id,
+        evaluation_ids=[UUID("89898989-8989-8989-8989-898989898989")],
+        summary="Linked proposal",
+        rationale="Manual relation lookup",
+        proposed_changes=["Clarify step"],
+        expected_benefits=["Clearer manual use"],
+        status=EvolutionProposalStatus.ACCEPTED,
+    )
+    service = FakeEvolutionProposalService([proposal])
+    monkeypatch.setattr(cli, "container", FakeContainer(evolution_proposal_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "proposals", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert f"ID: {proposal.id}" in result.output
+    assert f"Timestamp: {proposal.timestamp}" in result.output
+    assert "Summary: Linked proposal" in result.output
+    assert "Status: accepted" in result.output
+
+
+def test_playbook_proposals_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("90909090-9090-9090-9090-909090909090")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(evolution_proposal_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "proposals", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert f"No evolution proposals linked to playbook: {playbook_id}" in result.output
+
+
+def test_playbook_proposals_missing_playbook_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("91919191-9191-9191-9191-919191919191")
+    service = FakeEvolutionProposalService([], missing_playbook_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(evolution_proposal_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "proposals", str(missing_id)])
 
     assert result.exit_code == 1
     assert service.list_for_playbook_calls == [missing_id]

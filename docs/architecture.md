@@ -147,6 +147,12 @@ repository stack.
 exists through the `PlaybookRepository` port, loads playbook runs through the
 `PlaybookRunRepository` port, and returns only runs linked to that playbook ID.
 
+`neural playbook proposals UUID` delegates to
+`EvolutionProposalService.list_for_playbook()`. The service verifies the
+playbook exists through the `PlaybookRepository` port, loads evolution proposals
+through the `EvolutionProposalRepository` port, and returns only proposals
+linked to that playbook ID.
+
 The JSON repository is the current infrastructure implementation and stores one
 file per playbook under `NeuralPaths.PLAYBOOKS`.
 
@@ -225,6 +231,11 @@ service and repository stack.
 
 `neural proposal show UUID` retrieves a single evolution proposal through
 `EvolutionProposalService.get_by_id()` and displays all proposal fields.
+
+`EvolutionProposalService.list_for_playbook()` verifies one existing playbook
+and returns proposals linked to it. Proposals remain supplied manually or
+externally; this relation lookup does not infer proposal content, apply
+proposals, or modify playbooks.
 
 Evolution proposals are supplied manually or externally. They store the
 playbook ID, evaluation IDs, summary, rationale, proposed changes, expected

@@ -669,6 +669,26 @@ def list_playbook_runs(playbook_id: UUID) -> None:
         console.print()
 
 
+@playbook_app.command("proposals")
+def list_playbook_proposals(playbook_id: UUID) -> None:
+    """List evolution proposals linked to one playbook."""
+
+    service = container.evolution_proposal_service()
+    try:
+        proposals = service.list_for_playbook(playbook_id)
+    except ProposalPlaybookNotFoundError as error:
+        console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not proposals:
+        console.print(f"[yellow]No evolution proposals linked to playbook: {playbook_id}[/yellow]")
+        return
+
+    for proposal in proposals:
+        _print_evolution_proposal_summary(proposal)
+        console.print()
+
+
 @playbook_app.command("show")
 def show_playbook(playbook_id: UUID) -> None:
     """Show one playbook."""

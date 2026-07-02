@@ -155,6 +155,17 @@ def make_evaluation(run_id: UUID, finding: str = "Evaluation finding") -> Playbo
     )
 
 
+def make_proposal(playbook_id: UUID, summary: str = "Proposal") -> EvolutionProposal:
+    return EvolutionProposal(
+        playbook_id=playbook_id,
+        evaluation_ids=[UUID("22222222-2222-2222-2222-222222222222")],
+        summary=summary,
+        rationale="Manual or external proposal",
+        proposed_changes=["Change"],
+        expected_benefits=["Benefit"],
+    )
+
+
 def make_service(
     playbooks: list[Playbook] | None = None,
     evaluations: list[PlaybookEvaluation] | None = None,
@@ -555,6 +566,68 @@ def test_list_proposals_returns_repository_items() -> None:
 
     assert service.list_proposals() == [proposal]
     assert proposal_repo.load_all_calls == 1
+
+
+def test_list_for_playbook_returns_one_linked_proposal() -> None:
+    playbook = make_playbook()
+    linked = make_proposal(playbook.id, "Linked")
+    service, proposal_repo, playbook_repo, _, _ = make_service([playbook])
+    proposal_repo.saved = [linked]
+
+    assert service.list_for_playbook(playbook.id) == [linked]
+    assert playbook_repo.requested_ids == [playbook.id]
+    assert proposal_repo.load_all_calls == 1
+
+
+def test_list_for_playbook_returns_multiple_linked_proposals() -> None:
+    playbook = make_playbook()
+    first = make_proposal(playbook.id, "First")
+    second = make_proposal(playbook.id, "Second")
+    service, proposal_repo, _, _, _ = make_service([playbook])
+    proposal_repo.saved = [first, second]
+
+    assert service.list_for_playbook(playbook.id) == [first, second]
+
+
+def test_list_for_playbook_excludes_unrelated_proposals() -> None:
+    playbook = make_playbook()
+    other_playbook = make_playbook()
+    linked = make_proposal(playbook.id, "Linked")
+    unrelated = make_proposal(other_playbook.id, "Unrelated")
+    service, proposal_repo, _, _, _ = make_service([playbook])
+    proposal_repo.saved = [unrelated, linked]
+
+    assert service.list_for_playbook(playbook.id) == [linked]
+
+
+def test_list_for_playbook_returns_empty_list_when_no_proposals_linked() -> None:
+    playbook = make_playbook()
+    service, proposal_repo, _, _, _ = make_service([playbook])
+
+    assert service.list_for_playbook(playbook.id) == []
+    assert proposal_repo.load_all_calls == 1
+
+
+def test_list_for_playbook_raises_when_playbook_is_missing() -> None:
+    missing_id = UUID("12345678-1234-1234-1234-123456789abc")
+    service, proposal_repo, playbook_repo, _, _ = make_service()
+
+    with pytest.raises(PlaybookNotFoundError) as error:
+        service.list_for_playbook(missing_id)
+
+    assert error.value.playbook_id == missing_id
+    assert playbook_repo.requested_ids == [missing_id]
+    assert proposal_repo.load_all_calls == 0
+
+
+def test_list_for_playbook_looks_up_playbook_exactly_once() -> None:
+    playbook = make_playbook()
+    service, proposal_repo, playbook_repo, _, _ = make_service([playbook])
+    proposal_repo.saved = [make_proposal(playbook.id)]
+
+    service.list_for_playbook(playbook.id)
+
+    assert playbook_repo.requested_ids == [playbook.id]
 
 
 def test_get_by_id_returns_matching_proposal() -> None:

@@ -74,8 +74,9 @@ Neural Engine now has a minimal Playbook vertical slice:
 * Port: `PlaybookRepository`
 * Infrastructure implementation: `JsonPlaybookRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: `neural playbook add`, `neural playbook list`, and
-  `neural playbook show UUID`, and `neural playbook runs UUID`
+* CLI commands: `neural playbook add`, `neural playbook list`,
+  `neural playbook show UUID`, `neural playbook runs UUID`, and
+  `neural playbook proposals UUID`
 
 A Playbook is an explicit operational procedure that applies one or more
 Knowledge items to a class of situations. `PlaybookService.add()` requires at
@@ -88,6 +89,10 @@ Playbooks are not executed, inferred, or generated automatically.
 returns Playbooks linked to it.
 `neural playbook runs UUID` delegates to `PlaybookRunService.list_for_playbook()`
 to list PlaybookRun records linked to one existing Playbook.
+`neural playbook proposals UUID` delegates to
+`EvolutionProposalService.list_for_playbook()` to list manually or externally
+supplied EvolutionProposal records linked to one existing Playbook without
+modifying that Playbook.
 
 Neural Engine now has a minimal PlaybookRun vertical slice:
 
@@ -162,6 +167,11 @@ automatic evolution.
 The Proposal CLI delegates to the application service, lets Typer parse UUIDs
 and `EvolutionProposalStatus`, and only renders manually or externally supplied
 proposal records.
+`EvolutionProposalService.list_for_playbook()` verifies one existing Playbook
+through the `PlaybookRepository` port, loads proposals through the
+`EvolutionProposalRepository` port, and returns only proposals whose
+`playbook_id` matches it. This is read-only relation navigation; proposals do
+not modify Playbooks and Neural Engine does not perform automatic evolution.
 
 ## Validation
 
@@ -172,9 +182,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 237 tests.
+Pytest collected 249 tests.
 
 ## Notes for next work
 
-The next logical step is to add read-only relation navigation for
-EvolutionProposal records where useful, without adding automatic evolution.
+The next logical step is to keep expanding read-only relation navigation where
+it improves inspectability, without adding automatic evolution.
