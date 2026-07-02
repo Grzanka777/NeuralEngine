@@ -27,6 +27,18 @@ from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationFindingsRequiredError,
     PlaybookRunNotFoundError,
 )
+from neural_engine.application.playbook_revision_service import (
+    KnowledgeNotFoundError as RevisionKnowledgeNotFoundError,
+)
+from neural_engine.application.playbook_revision_service import (
+    PlaybookNotFoundError as RevisionPlaybookNotFoundError,
+)
+from neural_engine.application.playbook_revision_service import (
+    PlaybookRevisionProposalMismatchError,
+    PlaybookRevisionProposalNotAcceptedError,
+    PlaybookRevisionStepsRequiredError,
+    PlaybookRevisionSuccessCriteriaRequiredError,
+)
 from neural_engine.application.playbook_run_service import (
     PlaybookNotFoundError,
     PlaybookRunActionsRequiredError,
@@ -48,6 +60,7 @@ from neural_engine.domain import (
     Playbook,
     PlaybookEffectiveness,
     PlaybookEvaluation,
+    PlaybookRevision,
     PlaybookRun,
 )
 
@@ -63,6 +76,9 @@ evaluation_app = typer.Typer(
 )
 proposal_app = typer.Typer(
     help="Record and inspect evolution proposals.",
+)
+revision_app = typer.Typer(
+    help="Record and inspect playbook revisions.",
 )
 knowledge_app = typer.Typer(
     help="Manage knowledge.",
@@ -82,6 +98,7 @@ app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(observation_app, name="observation")
 app.add_typer(playbook_app, name="playbook")
 app.add_typer(proposal_app, name="proposal")
+app.add_typer(revision_app, name="revision")
 app.add_typer(run_app, name="run")
 
 console = Console()
@@ -638,6 +655,97 @@ def show_proposal(proposal_id: UUID) -> None:
     _print_evolution_proposal(proposal)
 
 
+@revision_app.command("add")
+def add_revision(
+    playbook_id: Annotated[UUID, typer.Option("--playbook-id")],
+    proposal_id: Annotated[UUID, typer.Option("--proposal-id")],
+    title: Annotated[str, typer.Option("--title")],
+    situation: Annotated[str, typer.Option("--situation")],
+    objective: Annotated[str, typer.Option("--objective")],
+    steps: Annotated[list[str], typer.Option("--step")],
+    success_criteria: Annotated[list[str], typer.Option("--success-criterion")],
+    knowledge_ids: Annotated[list[UUID] | None, typer.Option("--knowledge-id")] = None,
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record a manual or external playbook revision candidate."""
+
+    service = container.playbook_revision_service()
+    try:
+        revision = service.add(
+            playbook_id=playbook_id,
+            proposal_id=proposal_id,
+            title=title,
+            situation=situation,
+            objective=objective,
+            steps=steps,
+            success_criteria=success_criteria,
+            knowledge_ids=knowledge_ids or [],
+            notes=notes,
+            tags=tags,
+        )
+    except PlaybookRevisionStepsRequiredError as error:
+        console.print("[red]Playbook revision requires at least one step.[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionSuccessCriteriaRequiredError as error:
+        console.print("[red]Playbook revision requires at least one success criterion.[/red]")
+        raise typer.Exit(code=1) from error
+    except EvolutionProposalNotFoundError as error:
+        console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionProposalNotAcceptedError as error:
+        console.print(
+            "[red]Evolution proposal "
+            f"{error.proposal_id} must be accepted, got {error.actual_status.value}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionProposalMismatchError as error:
+        console.print(
+            "[red]Evolution proposal "
+            f"{error.proposal_id} belongs to playbook {error.actual_playbook_id}, "
+            f"expected {error.expected_playbook_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except RevisionPlaybookNotFoundError as error:
+        console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except RevisionKnowledgeNotFoundError as error:
+        console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    console.print(f"[green]Playbook revision stored.[/green] ID: [cyan]{revision.id}[/cyan]")
+
+
+@revision_app.command("list")
+def list_revisions() -> None:
+    """List all playbook revisions."""
+
+    service = container.playbook_revision_service()
+    revisions = service.list_revisions()
+
+    if not revisions:
+        console.print("[yellow]No playbook revisions found.[/yellow]")
+        return
+
+    for revision in revisions:
+        _print_playbook_revision_summary(revision)
+        console.print()
+
+
+@revision_app.command("show")
+def show_revision(revision_id: UUID) -> None:
+    """Show one playbook revision."""
+
+    service = container.playbook_revision_service()
+    revision = service.get_by_id(revision_id)
+
+    if revision is None:
+        console.print(f"[red]Playbook revision not found: {revision_id}[/red]")
+        raise typer.Exit(code=1)
+
+    _print_playbook_revision(revision)
+
+
 @playbook_app.command("add")
 def add_playbook(
     title: Annotated[str, typer.Option("--title")],
@@ -950,6 +1058,32 @@ def _print_playbook_evaluation_summary(evaluation: PlaybookEvaluation) -> None:
     console.print(f"Timestamp: {evaluation.timestamp}")
     console.print(f"Run ID: {evaluation.run_id}")
     console.print(f"Effectiveness: {evaluation.effectiveness.value}")
+
+
+def _print_playbook_revision(revision: PlaybookRevision) -> None:
+    console.print(f"ID: {revision.id}")
+    console.print(f"Timestamp: {revision.timestamp}")
+    console.print(f"Playbook ID: {revision.playbook_id}")
+    console.print(f"Proposal ID: {revision.proposal_id}")
+    console.print(f"Title: {revision.title}")
+    console.print(f"Situation: {revision.situation}")
+    console.print(f"Objective: {revision.objective}")
+    _print_repeated_field("Steps", revision.steps)
+    _print_repeated_field("Success criteria", revision.success_criteria)
+    _print_repeated_field(
+        "Knowledge IDs",
+        [str(knowledge_id) for knowledge_id in revision.knowledge_ids],
+    )
+    console.print(f"Notes: {revision.notes if revision.notes is not None else '-'}")
+    console.print(f"Tags: {', '.join(revision.tags) if revision.tags else '-'}")
+
+
+def _print_playbook_revision_summary(revision: PlaybookRevision) -> None:
+    console.print(f"ID: {revision.id}")
+    console.print(f"Timestamp: {revision.timestamp}")
+    console.print(f"Playbook ID: {revision.playbook_id}")
+    console.print(f"Proposal ID: {revision.proposal_id}")
+    console.print(f"Title: {revision.title}")
 
 
 def _print_evolution_proposal(proposal: EvolutionProposal) -> None:

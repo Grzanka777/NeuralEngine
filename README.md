@@ -167,6 +167,27 @@ Playbook.
 Playbook revisions are immutable candidate snapshots of revised Playbook
 content supplied manually or by an external system. They must reference one
 accepted EvolutionProposal and do not replace or modify the original Playbook.
+Creating a revision is a separate explicit action; it does not activate the
+revision, apply the proposal, or perform automatic evolution.
+
+```bash
+neural revision add \
+  --playbook-id 11111111-1111-1111-1111-111111111111 \
+  --proposal-id 33333333-3333-3333-3333-333333333333 \
+  --title "Debug flaky test v2" \
+  --situation "A test fails intermittently" \
+  --objective "Find and verify the unstable dependency" \
+  --step "Collect recent failure evidence" \
+  --step "Run the failing test repeatedly" \
+  --success-criterion "Failure source is isolated" \
+  --success-criterion "Verification evidence is recorded" \
+  --knowledge-id 44444444-4444-4444-4444-444444444444 \
+  --notes "Candidate revision supplied after manual review" \
+  --tag testing
+
+neural revision list
+neural revision show 55555555-5555-5555-5555-555555555555
+```
 
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience

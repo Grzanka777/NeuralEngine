@@ -194,6 +194,8 @@ Neural Engine now has a minimal PlaybookRevision vertical slice:
 * Port: `PlaybookRevisionRepository`
 * Infrastructure implementation: `JsonPlaybookRevisionRepository`
 * Dependency wiring: `application/container.py`
+* CLI commands: `neural revision add`, `neural revision list`, and
+  `neural revision show UUID`
 
 A PlaybookRevision is an immutable candidate snapshot of revised Playbook
 content supplied manually or by an external system. `PlaybookRevisionService.add()`
@@ -204,6 +206,10 @@ referenced Knowledge item in supplied order before saving. Proposal-level
 failures are detected before any Playbook or Knowledge read. PlaybookRevision
 records do not modify or replace Playbooks, do not change proposal status, do
 not infer revised content, and do not perform automatic evolution.
+The Revision CLI records explicitly supplied revised content only. Accepted
+EvolutionProposal status remains a recorded decision; creating a revision is a
+separate action and still does not activate a revision, apply changes to a
+Playbook, or introduce automatic evolution.
 
 ## Validation
 
@@ -214,7 +220,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 314 tests.
+Pytest collected 330 tests.
 
 ## Notes for next work
 

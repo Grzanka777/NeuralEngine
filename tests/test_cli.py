@@ -25,6 +25,18 @@ from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationFindingsRequiredError,
     PlaybookRunNotFoundError,
 )
+from neural_engine.application.playbook_revision_service import (
+    KnowledgeNotFoundError as RevisionKnowledgeNotFoundError,
+)
+from neural_engine.application.playbook_revision_service import (
+    PlaybookNotFoundError as RevisionPlaybookNotFoundError,
+)
+from neural_engine.application.playbook_revision_service import (
+    PlaybookRevisionProposalMismatchError,
+    PlaybookRevisionProposalNotAcceptedError,
+    PlaybookRevisionStepsRequiredError,
+    PlaybookRevisionSuccessCriteriaRequiredError,
+)
 from neural_engine.application.playbook_run_service import (
     PlaybookNotFoundError,
     PlaybookRunActionsRequiredError,
@@ -45,6 +57,7 @@ from neural_engine.domain import (
     Playbook,
     PlaybookEffectiveness,
     PlaybookEvaluation,
+    PlaybookRevision,
     PlaybookRun,
 )
 
@@ -692,6 +705,124 @@ class FakeEvolutionProposalService:
         return None
 
 
+class FakePlaybookRevisionService:
+    def __init__(
+        self,
+        revisions: list[PlaybookRevision],
+        missing_proposal_id: UUID | None = None,
+        not_accepted: tuple[UUID, EvolutionProposalStatus] | None = None,
+        proposal_mismatch: tuple[UUID, UUID, UUID] | None = None,
+        missing_playbook_id: UUID | None = None,
+        missing_knowledge_id: UUID | None = None,
+    ) -> None:
+        self.revisions = revisions
+        self.missing_proposal_id = missing_proposal_id
+        self.not_accepted = not_accepted
+        self.proposal_mismatch = proposal_mismatch
+        self.missing_playbook_id = missing_playbook_id
+        self.missing_knowledge_id = missing_knowledge_id
+        self.add_calls: list[
+            tuple[
+                UUID,
+                UUID,
+                str,
+                str,
+                str,
+                list[str],
+                list[str],
+                list[UUID],
+                str | None,
+                list[str] | None,
+            ]
+        ] = []
+        self.list_revisions_calls = 0
+        self.requested_ids: list[UUID] = []
+
+    def add(
+        self,
+        playbook_id: UUID,
+        proposal_id: UUID,
+        title: str,
+        situation: str,
+        objective: str,
+        steps: list[str],
+        success_criteria: list[str],
+        knowledge_ids: list[UUID],
+        notes: str | None = None,
+        tags: list[str] | None = None,
+    ) -> PlaybookRevision:
+        self.add_calls.append(
+            (
+                playbook_id,
+                proposal_id,
+                title,
+                situation,
+                objective,
+                steps,
+                success_criteria,
+                knowledge_ids,
+                notes,
+                tags,
+            )
+        )
+
+        if not steps:
+            raise PlaybookRevisionStepsRequiredError()
+
+        if not success_criteria:
+            raise PlaybookRevisionSuccessCriteriaRequiredError()
+
+        if self.missing_proposal_id is not None:
+            raise EvolutionProposalNotFoundError(self.missing_proposal_id)
+
+        if self.not_accepted is not None:
+            error_proposal_id, actual_status = self.not_accepted
+            raise PlaybookRevisionProposalNotAcceptedError(error_proposal_id, actual_status)
+
+        if self.proposal_mismatch is not None:
+            error_proposal_id, expected_playbook_id, actual_playbook_id = self.proposal_mismatch
+            raise PlaybookRevisionProposalMismatchError(
+                error_proposal_id,
+                expected_playbook_id,
+                actual_playbook_id,
+            )
+
+        if self.missing_playbook_id is not None:
+            raise RevisionPlaybookNotFoundError(self.missing_playbook_id)
+
+        if self.missing_knowledge_id is not None:
+            raise RevisionKnowledgeNotFoundError(self.missing_knowledge_id)
+
+        revision = PlaybookRevision(
+            playbook_id=playbook_id,
+            proposal_id=proposal_id,
+            title=title,
+            situation=situation,
+            objective=objective,
+            steps=steps,
+            success_criteria=success_criteria,
+            knowledge_ids=knowledge_ids,
+            notes=notes,
+            tags=tags or [],
+        )
+        self.revisions.append(revision)
+
+        return revision
+
+    def list_revisions(self) -> list[PlaybookRevision]:
+        self.list_revisions_calls += 1
+        return self.revisions
+
+    def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
+        self.requested_ids.append(revision_id)
+
+        for revision in self.revisions:
+            if revision.id == revision_id:
+                return revision
+
+        return None
+
+
 class FakeContainer:
     def __init__(
         self,
@@ -702,6 +833,7 @@ class FakeContainer:
         playbook_run_service: FakePlaybookRunService | None = None,
         playbook_evaluation_service: FakePlaybookEvaluationService | None = None,
         evolution_proposal_service: FakeEvolutionProposalService | None = None,
+        playbook_revision_service: FakePlaybookRevisionService | None = None,
     ) -> None:
         self._observation_service = observation_service
         self._experience_service = experience_service
@@ -710,6 +842,7 @@ class FakeContainer:
         self._playbook_run_service = playbook_run_service
         self._playbook_evaluation_service = playbook_evaluation_service
         self._evolution_proposal_service = evolution_proposal_service
+        self._playbook_revision_service = playbook_revision_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -752,6 +885,12 @@ class FakeContainer:
             raise AssertionError("Evolution proposal service was not expected")
 
         return self._evolution_proposal_service
+
+    def playbook_revision_service(self) -> FakePlaybookRevisionService:
+        if self._playbook_revision_service is None:
+            raise AssertionError("Playbook revision service was not expected")
+
+        return self._playbook_revision_service
 
 
 def test_search_displays_matching_observations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3376,3 +3515,578 @@ def test_proposal_add_multiple_benefits_in_supplied_order(
         "Clearer audit trail",
         "Less manual work",
     ]
+
+
+def make_revision(
+    title: str = "Revision title",
+    playbook_id: UUID | None = None,
+    proposal_id: UUID | None = None,
+) -> PlaybookRevision:
+    return PlaybookRevision(
+        playbook_id=playbook_id or UUID("11111111-aaaa-bbbb-cccc-111111111111"),
+        proposal_id=proposal_id or UUID("22222222-aaaa-bbbb-cccc-222222222222"),
+        title=title,
+        situation="Revision situation",
+        objective="Revision objective",
+        steps=["First revised step", "Second revised step"],
+        success_criteria=["First success criterion", "Second success criterion"],
+        knowledge_ids=[
+            UUID("33333333-aaaa-bbbb-cccc-333333333333"),
+            UUID("44444444-aaaa-bbbb-cccc-444444444444"),
+        ],
+        notes="Revision notes",
+        tags=["revision", "manual"],
+    )
+
+
+def test_revision_add_delegates_all_parsed_values_and_prints_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("aaaaaaaa-1111-2222-3333-444444444444")
+    proposal_id = UUID("bbbbbbbb-1111-2222-3333-444444444444")
+    first_knowledge_id = UUID("cccccccc-1111-2222-3333-444444444444")
+    second_knowledge_id = UUID("dddddddd-1111-2222-3333-444444444444")
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--proposal-id",
+            str(proposal_id),
+            "--title",
+            "Revised recovery playbook",
+            "--situation",
+            "A production recovery is unclear",
+            "--objective",
+            "Make recovery repeatable",
+            "--step",
+            "Collect recovery evidence",
+            "--step",
+            "Verify service health",
+            "--success-criterion",
+            "Evidence is recorded",
+            "--success-criterion",
+            "Service health is verified",
+            "--knowledge-id",
+            str(first_knowledge_id),
+            "--knowledge-id",
+            str(second_knowledge_id),
+            "--notes",
+            "Supplied by external reviewer",
+            "--tag",
+            "ops",
+            "--tag",
+            "candidate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls == [
+        (
+            playbook_id,
+            proposal_id,
+            "Revised recovery playbook",
+            "A production recovery is unclear",
+            "Make recovery repeatable",
+            ["Collect recovery evidence", "Verify service health"],
+            ["Evidence is recorded", "Service health is verified"],
+            [first_knowledge_id, second_knowledge_id],
+            "Supplied by external reviewer",
+            ["ops", "candidate"],
+        )
+    ]
+    assert "Playbook revision stored." in result.output
+    assert str(service.revisions[0].id) in result.output
+
+
+def test_revision_add_invalid_uuid_returns_usage_error_without_calling_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            "not-a-uuid",
+            "--proposal-id",
+            "bbbbbbbb-1111-2222-3333-444444444444",
+            "--title",
+            "Invalid",
+            "--situation",
+            "Invalid input",
+            "--objective",
+            "Reject invalid UUID",
+            "--step",
+            "Step",
+            "--success-criterion",
+            "Criterion",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert service.add_calls == []
+
+
+def test_revision_add_missing_required_options_returns_typer_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["revision", "add"])
+
+    assert result.exit_code == 2
+    assert "Missing option" in result.output
+    assert service.add_calls == []
+
+
+def test_revision_add_handles_empty_steps_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("eeeeeeee-1111-2222-3333-444444444444")
+    proposal_id = UUID("ffffffff-1111-2222-3333-444444444444")
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--proposal-id",
+            str(proposal_id),
+            "--title",
+            "No steps",
+            "--situation",
+            "No step was supplied",
+            "--objective",
+            "Reject incomplete revision",
+            "--success-criterion",
+            "Criterion",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--step" in result.output
+    assert service.add_calls == []
+
+
+def test_revision_add_handles_empty_success_criteria_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("12121212-1111-2222-3333-444444444444")
+    proposal_id = UUID("23232323-1111-2222-3333-444444444444")
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--proposal-id",
+            str(proposal_id),
+            "--title",
+            "No success criteria",
+            "--situation",
+            "No success criterion was supplied",
+            "--objective",
+            "Reject incomplete revision",
+            "--step",
+            "Step",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--success-criterion" in result.output
+    assert service.add_calls == []
+
+
+def test_revision_add_missing_proposal_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("34343434-1111-2222-3333-444444444444")
+    service = FakePlaybookRevisionService([], missing_proposal_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            "45454545-1111-2222-3333-444444444444",
+            "--proposal-id",
+            str(missing_id),
+            "--title",
+            "Missing proposal",
+            "--situation",
+            "Proposal does not exist",
+            "--objective",
+            "Reject revision",
+            "--step",
+            "Step",
+            "--success-criterion",
+            "Criterion",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert f"Evolution proposal not found: {missing_id}" in result.output
+
+
+def test_revision_add_not_accepted_proposal_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal_id = UUID("56565656-1111-2222-3333-444444444444")
+    service = FakePlaybookRevisionService(
+        [],
+        not_accepted=(proposal_id, EvolutionProposalStatus.DRAFT),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            "67676767-1111-2222-3333-444444444444",
+            "--proposal-id",
+            str(proposal_id),
+            "--title",
+            "Draft proposal",
+            "--situation",
+            "Proposal is draft",
+            "--objective",
+            "Reject revision",
+            "--step",
+            "Step",
+            "--success-criterion",
+            "Criterion",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert str(proposal_id) in result.output
+    assert "must be accepted" in result.output
+    assert "draft" in result.output
+
+
+def test_revision_add_proposal_mismatch_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal_id = UUID("78787878-1111-2222-3333-444444444444")
+    expected_id = UUID("89898989-1111-2222-3333-444444444444")
+    actual_id = UUID("90909090-1111-2222-3333-444444444444")
+    service = FakePlaybookRevisionService(
+        [],
+        proposal_mismatch=(proposal_id, expected_id, actual_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            str(expected_id),
+            "--proposal-id",
+            str(proposal_id),
+            "--title",
+            "Mismatch",
+            "--situation",
+            "Proposal belongs elsewhere",
+            "--objective",
+            "Reject revision",
+            "--step",
+            "Step",
+            "--success-criterion",
+            "Criterion",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert str(proposal_id) in result.output
+    assert str(expected_id) in result.output
+    assert str(actual_id) in result.output
+
+
+def test_revision_add_missing_playbook_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("abababab-1111-2222-3333-444444444444")
+    service = FakePlaybookRevisionService([], missing_playbook_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            str(missing_id),
+            "--proposal-id",
+            "bcbcbcbc-1111-2222-3333-444444444444",
+            "--title",
+            "Missing playbook",
+            "--situation",
+            "Playbook does not exist",
+            "--objective",
+            "Reject revision",
+            "--step",
+            "Step",
+            "--success-criterion",
+            "Criterion",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert f"Playbook not found: {missing_id}" in result.output
+
+
+def test_revision_add_missing_knowledge_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("cdcdcdcd-1111-2222-3333-444444444444")
+    service = FakePlaybookRevisionService([], missing_knowledge_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "add",
+            "--playbook-id",
+            "dededede-1111-2222-3333-444444444444",
+            "--proposal-id",
+            "efefefef-1111-2222-3333-444444444444",
+            "--title",
+            "Missing knowledge",
+            "--situation",
+            "Knowledge does not exist",
+            "--objective",
+            "Reject revision",
+            "--step",
+            "Step",
+            "--success-criterion",
+            "Criterion",
+            "--knowledge-id",
+            str(missing_id),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert f"Knowledge not found: {missing_id}" in result.output
+
+
+def test_revision_list_delegates_and_displays_one_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision = make_revision("Listed revision")
+    service = FakePlaybookRevisionService([revision])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["revision", "list"])
+
+    assert result.exit_code == 0
+    assert service.list_revisions_calls == 1
+    assert f"ID: {revision.id}" in result.output
+    assert f"Timestamp: {revision.timestamp}" in result.output
+    assert f"Playbook ID: {revision.playbook_id}" in result.output
+    assert f"Proposal ID: {revision.proposal_id}" in result.output
+    assert "Title: Listed revision" in result.output
+
+
+def test_revision_list_displays_multiple_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = make_revision("First revision")
+    second = make_revision("Second revision")
+    service = FakePlaybookRevisionService([first, second])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["revision", "list"])
+
+    assert result.exit_code == 0
+    assert "Title: First revision" in result.output
+    assert "Title: Second revision" in result.output
+
+
+def test_revision_list_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["revision", "list"])
+
+    assert result.exit_code == 0
+    assert service.list_revisions_calls == 1
+    assert "No playbook revisions found." in result.output
+
+
+def test_revision_show_delegates_uuid_and_displays_all_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_knowledge_id = UUID("11111111-2222-3333-4444-555555555555")
+    second_knowledge_id = UUID("22222222-3333-4444-5555-666666666666")
+    revision = PlaybookRevision(
+        playbook_id=UUID("33333333-4444-5555-6666-777777777777"),
+        proposal_id=UUID("44444444-5555-6666-7777-888888888888"),
+        title="Shown revision",
+        situation="Detailed situation",
+        objective="Detailed objective",
+        steps=["First step", "Second step"],
+        success_criteria=["First criterion", "Second criterion"],
+        knowledge_ids=[first_knowledge_id, second_knowledge_id],
+        notes="Detailed notes",
+        tags=["detailed", "manual"],
+    )
+    service = FakePlaybookRevisionService([revision])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["revision", "show", str(revision.id)])
+
+    assert result.exit_code == 0
+    assert service.requested_ids == [revision.id]
+    assert f"ID: {revision.id}" in result.output
+    assert f"Timestamp: {revision.timestamp}" in result.output
+    assert f"Playbook ID: {revision.playbook_id}" in result.output
+    assert f"Proposal ID: {revision.proposal_id}" in result.output
+    assert "Title: Shown revision" in result.output
+    assert "Situation: Detailed situation" in result.output
+    assert "Objective: Detailed objective" in result.output
+    assert "Steps:" in result.output
+    assert "- First step" in result.output
+    assert "- Second step" in result.output
+    assert "Success criteria:" in result.output
+    assert "- First criterion" in result.output
+    assert "- Second criterion" in result.output
+    assert "Knowledge IDs:" in result.output
+    assert str(first_knowledge_id) in result.output
+    assert str(second_knowledge_id) in result.output
+    assert "Notes: Detailed notes" in result.output
+    assert "Tags: detailed, manual" in result.output
+
+
+def test_revision_show_handles_missing_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("55555555-6666-7777-8888-999999999999")
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["revision", "show", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.requested_ids == [missing_id]
+    assert f"Playbook revision not found: {missing_id}" in result.output
+
+
+def test_revision_show_invalid_uuid_returns_usage_error_without_calling_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["revision", "show", "not-a-uuid"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert service.requested_ids == []

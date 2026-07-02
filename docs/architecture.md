@@ -290,6 +290,17 @@ notes, and optional tags supplied by the caller. A revision does not replace or
 modify the original Playbook, does not change proposal status, does not infer or
 generate revised content, and does not perform automatic evolution.
 
+`neural revision add` delegates to `PlaybookRevisionService.add()`. All revised
+content fields are supplied explicitly by the caller. The command does not copy
+content from the Playbook, does not transform proposal changes, and does not
+activate or apply the revision.
+
+`neural revision list` delegates to `PlaybookRevisionService.list_revisions()`
+and displays stored revision summaries in repository order.
+
+`neural revision show UUID` delegates to `PlaybookRevisionService.get_by_id()`
+and displays the full stored revision snapshot.
+
 `PlaybookRevisionService.list_revisions()` retrieves all playbook revisions
 through the same service and repository stack.
 
