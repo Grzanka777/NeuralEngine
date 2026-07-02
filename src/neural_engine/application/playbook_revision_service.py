@@ -127,6 +127,14 @@ class PlaybookRevisionService:
     def list_revisions(self) -> list[PlaybookRevision]:
         return self._revision_repository.load_all()
 
+    def list_for_playbook(self, playbook_id: UUID) -> list[PlaybookRevision]:
+        if self._playbook_repository.get_by_id(playbook_id) is None:
+            raise PlaybookNotFoundError(playbook_id)
+
+        revisions = self._revision_repository.load_all()
+
+        return [revision for revision in revisions if revision.playbook_id == playbook_id]
+
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
         return self._revision_repository.get_by_id(revision_id)
 

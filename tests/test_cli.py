@@ -736,6 +736,7 @@ class FakePlaybookRevisionService:
             ]
         ] = []
         self.list_revisions_calls = 0
+        self.list_for_playbook_calls: list[UUID] = []
         self.requested_ids: list[UUID] = []
 
     def add(
@@ -812,6 +813,14 @@ class FakePlaybookRevisionService:
     def list_revisions(self) -> list[PlaybookRevision]:
         self.list_revisions_calls += 1
         return self.revisions
+
+    def list_for_playbook(self, playbook_id: UUID) -> list[PlaybookRevision]:
+        self.list_for_playbook_calls.append(playbook_id)
+
+        if self.missing_playbook_id is not None and self.missing_playbook_id == playbook_id:
+            raise RevisionPlaybookNotFoundError(self.missing_playbook_id)
+
+        return [revision for revision in self.revisions if revision.playbook_id == playbook_id]
 
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
         self.requested_ids.append(revision_id)
@@ -2141,6 +2150,89 @@ def test_playbook_proposals_missing_playbook_returns_error(
     assert result.exit_code == 1
     assert service.list_for_playbook_calls == [missing_id]
     assert f"Playbook not found: {missing_id}" in result.output
+
+
+def test_playbook_revisions_delegates_positional_uuid_and_displays_linked_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("92929292-9292-9292-9292-929292929292")
+    revision = make_revision("Linked playbook revision", playbook_id=playbook_id)
+    service = FakePlaybookRevisionService([revision])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revisions", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert f"ID: {revision.id}" in result.output
+    assert f"Timestamp: {revision.timestamp}" in result.output
+    assert f"Playbook ID: {playbook_id}" in result.output
+    assert f"Proposal ID: {revision.proposal_id}" in result.output
+    assert "Title: Linked playbook revision" in result.output
+
+
+def test_playbook_revisions_displays_multiple_revisions_in_service_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("93939393-9393-9393-9393-939393939393")
+    first = make_revision("First linked revision", playbook_id=playbook_id)
+    second = make_revision("Second linked revision", playbook_id=playbook_id)
+    service = FakePlaybookRevisionService([first, second])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revisions", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert result.output.index("Title: First linked revision") < result.output.index(
+        "Title: Second linked revision"
+    )
+
+
+def test_playbook_revisions_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("94949494-9494-9494-9494-949494949494")
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revisions", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert f"No playbook revisions linked to playbook: {playbook_id}" in result.output
+
+
+def test_playbook_revisions_missing_playbook_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("95959595-9595-9595-9595-959595959595")
+    service = FakePlaybookRevisionService([], missing_playbook_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revisions", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_playbook_calls == [missing_id]
+    assert f"Playbook not found: {missing_id}" in result.output
+
+
+def test_playbook_revisions_invalid_uuid_returns_usage_error_without_calling_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revisions", "not-a-uuid"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert service.list_for_playbook_calls == []
 
 
 def test_run_add_delegates_with_parsed_values_and_prints_id(

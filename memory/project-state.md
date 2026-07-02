@@ -75,8 +75,8 @@ Neural Engine now has a minimal Playbook vertical slice:
 * Infrastructure implementation: `JsonPlaybookRepository`
 * Dependency wiring: `application/container.py`
 * CLI commands: `neural playbook add`, `neural playbook list`,
-  `neural playbook show UUID`, `neural playbook runs UUID`, and
-  `neural playbook proposals UUID`
+  `neural playbook show UUID`, `neural playbook runs UUID`,
+  `neural playbook proposals UUID`, and `neural playbook revisions UUID`
 
 A Playbook is an explicit operational procedure that applies one or more
 Knowledge items to a class of situations. `PlaybookService.add()` requires at
@@ -93,6 +93,13 @@ to list PlaybookRun records linked to one existing Playbook.
 `EvolutionProposalService.list_for_playbook()` to list manually or externally
 supplied EvolutionProposal records linked to one existing Playbook without
 modifying that Playbook.
+`neural playbook revisions UUID` delegates to
+`PlaybookRevisionService.list_for_playbook()` to verify the Playbook exists and
+list PlaybookRevision records assigned to it. The service loads all revisions
+through `PlaybookRevisionRepository.load_all()` and filters by `playbook_id` in
+the application layer. This is read-only navigation only: it does not activate a
+revision, choose a current version, modify the Playbook, apply a proposal, or
+perform automatic evolution.
 
 Neural Engine now has a minimal PlaybookRun vertical slice:
 
@@ -220,7 +227,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 330 tests.
+Pytest collected 343 tests.
 
 ## Notes for next work
 

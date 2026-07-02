@@ -838,6 +838,26 @@ def list_playbook_proposals(playbook_id: UUID) -> None:
         console.print()
 
 
+@playbook_app.command("revisions")
+def list_playbook_revisions(playbook_id: UUID) -> None:
+    """List playbook revisions linked to one playbook."""
+
+    service = container.playbook_revision_service()
+    try:
+        revisions = service.list_for_playbook(playbook_id)
+    except RevisionPlaybookNotFoundError as error:
+        console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not revisions:
+        console.print(f"[yellow]No playbook revisions linked to playbook: {playbook_id}[/yellow]")
+        return
+
+    for revision in revisions:
+        _print_playbook_revision_summary(revision)
+        console.print()
+
+
 @playbook_app.command("show")
 def show_playbook(playbook_id: UUID) -> None:
     """Show one playbook."""

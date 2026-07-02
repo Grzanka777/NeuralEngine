@@ -1,5 +1,6 @@
 from neural_engine.application.container import Container
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
+from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
     JsonEvolutionProposalRepository,
 )
@@ -18,3 +19,10 @@ def test_container_wires_playbook_revision_service_with_json_repositories() -> N
     assert isinstance(service._playbook_repository, JsonPlaybookRepository)
     assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)
     assert isinstance(service._knowledge_repository, JsonKnowledgeRepository)
+
+
+def test_container_wires_playbook_service_without_playbook_revision_repository() -> None:
+    service = Container().playbook_service()
+
+    assert isinstance(service, PlaybookService)
+    assert not hasattr(service, "_revision_repository")

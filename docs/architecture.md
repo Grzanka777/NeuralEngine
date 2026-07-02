@@ -156,6 +156,15 @@ playbook exists through the `PlaybookRepository` port, loads evolution proposals
 through the `EvolutionProposalRepository` port, and returns only proposals
 linked to that playbook ID.
 
+`neural playbook revisions UUID` delegates to
+`PlaybookRevisionService.list_for_playbook()`. The service first verifies the
+Playbook exists through the `PlaybookRepository` port, loads all revisions
+through the `PlaybookRevisionRepository.load_all()` port, and filters matching
+`playbook_id` values in the application layer. Repository order is preserved.
+The repository does not expose `find_by_playbook_id()`. This is read-only
+relation navigation: it does not activate any revision, choose a current
+version, modify the Playbook, apply a proposal, or perform automatic evolution.
+
 The JSON repository is the current infrastructure implementation and stores one
 file per playbook under `NeuralPaths.PLAYBOOKS`.
 
