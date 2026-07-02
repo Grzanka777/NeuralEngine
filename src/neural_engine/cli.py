@@ -12,6 +12,7 @@ from neural_engine.application.evolution_proposal_service import (
     EvolutionProposalEvaluationPlaybookMismatchError,
     EvolutionProposalEvaluationRunNotFoundError,
     EvolutionProposalEvaluationsRequiredError,
+    EvolutionProposalNotFoundError,
     PlaybookEvaluationNotFoundError,
 )
 from neural_engine.application.evolution_proposal_service import (
@@ -601,6 +602,26 @@ def list_proposals() -> None:
     for proposal in proposals:
         _print_evolution_proposal_summary(proposal)
         console.print()
+
+
+@proposal_app.command("status")
+def set_proposal_status(
+    proposal_id: UUID,
+    status: Annotated[EvolutionProposalStatus, typer.Option("--status")],
+) -> None:
+    """Record a manual or external evolution proposal status decision."""
+
+    service = container.evolution_proposal_service()
+    try:
+        proposal = service.set_status(proposal_id, status)
+    except EvolutionProposalNotFoundError as error:
+        console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    console.print(
+        "[green]Evolution proposal status updated.[/green] "
+        f"ID: [cyan]{proposal.id}[/cyan] Status: [cyan]{proposal.status.value}[/cyan]"
+    )
 
 
 @proposal_app.command("show")

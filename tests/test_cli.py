@@ -9,6 +9,7 @@ from neural_engine.application.evolution_proposal_service import (
     EvolutionProposalEvaluationPlaybookMismatchError,
     EvolutionProposalEvaluationRunNotFoundError,
     EvolutionProposalEvaluationsRequiredError,
+    EvolutionProposalNotFoundError,
     PlaybookEvaluationNotFoundError,
 )
 from neural_engine.application.evolution_proposal_service import (
@@ -577,6 +578,7 @@ class FakeEvolutionProposalService:
         self.requested_ids: list[UUID] = []
         self.list_for_playbook_calls: list[UUID] = []
         self.list_for_evaluation_calls: list[UUID] = []
+        self.set_status_calls: list[tuple[UUID, EvolutionProposalStatus]] = []
 
     def add(
         self,
@@ -664,6 +666,21 @@ class FakeEvolutionProposalService:
             raise PlaybookEvaluationNotFoundError(self.missing_evaluation_id)
 
         return [proposal for proposal in self.proposals if evaluation_id in proposal.evaluation_ids]
+
+    def set_status(
+        self,
+        proposal_id: UUID,
+        status: EvolutionProposalStatus,
+    ) -> EvolutionProposal:
+        self.set_status_calls.append((proposal_id, status))
+
+        for index, proposal in enumerate(self.proposals):
+            if proposal.id == proposal_id:
+                updated = proposal.model_copy(update={"status": status})
+                self.proposals[index] = updated
+                return updated
+
+        raise EvolutionProposalNotFoundError(proposal_id)
 
     def get_by_id(self, proposal_id: UUID) -> EvolutionProposal | None:
         self.requested_ids.append(proposal_id)
@@ -3051,6 +3068,97 @@ def test_proposal_list_handles_empty_repository(
 
     assert result.exit_code == 0
     assert "No evolution proposals found." in result.output
+
+
+@pytest.mark.parametrize(
+    ("status_value", "status"),
+    [
+        ("draft", EvolutionProposalStatus.DRAFT),
+        ("accepted", EvolutionProposalStatus.ACCEPTED),
+        ("rejected", EvolutionProposalStatus.REJECTED),
+    ],
+)
+def test_proposal_status_delegates_parsed_status_and_prints_result(
+    status_value: str,
+    status: EvolutionProposalStatus,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = EvolutionProposal(
+        playbook_id=UUID("12121212-1212-1212-1212-121212121212"),
+        evaluation_ids=[UUID("23232323-2323-2323-2323-232323232323")],
+        summary="Status proposal",
+        rationale="Manual status decision",
+        proposed_changes=["Change"],
+        expected_benefits=["Benefit"],
+    )
+    service = FakeEvolutionProposalService([proposal])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        ["proposal", "status", str(proposal.id), "--status", status_value],
+    )
+
+    assert result.exit_code == 0
+    assert service.set_status_calls == [(proposal.id, status)]
+    assert str(proposal.id) in result.output
+    assert f"Status: {status.value}" in result.output
+
+
+def test_proposal_status_missing_proposal_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("34343434-3434-3434-3434-343434343434")
+    service = FakeEvolutionProposalService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        ["proposal", "status", str(missing_id), "--status", "accepted"],
+    )
+
+    assert result.exit_code == 1
+    assert service.set_status_calls == [(missing_id, EvolutionProposalStatus.ACCEPTED)]
+    assert f"Evolution proposal not found: {missing_id}" in result.output
+
+
+def test_proposal_status_invalid_status_returns_usage_error_without_calling_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = EvolutionProposal(
+        playbook_id=UUID("45454545-4545-4545-4545-454545454545"),
+        evaluation_ids=[UUID("56565656-5656-5656-5656-565656565656")],
+        summary="Invalid status proposal",
+        rationale="Typer should reject invalid status",
+        proposed_changes=["Change"],
+        expected_benefits=["Benefit"],
+    )
+    service = FakeEvolutionProposalService([proposal])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        ["proposal", "status", str(proposal.id), "--status", "unknown"],
+    )
+
+    assert result.exit_code != 0
+    assert "Invalid value" in result.output
+    assert service.set_status_calls == []
 
 
 def test_proposal_show_delegates_and_displays_all_fields(

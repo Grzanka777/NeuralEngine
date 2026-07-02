@@ -238,6 +238,13 @@ service and repository stack.
 `neural proposal show UUID` retrieves a single evolution proposal through
 `EvolutionProposalService.get_by_id()` and displays all proposal fields.
 
+`neural proposal status UUID --status STATUS` delegates to
+`EvolutionProposalService.set_status()`. The service loads one existing
+proposal through the `EvolutionProposalRepository` port, creates an updated
+proposal preserving every field except status, saves it through the same port,
+and returns the updated proposal. The status is supplied manually or externally;
+accepted status does not apply proposal changes to a playbook.
+
 `EvolutionProposalService.list_for_playbook()` verifies one existing playbook
 and returns proposals linked to it. Proposals remain supplied manually or
 externally; this relation lookup does not infer proposal content, apply
@@ -252,4 +259,5 @@ Evolution proposals are supplied manually or externally. They store the
 playbook ID, evaluation IDs, summary, rationale, proposed changes, expected
 benefits, optional risks, status, optional notes, and optional tags. Neural
 Engine does not modify playbooks, apply proposals, approve or reject proposals
-automatically, rank proposals, or perform automatic evolution.
+automatically, infer proposal status, rank proposals, or perform automatic
+evolution.

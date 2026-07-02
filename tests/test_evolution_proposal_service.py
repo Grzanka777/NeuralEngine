@@ -7,6 +7,7 @@ from neural_engine.application.evolution_proposal_service import (
     EvolutionProposalEvaluationPlaybookMismatchError,
     EvolutionProposalEvaluationRunNotFoundError,
     EvolutionProposalEvaluationsRequiredError,
+    EvolutionProposalNotFoundError,
     EvolutionProposalService,
     PlaybookEvaluationNotFoundError,
     PlaybookNotFoundError,
@@ -100,7 +101,9 @@ class FakeEvolutionProposalRepository(EvolutionProposalRepository):
         run_repository: FakePlaybookRunRepository,
     ) -> None:
         self.saved: list[EvolutionProposal] = []
+        self.save_calls: list[EvolutionProposal] = []
         self.load_all_calls = 0
+        self.requested_ids: list[UUID] = []
         self.playbook_lookups_at_save: list[UUID] = []
         self.evaluation_lookups_at_save: list[UUID] = []
         self.run_lookups_at_save: list[UUID] = []
@@ -112,6 +115,7 @@ class FakeEvolutionProposalRepository(EvolutionProposalRepository):
         self.playbook_lookups_at_save = list(self._playbook_repository.requested_ids)
         self.evaluation_lookups_at_save = list(self._evaluation_repository.requested_ids)
         self.run_lookups_at_save = list(self._run_repository.requested_ids)
+        self.save_calls.append(proposal)
         self.saved.append(proposal)
 
     def load_all(self) -> list[EvolutionProposal]:
@@ -119,6 +123,8 @@ class FakeEvolutionProposalRepository(EvolutionProposalRepository):
         return self.saved
 
     def get_by_id(self, proposal_id: UUID) -> EvolutionProposal | None:
+        self.requested_ids.append(proposal_id)
+
         for proposal in self.saved:
             if proposal.id == proposal_id:
                 return proposal
@@ -159,6 +165,7 @@ def make_proposal(
     playbook_id: UUID,
     summary: str = "Proposal",
     evaluation_ids: list[UUID] | None = None,
+    status: EvolutionProposalStatus = EvolutionProposalStatus.DRAFT,
 ) -> EvolutionProposal:
     return EvolutionProposal(
         playbook_id=playbook_id,
@@ -167,6 +174,7 @@ def make_proposal(
         rationale="Manual or external proposal",
         proposed_changes=["Change"],
         expected_benefits=["Benefit"],
+        status=status,
     )
 
 
@@ -570,6 +578,107 @@ def test_list_proposals_returns_repository_items() -> None:
 
     assert service.list_proposals() == [proposal]
     assert proposal_repo.load_all_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("initial_status", "new_status"),
+    [
+        (EvolutionProposalStatus.DRAFT, EvolutionProposalStatus.ACCEPTED),
+        (EvolutionProposalStatus.DRAFT, EvolutionProposalStatus.REJECTED),
+        (EvolutionProposalStatus.ACCEPTED, EvolutionProposalStatus.REJECTED),
+        (EvolutionProposalStatus.REJECTED, EvolutionProposalStatus.ACCEPTED),
+        (EvolutionProposalStatus.ACCEPTED, EvolutionProposalStatus.DRAFT),
+        (EvolutionProposalStatus.REJECTED, EvolutionProposalStatus.DRAFT),
+        (EvolutionProposalStatus.ACCEPTED, EvolutionProposalStatus.ACCEPTED),
+    ],
+)
+def test_set_status_allows_manual_status_changes(
+    initial_status: EvolutionProposalStatus,
+    new_status: EvolutionProposalStatus,
+) -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id, status=initial_status)
+    service, proposal_repo, _, _, _ = make_service([playbook])
+    proposal_repo.saved = [proposal]
+
+    updated = service.set_status(proposal.id, new_status)
+
+    assert updated.status == new_status
+    assert proposal_repo.save_calls == [updated]
+
+
+def test_set_status_preserves_id_and_timestamp() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    service, proposal_repo, _, _, _ = make_service([playbook])
+    proposal_repo.saved = [proposal]
+
+    updated = service.set_status(proposal.id, EvolutionProposalStatus.ACCEPTED)
+
+    assert updated.id == proposal.id
+    assert updated.timestamp == proposal.timestamp
+
+
+def test_set_status_preserves_all_fields_except_status() -> None:
+    playbook = make_playbook()
+    evaluation_ids = [
+        UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+    ]
+    proposal = EvolutionProposal(
+        playbook_id=playbook.id,
+        evaluation_ids=evaluation_ids,
+        summary="Preserve summary",
+        rationale="Preserve rationale",
+        proposed_changes=["First change", "Second change"],
+        expected_benefits=["First benefit", "Second benefit"],
+        risks=["Manual risk"],
+        status=EvolutionProposalStatus.DRAFT,
+        notes="Manual note",
+        tags=["manual", "external"],
+    )
+    service, proposal_repo, _, _, _ = make_service([playbook])
+    proposal_repo.saved = [proposal]
+
+    updated = service.set_status(proposal.id, EvolutionProposalStatus.REJECTED)
+
+    assert updated.model_dump(exclude={"status"}) == proposal.model_dump(exclude={"status"})
+    assert updated.status == EvolutionProposalStatus.REJECTED
+
+
+def test_set_status_looks_up_proposal_exactly_once() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    service, proposal_repo, _, _, _ = make_service([playbook])
+    proposal_repo.saved = [proposal]
+
+    service.set_status(proposal.id, EvolutionProposalStatus.ACCEPTED)
+
+    assert proposal_repo.requested_ids == [proposal.id]
+
+
+def test_set_status_saves_updated_proposal_exactly_once() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    service, proposal_repo, _, _, _ = make_service([playbook])
+    proposal_repo.saved = [proposal]
+
+    updated = service.set_status(proposal.id, EvolutionProposalStatus.ACCEPTED)
+
+    assert proposal_repo.save_calls == [updated]
+
+
+def test_set_status_raises_when_proposal_is_missing() -> None:
+    missing_id = UUID("99999999-9999-9999-9999-999999999999")
+    service, proposal_repo, _, _, _ = make_service()
+
+    with pytest.raises(EvolutionProposalNotFoundError) as error:
+        service.set_status(missing_id, EvolutionProposalStatus.ACCEPTED)
+
+    assert error.value.proposal_id == missing_id
+    assert proposal_repo.requested_ids == [missing_id]
+    assert proposal_repo.save_calls == []
+    assert proposal_repo.saved == []
 
 
 def test_list_for_playbook_returns_one_linked_proposal() -> None:

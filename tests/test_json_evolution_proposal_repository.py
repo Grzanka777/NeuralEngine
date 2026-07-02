@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 
-from neural_engine.domain import EvolutionProposal
+from neural_engine.domain import EvolutionProposal, EvolutionProposalStatus
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
     JsonEvolutionProposalRepository,
 )
@@ -59,3 +59,16 @@ def test_get_by_id_returns_none_when_file_is_missing(tmp_path: Path) -> None:
     proposal = make_proposal("Missing")
 
     assert repository.get_by_id(proposal.id) is None
+
+
+def test_save_updated_proposal_overwrites_same_json_file(tmp_path: Path) -> None:
+    repository = JsonEvolutionProposalRepository(tmp_path)
+    proposal = make_proposal("Update status")
+    repository.save(proposal)
+
+    updated = proposal.model_copy(update={"status": EvolutionProposalStatus.ACCEPTED})
+    repository.save(updated)
+
+    files = list(tmp_path.glob("*.json"))
+    assert files == [tmp_path / f"{proposal.id}.json"]
+    assert repository.get_by_id(proposal.id) == updated

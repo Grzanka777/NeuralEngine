@@ -154,8 +154,8 @@ Neural Engine now has a minimal EvolutionProposal vertical slice:
 * Port: `EvolutionProposalRepository`
 * Infrastructure implementation: `JsonEvolutionProposalRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: `neural proposal add`, `neural proposal list`, and
-  `neural proposal show UUID`
+* CLI commands: `neural proposal add`, `neural proposal list`,
+  `neural proposal show UUID`, and `neural proposal status UUID --status STATUS`
 
 An EvolutionProposal is an explicit human or external-system proposal to improve
 one existing Playbook based on one or more existing PlaybookEvaluation records.
@@ -170,6 +170,11 @@ automatic evolution.
 The Proposal CLI delegates to the application service, lets Typer parse UUIDs
 and `EvolutionProposalStatus`, and only renders manually or externally supplied
 proposal records.
+`EvolutionProposalService.set_status()` records a manually or externally
+supplied status decision for one existing EvolutionProposal. It loads the
+proposal through the `EvolutionProposalRepository` port, preserves every field
+except `status`, saves the updated proposal through the same port, and returns
+it. Accepted status does not apply proposal changes to a Playbook.
 `EvolutionProposalService.list_for_playbook()` verifies one existing Playbook
 through the `PlaybookRepository` port, loads proposals through the
 `EvolutionProposalRepository` port, and returns only proposals whose
@@ -191,7 +196,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 260 tests.
+Pytest collected 278 tests.
 
 ## Notes for next work
 

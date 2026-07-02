@@ -155,9 +155,14 @@ neural proposal add \
 
 neural proposal list
 neural proposal show 11111111-1111-1111-1111-111111111111
+neural proposal status 11111111-1111-1111-1111-111111111111 --status accepted
 neural playbook proposals 11111111-1111-1111-1111-111111111111
 neural evaluation proposals 22222222-2222-2222-2222-222222222222
 ```
+
+Proposal status is supplied manually or by an external system. Setting a
+proposal to `accepted` records the decision only; it does not apply changes to a
+Playbook.
 
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience

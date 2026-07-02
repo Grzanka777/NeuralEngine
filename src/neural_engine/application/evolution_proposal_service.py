@@ -25,6 +25,14 @@ class EvolutionProposalChangesRequiredError(Exception):
         super().__init__("Evolution proposal requires at least one proposed change.")
 
 
+class EvolutionProposalNotFoundError(Exception):
+    """Raised when an evolution proposal cannot be found."""
+
+    def __init__(self, proposal_id: UUID) -> None:
+        self.proposal_id = proposal_id
+        super().__init__(f"Evolution proposal not found: {proposal_id}")
+
+
 class PlaybookNotFoundError(Exception):
     """Raised when an evolution proposal references an unknown playbook."""
 
@@ -120,6 +128,21 @@ class EvolutionProposalService:
 
     def list_proposals(self) -> list[EvolutionProposal]:
         return self._proposal_repository.load_all()
+
+    def set_status(
+        self,
+        proposal_id: UUID,
+        status: EvolutionProposalStatus,
+    ) -> EvolutionProposal:
+        proposal = self._proposal_repository.get_by_id(proposal_id)
+
+        if proposal is None:
+            raise EvolutionProposalNotFoundError(proposal_id)
+
+        updated = proposal.model_copy(update={"status": status})
+        self._proposal_repository.save(updated)
+
+        return updated
 
     def list_for_playbook(self, playbook_id: UUID) -> list[EvolutionProposal]:
         if self._playbook_repository.get_by_id(playbook_id) is None:
