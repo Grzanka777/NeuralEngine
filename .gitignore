@@ -67,3 +67,4 @@ memory/sessions/*
 
 __pycache__/
 *.py[cod]
+.directory
