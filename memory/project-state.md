@@ -237,6 +237,13 @@ The Revision CLI records explicitly supplied revised content only. Accepted
 EvolutionProposal status remains a recorded decision; creating a revision is a
 separate action and still does not activate a revision, apply changes to a
 Playbook, or introduce automatic evolution.
+`docs/playbook-revision-lifecycle.md` records the lifecycle design decision for
+the next revision step. The design recommends a future separate
+`PlaybookRevisionActivation` artifact for explicit manual or external-system
+activation decisions instead of storing activation state on Playbook or
+PlaybookRevision. This preserves immutable revision snapshots, avoids implicit
+Playbook mutation, keeps accepted proposal status separate from application,
+and keeps automatic evolution out of scope.
 
 ## Validation
 

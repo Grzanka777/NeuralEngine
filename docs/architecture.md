@@ -318,6 +318,14 @@ notes, and optional tags supplied by the caller. A revision does not replace or
 modify the original Playbook, does not change proposal status, does not infer or
 generate revised content, and does not perform automatic evolution.
 
+The next lifecycle step for revisions is defined in
+`docs/playbook-revision-lifecycle.md`. The design recommends a future separate
+`PlaybookRevisionActivation` artifact for explicit manual or external-system
+activation decisions. Activation state should not be stored on Playbook or
+PlaybookRevision, and accepting a proposal or creating a revision must still
+not mutate Playbook content, change proposal status, apply a proposal, or
+perform automatic evolution.
+
 `neural revision add` delegates to `PlaybookRevisionService.add()`. All revised
 content fields are supplied explicitly by the caller. The command does not copy
 content from the Playbook, does not transform proposal changes, and does not
