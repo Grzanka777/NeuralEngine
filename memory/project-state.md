@@ -249,13 +249,20 @@ Neural Engine now has a PlaybookRevisionActivation domain foundation:
 
 * Domain model: `neural_engine.domain.PlaybookRevisionActivation`
 * Decision enum: `neural_engine.domain.PlaybookRevisionActivationDecision`
+* Port: `PlaybookRevisionActivationRepository`
+* Infrastructure implementation: `JsonPlaybookRevisionActivationRepository`
+* Path constant: `NeuralPaths.PLAYBOOK_REVISION_ACTIVATIONS`
+* Dependency wiring: `Container.playbook_revision_activation_repository()`
 
-This is domain-only. It validates local lifecycle decision invariants such as
-required reason, non-blank optional text and tags, required previous revision
-for `superseded`, and no previous revision for `rejected`. It does not validate
-Playbook, PlaybookRevision, EvolutionProposal, or Knowledge existence. There is
-no repository port, JSON adapter, path constant, application service, container
-wiring, CLI command, persistence schema, or activation behavior yet.
+This is domain and persistence foundation only. The domain model validates
+local lifecycle decision invariants such as required reason, non-blank optional
+text and tags, required previous revision for `superseded`, and no previous
+revision for `rejected`. It does not validate Playbook, PlaybookRevision,
+EvolutionProposal, or Knowledge existence. The repository port, JSON adapter,
+path constant, and container repository wiring provide basic persistence only.
+There is no application service, CLI command, activation behavior, lifecycle
+transition behavior, Playbook mutation, proposal application, proposal status
+change, or automatic evolution yet.
 
 ## Validation
 
@@ -266,7 +273,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 383 tests.
+Pytest collected 393 tests.
 
 ## Notes for next work
 

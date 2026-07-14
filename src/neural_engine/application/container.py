@@ -26,6 +26,9 @@ from neural_engine.infrastructure.json_playbook_evaluation_repository import (
 from neural_engine.infrastructure.json_playbook_repository import (
     JsonPlaybookRepository,
 )
+from neural_engine.infrastructure.json_playbook_revision_activation_repository import (
+    JsonPlaybookRevisionActivationRepository,
+)
 from neural_engine.infrastructure.json_playbook_revision_repository import (
     JsonPlaybookRevisionRepository,
 )
@@ -87,3 +90,8 @@ class Container:
             JsonEvolutionProposalRepository(),
             JsonKnowledgeRepository(),
         )
+
+    def playbook_revision_activation_repository(
+        self,
+    ) -> JsonPlaybookRevisionActivationRepository:
+        return JsonPlaybookRevisionActivationRepository()

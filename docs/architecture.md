@@ -40,6 +40,9 @@ Infrastructure:
   proposal.
 * The current playbook revision repository stores one JSON file per playbook
   revision.
+* The current playbook revision activation repository stores one JSON file per
+  playbook revision activation decision. No activation application service or
+  CLI behavior exists yet.
 
 CLI:
 

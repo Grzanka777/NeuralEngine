@@ -128,9 +128,12 @@ This option best fits the current architecture because:
 * repository ports can remain persistence contracts.
 
 The lifecycle domain foundation now exists: `PlaybookRevisionActivation`, its
-decision enum, local domain validation, and focused domain tests. This
-foundation does not add CLI behavior, persistence, activation behavior, or
-broad relation navigation.
+decision enum, local domain validation, and focused domain tests. The
+persistence foundation also exists: `PlaybookRevisionActivationRepository`,
+`JsonPlaybookRevisionActivationRepository`,
+`NeuralPaths.PLAYBOOK_REVISION_ACTIVATIONS`, and container repository wiring.
+These foundations do not add CLI behavior, application service behavior,
+activation behavior, lifecycle transitions, or broad relation navigation.
 
 Rejected options are less suitable now because they store lifecycle state by
 mutating existing records. That is simpler at first, but it weakens the audit
@@ -263,8 +266,9 @@ Recommended status or decision enum:
 PlaybookRevisionActivationDecision = active | superseded | rejected
 ```
 
-The domain foundation implements this model and enum only. Repository,
-persistence, service, and CLI behavior remain future work.
+The domain foundation implements this model and enum. The repository and JSON
+adapter foundation implements basic `save()`, `load_all()`, and `get_by_id()`
+persistence only. Service and CLI behavior remain future work.
 
 Recommended fields:
 
@@ -339,11 +343,11 @@ query is justified by scale.
 
 1. Add lifecycle domain foundation:
    `PlaybookRevisionActivation`, decision enum, domain tests, and documentation
-   updates. Do not add CLI behavior yet.
+   updates. Do not add CLI behavior yet. Completed.
 2. Add lifecycle repository port and JSON adapter:
    `PlaybookRevisionActivationRepository`,
    `JsonPlaybookRevisionActivationRepository`, path constant, repository tests,
-   and container wiring.
+   and container wiring. Completed.
 3. Add activation application service:
    validation for missing revision, missing Playbook, proposal mismatch,
    same-Playbook supersession, required reason, and no persistence before
