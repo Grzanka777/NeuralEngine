@@ -268,7 +268,17 @@ Playbook and proposal, verifies same-Playbook previous revision linkage for
 the `PlaybookRevisionActivationRepository` port, and returns the created
 activation. It does not validate Knowledge existence because activation acts on
 an existing revision. It also does not require or change proposal status.
-There is no CLI command, activation command, lifecycle query behavior,
+`PlaybookRevisionActivationService.list_for_playbook()` verifies one existing
+Playbook, loads activation records through
+`PlaybookRevisionActivationRepository.load_all()`, filters by `playbook_id` in
+the application layer, and preserves repository order.
+`PlaybookRevisionActivationService.get_active_revision_for_playbook()` verifies
+one existing Playbook, derives the current active revision from activation
+records in repository order, loads only the final derived revision through
+`PlaybookRevisionRepository.get_by_id()`, and verifies that revision still
+belongs to the Playbook. Inspection is read-only and does not validate
+EvolutionProposal status or Knowledge existence.
+There is no CLI command, activation command, lifecycle query command in CLI,
 Playbook mutation, PlaybookRevision mutation, EvolutionProposal mutation,
 proposal application, proposal status change, repository query method, or
 automatic evolution.
@@ -282,7 +292,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 408 tests.
+Pytest collected 427 tests.
 
 ## Notes for next work
 

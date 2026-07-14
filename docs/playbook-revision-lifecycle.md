@@ -135,9 +135,11 @@ persistence foundation also exists: `PlaybookRevisionActivationRepository`,
 The application service foundation also exists:
 `PlaybookRevisionActivationService` creates and persists explicit lifecycle
 decisions after validating Playbook, PlaybookRevision, EvolutionProposal, and
-same-Playbook supersession linkage. These foundations do not add CLI behavior,
-lifecycle query behavior, Playbook mutation, proposal application, automatic
-evolution, or broad relation navigation.
+same-Playbook supersession linkage. It also provides read-only lifecycle
+inspection for listing activation records for one Playbook and deriving the
+current active revision from activation records in repository order. These
+foundations do not add CLI behavior, Playbook mutation, proposal application,
+automatic evolution, or broad relation navigation.
 
 Rejected options are less suitable now because they store lifecycle state by
 mutating existing records. That is simpler at first, but it weakens the audit
@@ -357,8 +359,8 @@ query is justified by scale.
    same-Playbook supersession, required reason, and no persistence before
    validation completes. Completed.
 4. Add read-only lifecycle inspection:
-   service methods and CLI for `neural playbook active-revision UUID` and
-   `neural playbook revision-history UUID`.
+   service methods for lifecycle history and active revision derivation.
+   Completed for the application service only; CLI remains future work.
 5. Add activation write command:
    `neural revision activate REVISION_UUID --reason TEXT`, delegating to the
    application service.

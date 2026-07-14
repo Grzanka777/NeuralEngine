@@ -19,7 +19,7 @@ Application:
   adding, listing, and retrieving experiences, and adding, listing, and
   retrieving knowledge, playbooks, playbook runs, playbook evaluations, and
   evolution proposals and playbook revisions, and adding playbook revision
-  activation decisions.
+  activation decisions and inspecting playbook revision activation state.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -368,4 +368,21 @@ The service validates only existence and linkage. It does not require the
 proposal to be accepted, does not validate Knowledge items, does not mutate
 Playbook content, does not mutate PlaybookRevision content, does not change
 EvolutionProposal status, does not apply proposals, and does not perform
-automatic evolution. No CLI command or lifecycle query behavior exists yet.
+automatic evolution.
+
+`PlaybookRevisionActivationService.list_for_playbook()` verifies one existing
+Playbook, loads activation records through the
+`PlaybookRevisionActivationRepository.load_all()` port, filters matching
+`playbook_id` values in the application layer, and preserves repository order.
+
+`PlaybookRevisionActivationService.get_active_revision_for_playbook()` verifies
+one existing Playbook and derives the current active revision from that
+Playbook's activation records in repository order. Later records override
+earlier records: `active` selects a revision, `superseded` can move selection
+from a previous revision to a new revision, and `rejected` clears the current
+selection only when it targets the currently active revision. The service loads
+only the final derived revision through `PlaybookRevisionRepository.get_by_id()`
+and verifies it belongs to the Playbook. It does not validate EvolutionProposal
+or Knowledge records during inspection.
+
+No CLI command or lifecycle query command exists yet.

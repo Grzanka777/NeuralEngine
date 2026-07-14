@@ -16,6 +16,7 @@ from neural_engine.application.playbook_revision_activation_service import (
 )
 from neural_engine.domain import (
     EvolutionProposal,
+    EvolutionProposalStatus,
     Playbook,
     PlaybookRevision,
     PlaybookRevisionActivation,
@@ -42,7 +43,11 @@ class FakePlaybookRevisionActivationRepository(PlaybookRevisionActivationReposit
     ) -> None:
         self.saved: list[PlaybookRevisionActivation] = []
         self.save_calls: list[PlaybookRevisionActivation] = []
+        self.load_all_calls = 0
         self.requested_ids: list[UUID] = []
+        self.revision_lookups_at_load: list[UUID] = []
+        self.playbook_lookups_at_load: list[UUID] = []
+        self.proposal_lookups_at_load: list[UUID] = []
         self.revision_lookups_at_save: list[UUID] = []
         self.playbook_lookups_at_save: list[UUID] = []
         self.proposal_lookups_at_save: list[UUID] = []
@@ -58,6 +63,10 @@ class FakePlaybookRevisionActivationRepository(PlaybookRevisionActivationReposit
         self.saved.append(activation)
 
     def load_all(self) -> list[PlaybookRevisionActivation]:
+        self.load_all_calls += 1
+        self.revision_lookups_at_load = list(self._revision_repository.requested_ids)
+        self.playbook_lookups_at_load = list(self._playbook_repository.requested_ids)
+        self.proposal_lookups_at_load = list(self._proposal_repository.requested_ids)
         return self.saved
 
     def get_by_id(self, activation_id: UUID) -> PlaybookRevisionActivation | None:
@@ -219,6 +228,23 @@ def add_activation(
         decided_by="reviewer",
         notes="Explicit application-service record",
         tags=["manual", "activation"],
+    )
+
+
+def make_activation(
+    playbook_id: UUID,
+    revision_id: UUID,
+    proposal_id: UUID,
+    decision: PlaybookRevisionActivationDecision = PlaybookRevisionActivationDecision.ACTIVE,
+    previous_revision_id: UUID | None = None,
+) -> PlaybookRevisionActivation:
+    return PlaybookRevisionActivation(
+        playbook_id=playbook_id,
+        revision_id=revision_id,
+        proposal_id=proposal_id,
+        decision=decision,
+        reason="Recorded lifecycle decision",
+        previous_revision_id=previous_revision_id,
     )
 
 
@@ -489,3 +515,347 @@ def test_add_superseded_activation_performs_previous_revision_lookup_before_savi
     )
 
     assert activation_repo.revision_lookups_at_save == [revision.id, previous_revision.id]
+
+
+def test_list_for_playbook_returns_only_linked_activation_records() -> None:
+    playbook = make_playbook()
+    other_playbook = make_playbook("Other playbook")
+    proposal = make_proposal(playbook.id)
+    other_proposal = make_proposal(other_playbook.id)
+    first = make_activation(
+        playbook.id,
+        UUID("11111111-2222-3333-4444-555555555555"),
+        proposal.id,
+    )
+    unrelated = make_activation(
+        other_playbook.id,
+        UUID("22222222-3333-4444-5555-666666666666"),
+        other_proposal.id,
+    )
+    second = make_activation(
+        playbook.id,
+        UUID("33333333-4444-5555-6666-777777777777"),
+        proposal.id,
+    )
+    service, activation_repo, _, _, _ = make_service([playbook, other_playbook])
+    activation_repo.saved = [first, unrelated, second]
+
+    assert service.list_for_playbook(playbook.id) == [first, second]
+
+
+def test_list_for_playbook_preserves_repository_order() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    first = make_activation(
+        playbook.id,
+        UUID("44444444-5555-6666-7777-888888888888"),
+        proposal.id,
+    )
+    second = make_activation(
+        playbook.id,
+        UUID("55555555-6666-7777-8888-999999999999"),
+        proposal.id,
+    )
+    service, activation_repo, _, _, _ = make_service([playbook])
+    activation_repo.saved = [second, first]
+
+    assert service.list_for_playbook(playbook.id) == [second, first]
+
+
+def test_list_for_playbook_raises_when_playbook_is_missing() -> None:
+    missing_id = UUID("66666666-7777-8888-9999-aaaaaaaaaaaa")
+    service, activation_repo, revision_repo, playbook_repo, _ = make_service()
+
+    with pytest.raises(PlaybookRevisionActivationPlaybookNotFoundError) as error:
+        service.list_for_playbook(missing_id)
+
+    assert error.value.playbook_id == missing_id
+    assert playbook_repo.requested_ids == [missing_id]
+    assert activation_repo.load_all_calls == 0
+    assert revision_repo.requested_ids == []
+
+
+def test_list_for_playbook_does_not_call_revision_repository() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    activation = make_activation(
+        playbook.id,
+        UUID("77777777-8888-9999-aaaa-bbbbbbbbbbbb"),
+        proposal.id,
+    )
+    service, activation_repo, revision_repo, _, _ = make_service([playbook])
+    activation_repo.saved = [activation]
+
+    assert service.list_for_playbook(playbook.id) == [activation]
+    assert revision_repo.requested_ids == []
+    assert activation_repo.revision_lookups_at_load == []
+
+
+def test_list_for_playbook_does_not_mutate_records() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    activation = make_activation(playbook.id, revision.id, proposal.id)
+    original_playbook = playbook.model_copy(deep=True)
+    original_revision = revision.model_copy(deep=True)
+    original_proposal = proposal.model_copy(deep=True)
+    original_activation = activation.model_copy(deep=True)
+    service, activation_repo, _, _, _ = make_service([playbook], [revision], [proposal])
+    activation_repo.saved = [activation]
+
+    result = service.list_for_playbook(playbook.id)
+
+    assert result == [activation]
+    assert playbook == original_playbook
+    assert revision == original_revision
+    assert proposal == original_proposal
+    assert activation == original_activation
+    assert activation_repo.save_calls == []
+
+
+def test_get_active_revision_for_playbook_returns_none_without_activation_records() -> None:
+    playbook = make_playbook()
+    service, activation_repo, revision_repo, _, _ = make_service([playbook])
+
+    assert service.get_active_revision_for_playbook(playbook.id) is None
+    assert activation_repo.load_all_calls == 1
+    assert revision_repo.requested_ids == []
+
+
+def test_get_active_revision_for_playbook_returns_revision_after_active_record() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    activation = make_activation(playbook.id, revision.id, proposal.id)
+    service, activation_repo, _, _, _ = make_service([playbook], [revision], [proposal])
+    activation_repo.saved = [activation]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == revision
+
+
+def test_get_active_revision_for_playbook_later_active_overrides_earlier_active() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    first_revision = make_revision(playbook.id, proposal.id, "First candidate")
+    second_revision = make_revision(playbook.id, proposal.id, "Second candidate")
+    service, activation_repo, _, _, _ = make_service(
+        [playbook],
+        [first_revision, second_revision],
+        [proposal],
+    )
+    activation_repo.saved = [
+        make_activation(playbook.id, first_revision.id, proposal.id),
+        make_activation(playbook.id, second_revision.id, proposal.id),
+    ]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == second_revision
+
+
+def test_get_active_revision_for_playbook_superseded_moves_from_previous_to_new() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    previous_revision = make_revision(playbook.id, proposal.id, "Previous candidate")
+    new_revision = make_revision(playbook.id, proposal.id, "New candidate")
+    service, activation_repo, _, _, _ = make_service(
+        [playbook],
+        [previous_revision, new_revision],
+        [proposal],
+    )
+    activation_repo.saved = [
+        make_activation(playbook.id, previous_revision.id, proposal.id),
+        make_activation(
+            playbook.id,
+            new_revision.id,
+            proposal.id,
+            PlaybookRevisionActivationDecision.SUPERSEDED,
+            previous_revision.id,
+        ),
+    ]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == new_revision
+
+
+def test_get_active_revision_for_playbook_superseded_sets_active_when_none_exists() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    previous_revision_id = UUID("88888888-9999-aaaa-bbbb-cccccccccccc")
+    revision = make_revision(playbook.id, proposal.id)
+    service, activation_repo, _, _, _ = make_service([playbook], [revision], [proposal])
+    activation_repo.saved = [
+        make_activation(
+            playbook.id,
+            revision.id,
+            proposal.id,
+            PlaybookRevisionActivationDecision.SUPERSEDED,
+            previous_revision_id,
+        )
+    ]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == revision
+
+
+def test_get_active_revision_for_playbook_rejected_clears_current_active_revision() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    service, activation_repo, revision_repo, _, _ = make_service([playbook], [revision], [proposal])
+    activation_repo.saved = [
+        make_activation(playbook.id, revision.id, proposal.id),
+        make_activation(
+            playbook.id,
+            revision.id,
+            proposal.id,
+            PlaybookRevisionActivationDecision.REJECTED,
+        ),
+    ]
+
+    assert service.get_active_revision_for_playbook(playbook.id) is None
+    assert revision_repo.requested_ids == []
+
+
+def test_get_active_revision_for_playbook_rejected_non_active_revision_does_not_clear() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    active_revision = make_revision(playbook.id, proposal.id, "Active candidate")
+    rejected_revision = make_revision(playbook.id, proposal.id, "Rejected candidate")
+    service, activation_repo, _, _, _ = make_service(
+        [playbook],
+        [active_revision, rejected_revision],
+        [proposal],
+    )
+    activation_repo.saved = [
+        make_activation(playbook.id, active_revision.id, proposal.id),
+        make_activation(
+            playbook.id,
+            rejected_revision.id,
+            proposal.id,
+            PlaybookRevisionActivationDecision.REJECTED,
+        ),
+    ]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == active_revision
+
+
+def test_get_active_revision_for_playbook_ignores_other_playbook_records() -> None:
+    playbook = make_playbook()
+    other_playbook = make_playbook("Other playbook")
+    proposal = make_proposal(playbook.id)
+    other_proposal = make_proposal(other_playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    other_revision = make_revision(other_playbook.id, other_proposal.id)
+    service, activation_repo, _, _, _ = make_service(
+        [playbook, other_playbook],
+        [revision, other_revision],
+        [proposal, other_proposal],
+    )
+    activation_repo.saved = [
+        make_activation(other_playbook.id, other_revision.id, other_proposal.id),
+        make_activation(playbook.id, revision.id, proposal.id),
+    ]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == revision
+
+
+def test_get_active_revision_for_playbook_raises_when_derived_revision_is_missing() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    missing_revision_id = UUID("99999999-aaaa-bbbb-cccc-dddddddddddd")
+    service, activation_repo, revision_repo, _, _ = make_service([playbook], proposals=[proposal])
+    activation_repo.saved = [make_activation(playbook.id, missing_revision_id, proposal.id)]
+
+    with pytest.raises(PlaybookRevisionActivationRevisionNotFoundError) as error:
+        service.get_active_revision_for_playbook(playbook.id)
+
+    assert error.value.revision_id == missing_revision_id
+    assert revision_repo.requested_ids == [missing_revision_id]
+
+
+def test_get_active_revision_for_playbook_raises_when_derived_revision_belongs_elsewhere() -> None:
+    playbook = make_playbook()
+    other_playbook = make_playbook("Other playbook")
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(other_playbook.id, proposal.id)
+    service, activation_repo, _, _, _ = make_service(
+        [playbook, other_playbook],
+        [revision],
+        [proposal],
+    )
+    activation_repo.saved = [make_activation(playbook.id, revision.id, proposal.id)]
+
+    with pytest.raises(PlaybookRevisionActivationRevisionPlaybookMismatchError) as error:
+        service.get_active_revision_for_playbook(playbook.id)
+
+    assert error.value.revision_id == revision.id
+    assert error.value.expected_playbook_id == playbook.id
+    assert error.value.actual_playbook_id == other_playbook.id
+
+
+def test_get_active_revision_for_playbook_does_not_validate_knowledge_existence() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = PlaybookRevision(
+        playbook_id=playbook.id,
+        proposal_id=proposal.id,
+        title="Candidate with external knowledge reference",
+        situation="Knowledge is not loaded during inspection",
+        objective="Return active revision",
+        steps=["Inspect lifecycle records"],
+        success_criteria=["No knowledge lookup is needed"],
+        knowledge_ids=[UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")],
+    )
+    service, activation_repo, _, _, _ = make_service([playbook], [revision], [proposal])
+    activation_repo.saved = [make_activation(playbook.id, revision.id, proposal.id)]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == revision
+
+
+def test_get_active_revision_for_playbook_does_not_validate_or_mutate_proposal_status() -> None:
+    playbook = make_playbook()
+    proposal = EvolutionProposal(
+        playbook_id=playbook.id,
+        evaluation_ids=[UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")],
+        summary="Rejected proposal with historical activation",
+        rationale="Imported lifecycle records may reference old decisions",
+        proposed_changes=["Keep inspection read-only"],
+        expected_benefits=["No proposal mutation"],
+        status=EvolutionProposalStatus.REJECTED,
+    )
+    revision = make_revision(playbook.id, proposal.id)
+    original_proposal = proposal.model_copy(deep=True)
+    service, activation_repo, _, _, proposal_repo = make_service([playbook], [revision], [proposal])
+    activation_repo.saved = [make_activation(playbook.id, revision.id, proposal.id)]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == revision
+    assert proposal == original_proposal
+    assert proposal_repo.requested_ids == []
+
+
+def test_get_active_revision_for_playbook_does_not_save_activation_records() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    activation = make_activation(playbook.id, revision.id, proposal.id)
+    service, activation_repo, _, _, _ = make_service([playbook], [revision], [proposal])
+    activation_repo.saved = [activation]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == revision
+    assert activation_repo.saved == [activation]
+    assert activation_repo.save_calls == []
+
+
+def test_get_active_revision_for_playbook_uses_repository_ports() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    service, activation_repo, revision_repo, playbook_repo, proposal_repo = make_service(
+        [playbook],
+        [revision],
+        [proposal],
+    )
+    activation_repo.saved = [make_activation(playbook.id, revision.id, proposal.id)]
+
+    assert service.get_active_revision_for_playbook(playbook.id) == revision
+    assert playbook_repo.requested_ids == [playbook.id]
+    assert activation_repo.load_all_calls == 1
+    assert revision_repo.requested_ids == [revision.id]
+    assert proposal_repo.requested_ids == []

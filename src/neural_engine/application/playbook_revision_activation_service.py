@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from neural_engine.domain import (
+    PlaybookRevision,
     PlaybookRevisionActivation,
     PlaybookRevisionActivationDecision,
 )
@@ -176,6 +177,48 @@ class PlaybookRevisionActivationService:
         self._activation_repository.save(activation)
 
         return activation
+
+    def list_for_playbook(self, playbook_id: UUID) -> list[PlaybookRevisionActivation]:
+        if self._playbook_repository.get_by_id(playbook_id) is None:
+            raise PlaybookRevisionActivationPlaybookNotFoundError(playbook_id)
+
+        activations = self._activation_repository.load_all()
+
+        return [activation for activation in activations if activation.playbook_id == playbook_id]
+
+    def get_active_revision_for_playbook(self, playbook_id: UUID) -> PlaybookRevision | None:
+        active_revision_id: UUID | None = None
+
+        for activation in self.list_for_playbook(playbook_id):
+            if activation.decision == PlaybookRevisionActivationDecision.ACTIVE:
+                active_revision_id = activation.revision_id
+
+            if activation.decision == PlaybookRevisionActivationDecision.SUPERSEDED and (
+                active_revision_id is None or activation.previous_revision_id == active_revision_id
+            ):
+                active_revision_id = activation.revision_id
+
+            if (
+                activation.decision == PlaybookRevisionActivationDecision.REJECTED
+                and activation.revision_id == active_revision_id
+            ):
+                active_revision_id = None
+
+        if active_revision_id is None:
+            return None
+
+        revision = self._revision_repository.get_by_id(active_revision_id)
+        if revision is None:
+            raise PlaybookRevisionActivationRevisionNotFoundError(active_revision_id)
+
+        if revision.playbook_id != playbook_id:
+            raise PlaybookRevisionActivationRevisionPlaybookMismatchError(
+                revision_id=active_revision_id,
+                expected_playbook_id=playbook_id,
+                actual_playbook_id=revision.playbook_id,
+            )
+
+        return revision
 
     def _validate(
         self,
