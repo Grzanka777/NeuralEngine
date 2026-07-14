@@ -160,6 +160,7 @@ neural proposal add \
 neural proposal list
 neural proposal show 11111111-1111-1111-1111-111111111111
 neural proposal status 11111111-1111-1111-1111-111111111111 --status accepted
+neural proposal revisions 11111111-1111-1111-1111-111111111111
 neural playbook proposals 11111111-1111-1111-1111-111111111111
 neural evaluation proposals 22222222-2222-2222-2222-222222222222
 ```

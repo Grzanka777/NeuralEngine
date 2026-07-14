@@ -135,6 +135,14 @@ class PlaybookRevisionService:
 
         return [revision for revision in revisions if revision.playbook_id == playbook_id]
 
+    def list_for_proposal(self, proposal_id: UUID) -> list[PlaybookRevision]:
+        if self._proposal_repository.get_by_id(proposal_id) is None:
+            raise EvolutionProposalNotFoundError(proposal_id)
+
+        revisions = self._revision_repository.load_all()
+
+        return [revision for revision in revisions if revision.proposal_id == proposal_id]
+
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
         return self._revision_repository.get_by_id(revision_id)
 

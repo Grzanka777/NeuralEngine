@@ -162,7 +162,8 @@ Neural Engine now has a minimal EvolutionProposal vertical slice:
 * Infrastructure implementation: `JsonEvolutionProposalRepository`
 * Dependency wiring: `application/container.py`
 * CLI commands: `neural proposal add`, `neural proposal list`,
-  `neural proposal show UUID`, and `neural proposal status UUID --status STATUS`
+  `neural proposal show UUID`, `neural proposal status UUID --status STATUS`,
+  and `neural proposal revisions UUID`
 
 An EvolutionProposal is an explicit human or external-system proposal to improve
 one existing Playbook based on one or more existing PlaybookEvaluation records.
@@ -193,6 +194,15 @@ proposals through the `EvolutionProposalRepository` port, and returns only
 proposals whose `evaluation_ids` contain it. This is read-only relation
 navigation; proposals are supplied manually or externally, proposal status is
 not changed, and proposals do not modify Playbooks.
+`neural proposal revisions UUID` delegates to
+`PlaybookRevisionService.list_for_proposal()` to verify the EvolutionProposal
+exists and list PlaybookRevision records assigned to it. The service verifies
+the proposal through `EvolutionProposalRepository`, loads revisions through
+`PlaybookRevisionRepository.load_all()`, filters by `proposal_id` in the
+application layer, and preserves repository order. The repository does not gain
+a proposal-specific query method. This is read-only relation navigation only:
+it does not change proposal status, activate a revision, mutate a Playbook,
+apply a proposal, or perform automatic evolution.
 
 Neural Engine now has a minimal PlaybookRevision vertical slice:
 
@@ -227,7 +237,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 343 tests.
+Pytest collected 355 tests.
 
 ## Notes for next work
 

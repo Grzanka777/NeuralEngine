@@ -641,6 +641,26 @@ def set_proposal_status(
     )
 
 
+@proposal_app.command("revisions")
+def list_proposal_revisions(proposal_id: UUID) -> None:
+    """List playbook revisions linked to one evolution proposal."""
+
+    service = container.playbook_revision_service()
+    try:
+        revisions = service.list_for_proposal(proposal_id)
+    except EvolutionProposalNotFoundError as error:
+        console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not revisions:
+        console.print(f"[yellow]No playbook revisions linked to proposal: {proposal_id}[/yellow]")
+        return
+
+    for revision in revisions:
+        _print_playbook_revision_summary(revision)
+        console.print()
+
+
 @proposal_app.command("show")
 def show_proposal(proposal_id: UUID) -> None:
     """Show one evolution proposal."""

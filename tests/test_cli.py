@@ -737,6 +737,7 @@ class FakePlaybookRevisionService:
         ] = []
         self.list_revisions_calls = 0
         self.list_for_playbook_calls: list[UUID] = []
+        self.list_for_proposal_calls: list[UUID] = []
         self.requested_ids: list[UUID] = []
 
     def add(
@@ -821,6 +822,14 @@ class FakePlaybookRevisionService:
             raise RevisionPlaybookNotFoundError(self.missing_playbook_id)
 
         return [revision for revision in self.revisions if revision.playbook_id == playbook_id]
+
+    def list_for_proposal(self, proposal_id: UUID) -> list[PlaybookRevision]:
+        self.list_for_proposal_calls.append(proposal_id)
+
+        if self.missing_proposal_id is not None and self.missing_proposal_id == proposal_id:
+            raise EvolutionProposalNotFoundError(self.missing_proposal_id)
+
+        return [revision for revision in self.revisions if revision.proposal_id == proposal_id]
 
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
         self.requested_ids.append(revision_id)
@@ -2233,6 +2242,89 @@ def test_playbook_revisions_invalid_uuid_returns_usage_error_without_calling_ser
     assert result.exit_code == 2
     assert "Invalid value" in result.output
     assert service.list_for_playbook_calls == []
+
+
+def test_proposal_revisions_delegates_positional_uuid_and_displays_linked_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal_id = UUID("96969696-9696-9696-9696-969696969696")
+    revision = make_revision("Linked proposal revision", proposal_id=proposal_id)
+    service = FakePlaybookRevisionService([revision])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "revisions", str(proposal_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_proposal_calls == [proposal_id]
+    assert f"ID: {revision.id}" in result.output
+    assert f"Timestamp: {revision.timestamp}" in result.output
+    assert f"Playbook ID: {revision.playbook_id}" in result.output
+    assert f"Proposal ID: {proposal_id}" in result.output
+    assert "Title: Linked proposal revision" in result.output
+
+
+def test_proposal_revisions_displays_multiple_revisions_in_service_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal_id = UUID("97979797-9797-9797-9797-979797979797")
+    first = make_revision("First linked revision", proposal_id=proposal_id)
+    second = make_revision("Second linked revision", proposal_id=proposal_id)
+    service = FakePlaybookRevisionService([first, second])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "revisions", str(proposal_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_proposal_calls == [proposal_id]
+    assert result.output.index("Title: First linked revision") < result.output.index(
+        "Title: Second linked revision"
+    )
+
+
+def test_proposal_revisions_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal_id = UUID("98989898-9898-9898-9898-989898989898")
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "revisions", str(proposal_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_proposal_calls == [proposal_id]
+    assert f"No playbook revisions linked to proposal: {proposal_id}" in result.output
+
+
+def test_proposal_revisions_missing_proposal_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("99999999-9999-9999-9999-999999999999")
+    service = FakePlaybookRevisionService([], missing_proposal_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "revisions", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_proposal_calls == [missing_id]
+    assert f"Evolution proposal not found: {missing_id}" in result.output
+
+
+def test_proposal_revisions_invalid_uuid_returns_usage_error_without_calling_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["proposal", "revisions", "not-a-uuid"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert service.list_for_proposal_calls == []
 
 
 def test_run_add_delegates_with_parsed_values_and_prints_id(

@@ -46,6 +46,7 @@ class FakePlaybookRevisionRepository(PlaybookRevisionRepository):
         self.load_all_calls = 0
         self.requested_ids: list[UUID] = []
         self.playbook_lookups_at_load: list[UUID] = []
+        self.proposal_lookups_at_load: list[UUID] = []
         self.playbook_lookups_at_save: list[UUID] = []
         self.proposal_lookups_at_save: list[UUID] = []
         self.knowledge_lookups_at_save: list[UUID] = []
@@ -63,6 +64,7 @@ class FakePlaybookRevisionRepository(PlaybookRevisionRepository):
     def load_all(self) -> list[PlaybookRevision]:
         self.load_all_calls += 1
         self.playbook_lookups_at_load = list(self._playbook_repository.requested_ids)
+        self.proposal_lookups_at_load = list(self._proposal_repository.requested_ids)
         return self.saved
 
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
@@ -177,6 +179,23 @@ def make_revision(playbook_id: UUID, title: str = "Candidate revision") -> Playb
     return PlaybookRevision(
         playbook_id=playbook_id,
         proposal_id=UUID("44444444-4444-4444-4444-444444444444"),
+        title=title,
+        situation="Revision relation test",
+        objective="Return linked revisions",
+        steps=["Inspect linked revisions"],
+        success_criteria=["Only linked revisions are returned"],
+        knowledge_ids=[UUID("55555555-5555-5555-5555-555555555555")],
+    )
+
+
+def make_revision_for_proposal(
+    playbook_id: UUID,
+    proposal_id: UUID,
+    title: str = "Candidate revision",
+) -> PlaybookRevision:
+    return PlaybookRevision(
+        playbook_id=playbook_id,
+        proposal_id=proposal_id,
         title=title,
         situation="Revision relation test",
         objective="Return linked revisions",
@@ -642,6 +661,97 @@ def test_list_for_playbook_does_not_save_or_mutate_data() -> None:
     assert revision_repo.saved == [revision]
     assert revision_repo.save_calls == []
     assert revision == original_revision
+    assert playbook.model_dump() == original_playbook
+
+
+def test_list_for_proposal_returns_only_linked_revisions() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    linked = make_revision_for_proposal(playbook.id, proposal.id, "Linked revision")
+    unrelated = make_revision_for_proposal(
+        playbook.id,
+        UUID("abababab-abab-abab-abab-abababababab"),
+        "Other revision",
+    )
+    service, revision_repo, _, _, _ = make_service([playbook], [proposal])
+    revision_repo.saved = [linked, unrelated]
+
+    assert service.list_for_proposal(proposal.id) == [linked]
+
+
+def test_list_for_proposal_returns_empty_list_when_none_are_linked() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    service, revision_repo, _, _, _ = make_service([playbook], [proposal])
+    revision_repo.saved = [
+        make_revision_for_proposal(
+            playbook.id,
+            UUID("bcbcbcbc-bcbc-bcbc-bcbc-bcbcbcbcbcbc"),
+            "Unrelated revision",
+        )
+    ]
+
+    assert service.list_for_proposal(proposal.id) == []
+
+
+def test_list_for_proposal_preserves_repository_order() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    first = make_revision_for_proposal(playbook.id, proposal.id, "First revision")
+    second = make_revision_for_proposal(playbook.id, proposal.id, "Second revision")
+    service, revision_repo, _, _, _ = make_service([playbook], [proposal])
+    revision_repo.saved = [first, second]
+
+    assert service.list_for_proposal(proposal.id) == [first, second]
+
+
+def test_list_for_proposal_missing_proposal_raises_controlled_error() -> None:
+    missing_id = UUID("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd")
+    service, _, _, _, _ = make_service()
+
+    with pytest.raises(EvolutionProposalNotFoundError) as error:
+        service.list_for_proposal(missing_id)
+
+    assert error.value.proposal_id == missing_id
+
+
+def test_list_for_proposal_does_not_load_revisions_when_proposal_is_missing() -> None:
+    missing_id = UUID("dededede-dede-dede-dede-dededededede")
+    service, revision_repo, _, _, _ = make_service()
+
+    with pytest.raises(EvolutionProposalNotFoundError):
+        service.list_for_proposal(missing_id)
+
+    assert revision_repo.load_all_calls == 0
+
+
+def test_list_for_proposal_looks_up_proposal_before_loading_revisions() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    service, revision_repo, _, _, _ = make_service([playbook], [proposal])
+
+    service.list_for_proposal(proposal.id)
+
+    assert revision_repo.proposal_lookups_at_load == [proposal.id]
+
+
+def test_list_for_proposal_does_not_save_or_mutate_data() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    original_playbook = playbook.model_dump()
+    original_proposal = proposal.model_dump()
+    revision = make_revision_for_proposal(playbook.id, proposal.id, "Stable revision")
+    original_revision = revision.model_copy(deep=True)
+    service, revision_repo, _, _, _ = make_service([playbook], [proposal])
+    revision_repo.saved = [revision]
+
+    result = service.list_for_proposal(proposal.id)
+
+    assert result == [revision]
+    assert revision_repo.saved == [revision]
+    assert revision_repo.save_calls == []
+    assert revision == original_revision
+    assert proposal.model_dump() == original_proposal
     assert playbook.model_dump() == original_playbook
 
 

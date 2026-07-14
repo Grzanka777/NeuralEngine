@@ -257,6 +257,15 @@ proposal preserving every field except status, saves it through the same port,
 and returns the updated proposal. The status is supplied manually or externally;
 accepted status does not apply proposal changes to a playbook.
 
+`neural proposal revisions UUID` delegates to
+`PlaybookRevisionService.list_for_proposal()`. The service verifies the
+EvolutionProposal exists through the `EvolutionProposalRepository` port, then
+loads revisions through `PlaybookRevisionRepository.load_all()` and filters
+matching `proposal_id` values in the application layer. Repository order is
+preserved. The repository does not expose `find_by_proposal_id()`. This is
+read-only relation navigation: it does not change proposal status, activate a
+revision, modify a Playbook, apply a proposal, or perform automatic evolution.
+
 `EvolutionProposalService.list_for_playbook()` verifies one existing playbook
 and returns proposals linked to it. Proposals remain supplied manually or
 externally; this relation lookup does not infer proposal content, apply
