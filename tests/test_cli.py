@@ -738,6 +738,7 @@ class FakePlaybookRevisionService:
         self.list_revisions_calls = 0
         self.list_for_playbook_calls: list[UUID] = []
         self.list_for_proposal_calls: list[UUID] = []
+        self.list_for_knowledge_calls: list[UUID] = []
         self.requested_ids: list[UUID] = []
 
     def add(
@@ -830,6 +831,14 @@ class FakePlaybookRevisionService:
             raise EvolutionProposalNotFoundError(self.missing_proposal_id)
 
         return [revision for revision in self.revisions if revision.proposal_id == proposal_id]
+
+    def list_for_knowledge(self, knowledge_id: UUID) -> list[PlaybookRevision]:
+        self.list_for_knowledge_calls.append(knowledge_id)
+
+        if self.missing_knowledge_id is not None and self.missing_knowledge_id == knowledge_id:
+            raise RevisionKnowledgeNotFoundError(self.missing_knowledge_id)
+
+        return [revision for revision in self.revisions if knowledge_id in revision.knowledge_ids]
 
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
         self.requested_ids.append(revision_id)
@@ -2327,6 +2336,89 @@ def test_proposal_revisions_invalid_uuid_returns_usage_error_without_calling_ser
     assert service.list_for_proposal_calls == []
 
 
+def test_knowledge_revisions_delegates_positional_uuid_and_displays_linked_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_id = UUID("9a9a9a9a-9a9a-9a9a-9a9a-9a9a9a9a9a9a")
+    revision = make_revision("Linked knowledge revision", knowledge_ids=[knowledge_id])
+    service = FakePlaybookRevisionService([revision])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "revisions", str(knowledge_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_knowledge_calls == [knowledge_id]
+    assert f"ID: {revision.id}" in result.output
+    assert f"Timestamp: {revision.timestamp}" in result.output
+    assert f"Playbook ID: {revision.playbook_id}" in result.output
+    assert f"Proposal ID: {revision.proposal_id}" in result.output
+    assert "Title: Linked knowledge revision" in result.output
+
+
+def test_knowledge_revisions_displays_multiple_revisions_in_service_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_id = UUID("9b9b9b9b-9b9b-9b9b-9b9b-9b9b9b9b9b9b")
+    first = make_revision("First linked revision", knowledge_ids=[knowledge_id])
+    second = make_revision("Second linked revision", knowledge_ids=[knowledge_id])
+    service = FakePlaybookRevisionService([first, second])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "revisions", str(knowledge_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_knowledge_calls == [knowledge_id]
+    assert result.output.index("Title: First linked revision") < result.output.index(
+        "Title: Second linked revision"
+    )
+
+
+def test_knowledge_revisions_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    knowledge_id = UUID("9c9c9c9c-9c9c-9c9c-9c9c-9c9c9c9c9c9c")
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "revisions", str(knowledge_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_knowledge_calls == [knowledge_id]
+    assert f"No playbook revisions linked to knowledge: {knowledge_id}" in result.output
+
+
+def test_knowledge_revisions_missing_knowledge_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("9d9d9d9d-9d9d-9d9d-9d9d-9d9d9d9d9d9d")
+    service = FakePlaybookRevisionService([], missing_knowledge_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "revisions", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_knowledge_calls == [missing_id]
+    assert f"Knowledge not found: {missing_id}" in result.output
+
+
+def test_knowledge_revisions_invalid_uuid_returns_usage_error_without_calling_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakePlaybookRevisionService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_revision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "revisions", "not-a-uuid"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert service.list_for_knowledge_calls == []
+
+
 def test_run_add_delegates_with_parsed_values_and_prints_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3705,6 +3797,7 @@ def make_revision(
     title: str = "Revision title",
     playbook_id: UUID | None = None,
     proposal_id: UUID | None = None,
+    knowledge_ids: list[UUID] | None = None,
 ) -> PlaybookRevision:
     return PlaybookRevision(
         playbook_id=playbook_id or UUID("11111111-aaaa-bbbb-cccc-111111111111"),
@@ -3714,7 +3807,8 @@ def make_revision(
         objective="Revision objective",
         steps=["First revised step", "Second revised step"],
         success_criteria=["First success criterion", "Second success criterion"],
-        knowledge_ids=[
+        knowledge_ids=knowledge_ids
+        or [
             UUID("33333333-aaaa-bbbb-cccc-333333333333"),
             UUID("44444444-aaaa-bbbb-cccc-444444444444"),
         ],

@@ -448,6 +448,26 @@ def list_knowledge_playbooks(knowledge_id: UUID) -> None:
         console.print()
 
 
+@knowledge_app.command("revisions")
+def list_knowledge_revisions(knowledge_id: UUID) -> None:
+    """List playbook revisions linked to one knowledge item."""
+
+    service = container.playbook_revision_service()
+    try:
+        revisions = service.list_for_knowledge(knowledge_id)
+    except RevisionKnowledgeNotFoundError as error:
+        console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not revisions:
+        console.print(f"[yellow]No playbook revisions linked to knowledge: {knowledge_id}[/yellow]")
+        return
+
+    for revision in revisions:
+        _print_playbook_revision_summary(revision)
+        console.print()
+
+
 @knowledge_app.command("show")
 def show_knowledge(knowledge_id: UUID) -> None:
     """Show one knowledge item."""

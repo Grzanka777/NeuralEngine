@@ -125,6 +125,16 @@ exists through the `KnowledgeRepository` port, loads playbooks through the
 `PlaybookRepository` port, and returns only playbooks linked to that knowledge
 ID.
 
+`neural knowledge revisions UUID` delegates to
+`PlaybookRevisionService.list_for_knowledge()`. The service verifies the
+Knowledge item exists through the `KnowledgeRepository` port, loads revisions
+through `PlaybookRevisionRepository.load_all()`, and filters in the application
+layer by membership in `revision.knowledge_ids`. Repository order is preserved.
+The repository does not expose `find_by_knowledge_id()`. This is read-only
+relation navigation: it does not mutate Knowledge, activate a revision, modify
+a Playbook, change proposal status, apply a proposal, or perform automatic
+evolution.
+
 The JSON repository is the current infrastructure implementation and stores one
 file per knowledge item under `NeuralPaths.KNOWLEDGE`.
 

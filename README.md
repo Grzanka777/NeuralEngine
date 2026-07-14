@@ -71,6 +71,7 @@ neural knowledge from-experience 11111111-1111-1111-1111-111111111111 \
 neural knowledge list
 neural knowledge show 11111111-1111-1111-1111-111111111111
 neural knowledge playbooks 11111111-1111-1111-1111-111111111111
+neural knowledge revisions 11111111-1111-1111-1111-111111111111
 ```
 
 Every referenced experience must already exist. The CLI stores only the

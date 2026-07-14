@@ -47,6 +47,7 @@ class FakePlaybookRevisionRepository(PlaybookRevisionRepository):
         self.requested_ids: list[UUID] = []
         self.playbook_lookups_at_load: list[UUID] = []
         self.proposal_lookups_at_load: list[UUID] = []
+        self.knowledge_lookups_at_load: list[UUID] = []
         self.playbook_lookups_at_save: list[UUID] = []
         self.proposal_lookups_at_save: list[UUID] = []
         self.knowledge_lookups_at_save: list[UUID] = []
@@ -65,6 +66,7 @@ class FakePlaybookRevisionRepository(PlaybookRevisionRepository):
         self.load_all_calls += 1
         self.playbook_lookups_at_load = list(self._playbook_repository.requested_ids)
         self.proposal_lookups_at_load = list(self._proposal_repository.requested_ids)
+        self.knowledge_lookups_at_load = list(self._knowledge_repository.requested_ids)
         return self.saved
 
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
@@ -202,6 +204,23 @@ def make_revision_for_proposal(
         steps=["Inspect linked revisions"],
         success_criteria=["Only linked revisions are returned"],
         knowledge_ids=[UUID("55555555-5555-5555-5555-555555555555")],
+    )
+
+
+def make_revision_for_knowledge(
+    playbook_id: UUID,
+    knowledge_ids: list[UUID],
+    title: str = "Candidate revision",
+) -> PlaybookRevision:
+    return PlaybookRevision(
+        playbook_id=playbook_id,
+        proposal_id=UUID("44444444-4444-4444-4444-444444444444"),
+        title=title,
+        situation="Revision relation test",
+        objective="Return linked revisions",
+        steps=["Inspect linked revisions"],
+        success_criteria=["Only linked revisions are returned"],
+        knowledge_ids=knowledge_ids,
     )
 
 
@@ -751,6 +770,104 @@ def test_list_for_proposal_does_not_save_or_mutate_data() -> None:
     assert revision_repo.saved == [revision]
     assert revision_repo.save_calls == []
     assert revision == original_revision
+    assert proposal.model_dump() == original_proposal
+    assert playbook.model_dump() == original_playbook
+
+
+def test_list_for_knowledge_returns_only_revisions_that_reference_knowledge() -> None:
+    playbook = make_playbook()
+    knowledge = make_knowledge()
+    linked = make_revision_for_knowledge(
+        playbook.id,
+        [UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"), knowledge.id],
+        "Linked revision",
+    )
+    unrelated = make_revision_for_knowledge(
+        playbook.id,
+        [UUID("abababab-abab-abab-abab-abababababab")],
+        "Other revision",
+    )
+    service, revision_repo, _, _, _ = make_service([playbook], knowledge_items=[knowledge])
+    revision_repo.saved = [linked, unrelated]
+
+    assert service.list_for_knowledge(knowledge.id) == [linked]
+
+
+def test_list_for_knowledge_returns_empty_list_when_none_reference_knowledge() -> None:
+    playbook = make_playbook()
+    knowledge = make_knowledge()
+    service, revision_repo, _, _, _ = make_service([playbook], knowledge_items=[knowledge])
+    revision_repo.saved = [
+        make_revision_for_knowledge(
+            playbook.id,
+            [UUID("bcbcbcbc-bcbc-bcbc-bcbc-bcbcbcbcbcbc")],
+            "Unrelated revision",
+        )
+    ]
+
+    assert service.list_for_knowledge(knowledge.id) == []
+
+
+def test_list_for_knowledge_preserves_repository_order() -> None:
+    playbook = make_playbook()
+    knowledge = make_knowledge()
+    first = make_revision_for_knowledge(playbook.id, [knowledge.id], "First revision")
+    second = make_revision_for_knowledge(playbook.id, [knowledge.id], "Second revision")
+    service, revision_repo, _, _, _ = make_service([playbook], knowledge_items=[knowledge])
+    revision_repo.saved = [first, second]
+
+    assert service.list_for_knowledge(knowledge.id) == [first, second]
+
+
+def test_list_for_knowledge_missing_knowledge_raises_controlled_error() -> None:
+    missing_id = UUID("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd")
+    service, _, _, _, _ = make_service()
+
+    with pytest.raises(KnowledgeNotFoundError) as error:
+        service.list_for_knowledge(missing_id)
+
+    assert error.value.knowledge_id == missing_id
+
+
+def test_list_for_knowledge_does_not_load_revisions_when_knowledge_is_missing() -> None:
+    missing_id = UUID("dededede-dede-dede-dede-dededededede")
+    service, revision_repo, _, _, _ = make_service()
+
+    with pytest.raises(KnowledgeNotFoundError):
+        service.list_for_knowledge(missing_id)
+
+    assert revision_repo.load_all_calls == 0
+
+
+def test_list_for_knowledge_looks_up_knowledge_before_loading_revisions() -> None:
+    playbook = make_playbook()
+    knowledge = make_knowledge()
+    service, revision_repo, _, _, _ = make_service([playbook], knowledge_items=[knowledge])
+
+    service.list_for_knowledge(knowledge.id)
+
+    assert revision_repo.knowledge_lookups_at_load == [knowledge.id]
+
+
+def test_list_for_knowledge_does_not_save_or_mutate_data() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    knowledge = make_knowledge()
+    original_playbook = playbook.model_dump()
+    original_proposal = proposal.model_dump()
+    original_knowledge = knowledge.model_dump()
+    revision = make_revision_for_knowledge(playbook.id, [knowledge.id], "Stable revision")
+    original_revision = revision.model_copy(deep=True)
+    service, revision_repo, _, _, _ = make_service([playbook], [proposal], [knowledge])
+    revision_repo.saved = [revision]
+
+    result = service.list_for_knowledge(knowledge.id)
+
+    assert result == [revision]
+    assert revision_repo.saved == [revision]
+    assert revision_repo.save_calls == []
+    assert revision == original_revision
+    assert knowledge.model_dump() == original_knowledge
     assert proposal.model_dump() == original_proposal
     assert playbook.model_dump() == original_playbook
 

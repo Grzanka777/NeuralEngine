@@ -50,7 +50,7 @@ Neural Engine now has a minimal Knowledge vertical slice:
 * Dependency wiring: `application/container.py`
 * CLI commands: `neural knowledge add`, `neural knowledge from-experience`,
   `neural knowledge list`, `neural knowledge show UUID`, and
-  `neural knowledge playbooks UUID`
+  `neural knowledge playbooks UUID`, and `neural knowledge revisions UUID`
 
 Knowledge is a durable rule, lesson, or conclusion derived from one or more
 experiences. `KnowledgeService.add()` requires at least one experience ID and
@@ -66,6 +66,16 @@ existing experience after loading that experience through the
 `ExperienceRepository` port.
 `KnowledgeService.list_for_experience()` verifies one existing experience and
 returns knowledge items linked to it.
+`neural knowledge revisions UUID` delegates to
+`PlaybookRevisionService.list_for_knowledge()` to verify the Knowledge item
+exists and list PlaybookRevision records that reference it. The service verifies
+the Knowledge item through `KnowledgeRepository`, loads revisions through
+`PlaybookRevisionRepository.load_all()`, filters by membership in
+`revision.knowledge_ids` in the application layer, and preserves repository
+order. The repository does not gain a knowledge-specific query method. This is
+read-only relation navigation only: it does not mutate Knowledge, activate a
+revision, mutate a Playbook, change proposal status, apply a proposal, or
+perform automatic evolution.
 
 Neural Engine now has a minimal Playbook vertical slice:
 
@@ -237,7 +247,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 355 tests.
+Pytest collected 367 tests.
 
 ## Notes for next work
 

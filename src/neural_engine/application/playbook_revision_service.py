@@ -143,6 +143,14 @@ class PlaybookRevisionService:
 
         return [revision for revision in revisions if revision.proposal_id == proposal_id]
 
+    def list_for_knowledge(self, knowledge_id: UUID) -> list[PlaybookRevision]:
+        if self._knowledge_repository.get_by_id(knowledge_id) is None:
+            raise KnowledgeNotFoundError(knowledge_id)
+
+        revisions = self._revision_repository.load_all()
+
+        return [revision for revision in revisions if knowledge_id in revision.knowledge_ids]
+
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
         return self._revision_repository.get_by_id(revision_id)
 
