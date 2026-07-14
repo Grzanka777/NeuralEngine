@@ -5,6 +5,10 @@ from .observation import Observation
 from .playbook import Playbook
 from .playbook_evaluation import PlaybookEffectiveness, PlaybookEvaluation
 from .playbook_revision import PlaybookRevision
+from .playbook_revision_activation import (
+    PlaybookRevisionActivation,
+    PlaybookRevisionActivationDecision,
+)
 from .playbook_run import PlaybookRun
 
 __all__ = [
@@ -19,5 +23,7 @@ __all__ = [
     "PlaybookEffectiveness",
     "PlaybookEvaluation",
     "PlaybookRevision",
+    "PlaybookRevisionActivation",
+    "PlaybookRevisionActivationDecision",
     "PlaybookRun",
 ]

@@ -9,6 +9,9 @@ Domain:
 * Owns core concepts such as `Observation`, `Experience`, `Knowledge`,
   `Playbook`, `PlaybookRun`, `PlaybookEvaluation`, `EvolutionProposal`, and
   `PlaybookRevision`.
+* Owns the domain foundation for `PlaybookRevisionActivation`, which represents
+  an explicit lifecycle decision for a PlaybookRevision but does not yet have
+  persistence, application service, or CLI behavior.
 * Has no dependency on infrastructure.
 
 Application:

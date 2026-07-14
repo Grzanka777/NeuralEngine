@@ -245,6 +245,18 @@ PlaybookRevision. This preserves immutable revision snapshots, avoids implicit
 Playbook mutation, keeps accepted proposal status separate from application,
 and keeps automatic evolution out of scope.
 
+Neural Engine now has a PlaybookRevisionActivation domain foundation:
+
+* Domain model: `neural_engine.domain.PlaybookRevisionActivation`
+* Decision enum: `neural_engine.domain.PlaybookRevisionActivationDecision`
+
+This is domain-only. It validates local lifecycle decision invariants such as
+required reason, non-blank optional text and tags, required previous revision
+for `superseded`, and no previous revision for `rejected`. It does not validate
+Playbook, PlaybookRevision, EvolutionProposal, or Knowledge existence. There is
+no repository port, JSON adapter, path constant, application service, container
+wiring, CLI command, persistence schema, or activation behavior yet.
+
 ## Validation
 
 Latest validation passed:
@@ -254,7 +266,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 367 tests.
+Pytest collected 383 tests.
 
 ## Notes for next work
 

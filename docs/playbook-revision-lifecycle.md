@@ -127,10 +127,10 @@ This option best fits the current architecture because:
 * application services can own lifecycle validation,
 * repository ports can remain persistence contracts.
 
-The first implementation after this design should add the lifecycle domain
-foundation only: `PlaybookRevisionActivation`, its status or decision enum, and
-focused domain tests. It should not add CLI behavior or broad relation
-navigation in the same step.
+The lifecycle domain foundation now exists: `PlaybookRevisionActivation`, its
+decision enum, local domain validation, and focused domain tests. This
+foundation does not add CLI behavior, persistence, activation behavior, or
+broad relation navigation.
 
 Rejected options are less suitable now because they store lifecycle state by
 mutating existing records. That is simpler at first, but it weakens the audit
@@ -262,6 +262,9 @@ Recommended status or decision enum:
 ```text
 PlaybookRevisionActivationDecision = active | superseded | rejected
 ```
+
+The domain foundation implements this model and enum only. Repository,
+persistence, service, and CLI behavior remain future work.
 
 Recommended fields:
 
