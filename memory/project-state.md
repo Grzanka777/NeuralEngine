@@ -278,10 +278,16 @@ records in repository order, loads only the final derived revision through
 `PlaybookRevisionRepository.get_by_id()`, and verifies that revision still
 belongs to the Playbook. Inspection is read-only and does not validate
 EvolutionProposal status or Knowledge existence.
-There is no CLI command, activation command, lifecycle query command in CLI,
-Playbook mutation, PlaybookRevision mutation, EvolutionProposal mutation,
-proposal application, proposal status change, repository query method, or
-automatic evolution.
+`neural playbook revision-history UUID` delegates to
+`PlaybookRevisionActivationService.list_for_playbook()` and displays lifecycle
+activation records for one Playbook in service order.
+`neural playbook active-revision UUID` delegates to
+`PlaybookRevisionActivationService.get_active_revision_for_playbook()` and
+displays the current active PlaybookRevision when one exists. Both commands are
+read-only lifecycle inspection only.
+There is no activation write command, lifecycle mutation, Playbook mutation,
+PlaybookRevision mutation, EvolutionProposal mutation, proposal application,
+proposal status change, repository query method, or automatic evolution.
 
 ## Validation
 
@@ -292,7 +298,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 427 tests.
+Pytest collected 437 tests.
 
 ## Notes for next work
 

@@ -27,6 +27,11 @@ from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationFindingsRequiredError,
     PlaybookRunNotFoundError,
 )
+from neural_engine.application.playbook_revision_activation_service import (
+    PlaybookRevisionActivationPlaybookNotFoundError,
+    PlaybookRevisionActivationRevisionNotFoundError,
+    PlaybookRevisionActivationRevisionPlaybookMismatchError,
+)
 from neural_engine.application.playbook_revision_service import (
     KnowledgeNotFoundError as RevisionKnowledgeNotFoundError,
 )
@@ -61,6 +66,7 @@ from neural_engine.domain import (
     PlaybookEffectiveness,
     PlaybookEvaluation,
     PlaybookRevision,
+    PlaybookRevisionActivation,
     PlaybookRun,
 )
 
@@ -898,6 +904,55 @@ def list_playbook_revisions(playbook_id: UUID) -> None:
         console.print()
 
 
+@playbook_app.command("revision-history")
+def list_playbook_revision_history(playbook_id: UUID) -> None:
+    """List playbook revision lifecycle decisions for one playbook."""
+
+    service = container.playbook_revision_activation_service()
+    try:
+        activations = service.list_for_playbook(playbook_id)
+    except PlaybookRevisionActivationPlaybookNotFoundError as error:
+        _exit_revision_activation_playbook_not_found(error)
+
+    if not activations:
+        console.print(
+            f"[yellow]No playbook revision lifecycle records linked to playbook: "
+            f"{playbook_id}[/yellow]"
+        )
+        return
+
+    for activation in activations:
+        _print_playbook_revision_activation(activation)
+        console.print()
+
+
+@playbook_app.command("active-revision")
+def show_playbook_active_revision(playbook_id: UUID) -> None:
+    """Show the current active playbook revision for one playbook."""
+
+    service = container.playbook_revision_activation_service()
+    try:
+        revision = service.get_active_revision_for_playbook(playbook_id)
+    except PlaybookRevisionActivationPlaybookNotFoundError as error:
+        _exit_revision_activation_playbook_not_found(error)
+    except PlaybookRevisionActivationRevisionNotFoundError as error:
+        console.print(f"[red]Playbook revision not found: {error.revision_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationRevisionPlaybookMismatchError as error:
+        console.print(
+            "[red]Playbook revision "
+            f"{error.revision_id} belongs to playbook {error.actual_playbook_id}, "
+            f"expected {error.expected_playbook_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+
+    if revision is None:
+        console.print(f"[yellow]No active playbook revision for playbook: {playbook_id}[/yellow]")
+        return
+
+    _print_playbook_revision(revision)
+
+
 @playbook_app.command("show")
 def show_playbook(playbook_id: UUID) -> None:
     """Show one playbook."""
@@ -1146,6 +1201,25 @@ def _print_playbook_revision_summary(revision: PlaybookRevision) -> None:
     console.print(f"Title: {revision.title}")
 
 
+def _print_playbook_revision_activation(activation: PlaybookRevisionActivation) -> None:
+    console.print(f"ID: {activation.id}")
+    console.print(f"Timestamp: {activation.timestamp}")
+    console.print(f"Playbook ID: {activation.playbook_id}")
+    console.print(f"Revision ID: {activation.revision_id}")
+    console.print(f"Proposal ID: {activation.proposal_id}")
+    console.print(f"Decision: {activation.decision.value}")
+    console.print(
+        "Previous revision ID: "
+        f"{activation.previous_revision_id if activation.previous_revision_id is not None else '-'}"
+    )
+    console.print(f"Reason: {activation.reason}")
+    console.print(
+        f"Decided by: {activation.decided_by if activation.decided_by is not None else '-'}"
+    )
+    console.print(f"Notes: {activation.notes if activation.notes is not None else '-'}")
+    console.print(f"Tags: {', '.join(activation.tags) if activation.tags else '-'}")
+
+
 def _print_evolution_proposal(proposal: EvolutionProposal) -> None:
     console.print(f"ID: {proposal.id}")
     console.print(f"Timestamp: {proposal.timestamp}")
@@ -1209,6 +1283,13 @@ def _exit_playbook_not_found(error: PlaybookNotFoundError) -> None:
 
 def _exit_playbook_run_not_found(error: PlaybookRunNotFoundError) -> None:
     console.print(f"[red]Playbook run not found: {error.run_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _exit_revision_activation_playbook_not_found(
+    error: PlaybookRevisionActivationPlaybookNotFoundError,
+) -> None:
+    console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
     raise typer.Exit(code=1) from error
 
 

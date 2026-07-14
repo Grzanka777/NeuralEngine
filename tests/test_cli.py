@@ -25,6 +25,11 @@ from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationFindingsRequiredError,
     PlaybookRunNotFoundError,
 )
+from neural_engine.application.playbook_revision_activation_service import (
+    PlaybookRevisionActivationPlaybookNotFoundError,
+    PlaybookRevisionActivationRevisionNotFoundError,
+    PlaybookRevisionActivationRevisionPlaybookMismatchError,
+)
 from neural_engine.application.playbook_revision_service import (
     KnowledgeNotFoundError as RevisionKnowledgeNotFoundError,
 )
@@ -58,6 +63,8 @@ from neural_engine.domain import (
     PlaybookEffectiveness,
     PlaybookEvaluation,
     PlaybookRevision,
+    PlaybookRevisionActivation,
+    PlaybookRevisionActivationDecision,
     PlaybookRun,
 )
 
@@ -850,6 +857,58 @@ class FakePlaybookRevisionService:
         return None
 
 
+class FakePlaybookRevisionActivationService:
+    def __init__(
+        self,
+        activations: list[PlaybookRevisionActivation],
+        active_revision: PlaybookRevision | None = None,
+        missing_playbook_id: UUID | None = None,
+        missing_revision_id: UUID | None = None,
+        revision_mismatch: tuple[UUID, UUID, UUID] | None = None,
+    ) -> None:
+        self.activations = activations
+        self.active_revision = active_revision
+        self.missing_playbook_id = missing_playbook_id
+        self.missing_revision_id = missing_revision_id
+        self.revision_mismatch = revision_mismatch
+        self.list_for_playbook_calls: list[UUID] = []
+        self.get_active_revision_for_playbook_calls: list[UUID] = []
+        self.add_calls: list[tuple[object, ...]] = []
+
+    def add(self, *args: object, **kwargs: object) -> PlaybookRevisionActivation:
+        self.add_calls.append((*args, kwargs))
+        raise AssertionError("Activation writes were not expected")
+
+    def list_for_playbook(self, playbook_id: UUID) -> list[PlaybookRevisionActivation]:
+        self.list_for_playbook_calls.append(playbook_id)
+
+        if self.missing_playbook_id is not None:
+            raise PlaybookRevisionActivationPlaybookNotFoundError(self.missing_playbook_id)
+
+        return [
+            activation for activation in self.activations if activation.playbook_id == playbook_id
+        ]
+
+    def get_active_revision_for_playbook(self, playbook_id: UUID) -> PlaybookRevision | None:
+        self.get_active_revision_for_playbook_calls.append(playbook_id)
+
+        if self.missing_playbook_id is not None:
+            raise PlaybookRevisionActivationPlaybookNotFoundError(self.missing_playbook_id)
+
+        if self.missing_revision_id is not None:
+            raise PlaybookRevisionActivationRevisionNotFoundError(self.missing_revision_id)
+
+        if self.revision_mismatch is not None:
+            revision_id, expected_playbook_id, actual_playbook_id = self.revision_mismatch
+            raise PlaybookRevisionActivationRevisionPlaybookMismatchError(
+                revision_id,
+                expected_playbook_id,
+                actual_playbook_id,
+            )
+
+        return self.active_revision
+
+
 class FakeContainer:
     def __init__(
         self,
@@ -861,6 +920,7 @@ class FakeContainer:
         playbook_evaluation_service: FakePlaybookEvaluationService | None = None,
         evolution_proposal_service: FakeEvolutionProposalService | None = None,
         playbook_revision_service: FakePlaybookRevisionService | None = None,
+        playbook_revision_activation_service: FakePlaybookRevisionActivationService | None = None,
     ) -> None:
         self._observation_service = observation_service
         self._experience_service = experience_service
@@ -870,6 +930,7 @@ class FakeContainer:
         self._playbook_evaluation_service = playbook_evaluation_service
         self._evolution_proposal_service = evolution_proposal_service
         self._playbook_revision_service = playbook_revision_service
+        self._playbook_revision_activation_service = playbook_revision_activation_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -918,6 +979,12 @@ class FakeContainer:
             raise AssertionError("Playbook revision service was not expected")
 
         return self._playbook_revision_service
+
+    def playbook_revision_activation_service(self) -> FakePlaybookRevisionActivationService:
+        if self._playbook_revision_activation_service is None:
+            raise AssertionError("Playbook revision activation service was not expected")
+
+        return self._playbook_revision_activation_service
 
 
 def test_search_displays_matching_observations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2251,6 +2318,266 @@ def test_playbook_revisions_invalid_uuid_returns_usage_error_without_calling_ser
     assert result.exit_code == 2
     assert "Invalid value" in result.output
     assert service.list_for_playbook_calls == []
+
+
+def test_playbook_revision_history_empty_state_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("11111111-1111-2222-3333-aaaaaaaaaaaa")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revision-history", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert "No playbook revision lifecycle records linked to playbook:" in result.output
+    assert str(playbook_id) in result.output
+    assert service.add_calls == []
+
+
+def test_playbook_revision_history_displays_one_activation_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("22222222-1111-2222-3333-aaaaaaaaaaaa")
+    revision_id = UUID("33333333-1111-2222-3333-aaaaaaaaaaaa")
+    proposal_id = UUID("44444444-1111-2222-3333-aaaaaaaaaaaa")
+    activation = make_activation(playbook_id, revision_id, proposal_id)
+    service = FakePlaybookRevisionActivationService([activation])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revision-history", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.list_for_playbook_calls == [playbook_id]
+    assert f"ID: {activation.id}" in result.output
+    assert f"Timestamp: {activation.timestamp}" in result.output
+    assert f"Playbook ID: {playbook_id}" in result.output
+    assert f"Revision ID: {revision_id}" in result.output
+    assert f"Proposal ID: {proposal_id}" in result.output
+    assert "Decision: active" in result.output
+    assert "Reason: Manual lifecycle decision" in result.output
+    assert service.add_calls == []
+
+
+def test_playbook_revision_history_displays_multiple_records_in_service_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("55555555-1111-2222-3333-aaaaaaaaaaaa")
+    proposal_id = UUID("66666666-1111-2222-3333-aaaaaaaaaaaa")
+    first = make_activation(
+        playbook_id,
+        UUID("77777777-1111-2222-3333-aaaaaaaaaaaa"),
+        proposal_id,
+        reason="First decision",
+    )
+    second = make_activation(
+        playbook_id,
+        UUID("88888888-1111-2222-3333-aaaaaaaaaaaa"),
+        proposal_id,
+        reason="Second decision",
+    )
+    service = FakePlaybookRevisionActivationService([first, second])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revision-history", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert result.output.index("Reason: First decision") < result.output.index(
+        "Reason: Second decision"
+    )
+
+
+def test_playbook_revision_history_displays_optional_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("99999999-1111-2222-3333-aaaaaaaaaaaa")
+    revision_id = UUID("aaaaaaaa-1111-2222-3333-aaaaaaaaaaaa")
+    proposal_id = UUID("bbbbbbbb-1111-2222-3333-aaaaaaaaaaaa")
+    previous_revision_id = UUID("cccccccc-1111-2222-3333-aaaaaaaaaaaa")
+    activation = make_activation(
+        playbook_id,
+        revision_id,
+        proposal_id,
+        decision=PlaybookRevisionActivationDecision.SUPERSEDED,
+        previous_revision_id=previous_revision_id,
+        decided_by="reviewer",
+        notes="Lifecycle note",
+        tags=["manual", "history"],
+    )
+    service = FakePlaybookRevisionActivationService([activation])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revision-history", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert f"Previous revision ID: {previous_revision_id}" in result.output
+    assert "Decided by: reviewer" in result.output
+    assert "Notes: Lifecycle note" in result.output
+    assert "Tags: manual, history" in result.output
+
+
+def test_playbook_revision_history_missing_playbook_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("dddddddd-1111-2222-3333-aaaaaaaaaaaa")
+    service = FakePlaybookRevisionActivationService([], missing_playbook_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "revision-history", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.list_for_playbook_calls == [missing_id]
+    assert f"Playbook not found: {missing_id}" in result.output
+    assert service.add_calls == []
+
+
+def test_playbook_active_revision_no_active_revision_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("eeeeeeee-1111-2222-3333-aaaaaaaaaaaa")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "active-revision", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.get_active_revision_for_playbook_calls == [playbook_id]
+    assert f"No active playbook revision for playbook: {playbook_id}" in result.output
+    assert service.add_calls == []
+
+
+def test_playbook_active_revision_displays_revision_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("ffffffff-1111-2222-3333-aaaaaaaaaaaa")
+    revision = make_revision("Current active revision", playbook_id=playbook_id)
+    service = FakePlaybookRevisionActivationService([], active_revision=revision)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "active-revision", str(playbook_id)])
+
+    assert result.exit_code == 0
+    assert service.get_active_revision_for_playbook_calls == [playbook_id]
+    assert f"ID: {revision.id}" in result.output
+    assert f"Playbook ID: {playbook_id}" in result.output
+    assert f"Proposal ID: {revision.proposal_id}" in result.output
+    assert "Title: Current active revision" in result.output
+    assert "Situation: Revision situation" in result.output
+    assert "Objective: Revision objective" in result.output
+    assert "Steps:" in result.output
+    assert "- First revised step" in result.output
+    assert "Success criteria:" in result.output
+    assert "- First success criterion" in result.output
+    assert "Knowledge IDs:" in result.output
+    assert str(revision.knowledge_ids[0]) in result.output
+    assert service.add_calls == []
+
+
+def test_playbook_active_revision_missing_playbook_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("12121212-2222-3333-4444-aaaaaaaaaaaa")
+    service = FakePlaybookRevisionActivationService([], missing_playbook_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "active-revision", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.get_active_revision_for_playbook_calls == [missing_id]
+    assert f"Playbook not found: {missing_id}" in result.output
+    assert service.add_calls == []
+
+
+def test_playbook_active_revision_missing_derived_revision_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("23232323-2222-3333-4444-aaaaaaaaaaaa")
+    missing_revision_id = UUID("34343434-2222-3333-4444-aaaaaaaaaaaa")
+    service = FakePlaybookRevisionActivationService(
+        [],
+        missing_revision_id=missing_revision_id,
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "active-revision", str(playbook_id)])
+
+    assert result.exit_code == 1
+    assert service.get_active_revision_for_playbook_calls == [playbook_id]
+    assert f"Playbook revision not found: {missing_revision_id}" in result.output
+    assert service.add_calls == []
+
+
+def test_playbook_active_revision_mismatched_derived_revision_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    playbook_id = UUID("45454545-2222-3333-4444-aaaaaaaaaaaa")
+    revision_id = UUID("56565656-2222-3333-4444-aaaaaaaaaaaa")
+    actual_playbook_id = UUID("67676767-2222-3333-4444-aaaaaaaaaaaa")
+    service = FakePlaybookRevisionActivationService(
+        [],
+        revision_mismatch=(revision_id, playbook_id, actual_playbook_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["playbook", "active-revision", str(playbook_id)])
+
+    assert result.exit_code == 1
+    assert service.get_active_revision_for_playbook_calls == [playbook_id]
+    assert str(revision_id) in result.output
+    assert str(playbook_id) in result.output
+    assert str(actual_playbook_id) in result.output
+    assert service.add_calls == []
 
 
 def test_proposal_revisions_delegates_positional_uuid_and_displays_linked_revision(
@@ -3814,6 +4141,30 @@ def make_revision(
         ],
         notes="Revision notes",
         tags=["revision", "manual"],
+    )
+
+
+def make_activation(
+    playbook_id: UUID,
+    revision_id: UUID,
+    proposal_id: UUID,
+    decision: PlaybookRevisionActivationDecision = PlaybookRevisionActivationDecision.ACTIVE,
+    previous_revision_id: UUID | None = None,
+    reason: str = "Manual lifecycle decision",
+    decided_by: str | None = None,
+    notes: str | None = None,
+    tags: list[str] | None = None,
+) -> PlaybookRevisionActivation:
+    return PlaybookRevisionActivation(
+        playbook_id=playbook_id,
+        revision_id=revision_id,
+        proposal_id=proposal_id,
+        decision=decision,
+        reason=reason,
+        previous_revision_id=previous_revision_id,
+        decided_by=decided_by,
+        notes=notes,
+        tags=tags or [],
     )
 
 

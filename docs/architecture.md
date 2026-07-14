@@ -41,7 +41,7 @@ Infrastructure:
 * The current playbook revision repository stores one JSON file per playbook
   revision.
 * The current playbook revision activation repository stores one JSON file per
-  playbook revision activation decision. No activation CLI behavior exists yet.
+  playbook revision activation decision.
 
 CLI:
 
@@ -385,4 +385,15 @@ only the final derived revision through `PlaybookRevisionRepository.get_by_id()`
 and verifies it belongs to the Playbook. It does not validate EvolutionProposal
 or Knowledge records during inspection.
 
-No CLI command or lifecycle query command exists yet.
+`neural playbook revision-history UUID` delegates to
+`PlaybookRevisionActivationService.list_for_playbook()` and displays stored
+activation decisions in service order.
+
+`neural playbook active-revision UUID` delegates to
+`PlaybookRevisionActivationService.get_active_revision_for_playbook()` and
+displays the derived active PlaybookRevision when one exists.
+
+Both commands are read-only. They do not create activation records, mutate
+Playbook content, mutate PlaybookRevision content, mutate EvolutionProposal
+content, change proposal status, apply proposals, or perform automatic
+evolution. No activation write command exists yet.

@@ -138,8 +138,11 @@ decisions after validating Playbook, PlaybookRevision, EvolutionProposal, and
 same-Playbook supersession linkage. It also provides read-only lifecycle
 inspection for listing activation records for one Playbook and deriving the
 current active revision from activation records in repository order. These
-foundations do not add CLI behavior, Playbook mutation, proposal application,
-automatic evolution, or broad relation navigation.
+foundations include read-only CLI inspection through
+`neural playbook revision-history UUID` and
+`neural playbook active-revision UUID`. They do not add activation write
+commands, Playbook mutation, proposal application, automatic evolution, or
+broad relation navigation.
 
 Rejected options are less suitable now because they store lifecycle state by
 mutating existing records. That is simpler at first, but it weakens the audit
@@ -360,7 +363,7 @@ query is justified by scale.
    validation completes. Completed.
 4. Add read-only lifecycle inspection:
    service methods for lifecycle history and active revision derivation.
-   Completed for the application service only; CLI remains future work.
+   Completed for the application service and read-only CLI inspection.
 5. Add activation write command:
    `neural revision activate REVISION_UUID --reason TEXT`, delegating to the
    application service.
@@ -376,11 +379,9 @@ query is justified by scale.
 
 ## Non-Goals
 
-This design does not implement:
+This design still does not implement:
 
-* production code,
-* tests,
-* CLI commands,
+* activation write commands,
 * persistence schemas,
 * migrations,
 * revision activation,

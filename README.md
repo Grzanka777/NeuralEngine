@@ -95,6 +95,8 @@ neural playbook list
 neural playbook show 11111111-1111-1111-1111-111111111111
 neural playbook runs 11111111-1111-1111-1111-111111111111
 neural playbook revisions 11111111-1111-1111-1111-111111111111
+neural playbook revision-history 11111111-1111-1111-1111-111111111111
+neural playbook active-revision 11111111-1111-1111-1111-111111111111
 ```
 
 Every referenced knowledge item must already exist. Playbooks are stored
@@ -102,6 +104,10 @@ procedures; the CLI does not execute or generate them. `neural playbook
 revisions` is read-only navigation that lists candidate revisions assigned to
 one Playbook. It does not activate a revision, select a current version, modify
 the Playbook, apply a proposal, or perform automatic evolution.
+`neural playbook revision-history` and `neural playbook active-revision` are
+read-only lifecycle inspection commands backed by activation records. They do
+not create activation decisions, mutate Playbooks or revisions, change proposal
+status, apply proposals, or perform automatic evolution.
 
 Playbook runs record manual or external application of one existing Playbook to
 a concrete situation. They store the actions taken, outcome, success flag,
