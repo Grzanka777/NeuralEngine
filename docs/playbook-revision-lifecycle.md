@@ -140,9 +140,10 @@ inspection for listing activation records for one Playbook and deriving the
 current active revision from activation records in repository order. These
 foundations include read-only CLI inspection through
 `neural playbook revision-history UUID` and
-`neural playbook active-revision UUID`. They do not add activation write
-commands, Playbook mutation, proposal application, automatic evolution, or
-broad relation navigation.
+`neural playbook active-revision UUID`, plus the record-only activation write
+command `neural revision activate REVISION_UUID --playbook PLAYBOOK_UUID
+--proposal PROPOSAL_UUID --reason TEXT`. They do not add Playbook mutation,
+proposal application, automatic evolution, or broad relation navigation.
 
 Rejected options are less suitable now because they store lifecycle state by
 mutating existing records. That is simpler at first, but it weakens the audit
@@ -177,7 +178,7 @@ of the current design task.
 ### First Command To Implement
 
 ```bash
-neural revision activate REVISION_UUID --reason TEXT
+neural revision activate REVISION_UUID --playbook PLAYBOOK_UUID --proposal PROPOSAL_UUID --reason TEXT
 ```
 
 Behavior:
@@ -189,6 +190,7 @@ Behavior:
 * exit `2` for invalid UUID or invalid CLI input,
 * delegates to an application service,
 * persists a `PlaybookRevisionActivation` record only after validation.
+* implemented.
 
 It must not modify Playbook content, modify PlaybookRevision content, change
 proposal status, apply a proposal, infer revised content, or perform automatic
@@ -365,8 +367,9 @@ query is justified by scale.
    service methods for lifecycle history and active revision derivation.
    Completed for the application service and read-only CLI inspection.
 5. Add activation write command:
-   `neural revision activate REVISION_UUID --reason TEXT`, delegating to the
-   application service.
+   `neural revision activate REVISION_UUID --playbook PLAYBOOK_UUID --proposal
+   PROPOSAL_UUID --reason TEXT`, delegating to the application service.
+   Completed.
 6. Add supersession and rejection decisions:
    service methods and CLI for `neural revision supersede ...` and
    `neural revision reject ...`.
@@ -381,10 +384,8 @@ query is justified by scale.
 
 This design still does not implement:
 
-* activation write commands,
 * persistence schemas,
 * migrations,
-* revision activation,
 * proposal application,
 * Playbook mutation,
 * proposal status changes,

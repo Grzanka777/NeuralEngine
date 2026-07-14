@@ -396,4 +396,13 @@ displays the derived active PlaybookRevision when one exists.
 Both commands are read-only. They do not create activation records, mutate
 Playbook content, mutate PlaybookRevision content, mutate EvolutionProposal
 content, change proposal status, apply proposals, or perform automatic
-evolution. No activation write command exists yet.
+evolution.
+
+`neural revision activate REVISION_UUID --playbook PLAYBOOK_UUID --proposal
+PROPOSAL_UUID --reason TEXT` delegates to `PlaybookRevisionActivationService.add()`
+and records an explicit lifecycle decision. The command supports `--decision`,
+`--previous-revision`, `--decided-by`, `--notes`, and repeated `--tag` values.
+It writes only a `PlaybookRevisionActivation` record. It does not materialize
+revision content into the Playbook, mutate Playbook content, mutate
+PlaybookRevision content, mutate EvolutionProposal content, change proposal
+status, apply proposals, or perform automatic evolution.

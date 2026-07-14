@@ -221,8 +221,8 @@ Neural Engine now has a minimal PlaybookRevision vertical slice:
 * Port: `PlaybookRevisionRepository`
 * Infrastructure implementation: `JsonPlaybookRevisionRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: `neural revision add`, `neural revision list`, and
-  `neural revision show UUID`
+* CLI commands: `neural revision add`, `neural revision list`,
+  `neural revision show UUID`, and `neural revision activate UUID`
 
 A PlaybookRevision is an immutable candidate snapshot of revised Playbook
 content supplied manually or by an external system. `PlaybookRevisionService.add()`
@@ -285,9 +285,16 @@ activation records for one Playbook in service order.
 `PlaybookRevisionActivationService.get_active_revision_for_playbook()` and
 displays the current active PlaybookRevision when one exists. Both commands are
 read-only lifecycle inspection only.
-There is no activation write command, lifecycle mutation, Playbook mutation,
-PlaybookRevision mutation, EvolutionProposal mutation, proposal application,
-proposal status change, repository query method, or automatic evolution.
+`neural revision activate UUID --playbook PLAYBOOK_UUID --proposal
+PROPOSAL_UUID --reason TEXT` delegates to
+`PlaybookRevisionActivationService.add()` and records an explicit lifecycle
+activation decision. It supports `--decision`, `--previous-revision`,
+`--decided-by`, `--notes`, and repeated `--tag` values. It writes only a
+`PlaybookRevisionActivation` record.
+There is no lifecycle mutation, Playbook mutation, PlaybookRevision mutation,
+EvolutionProposal mutation, proposal application, proposal status change,
+repository query method, automatic evolution, or materialization of revision
+content into Playbook content.
 
 ## Validation
 
@@ -298,7 +305,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 437 tests.
+Pytest collected 453 tests.
 
 ## Notes for next work
 

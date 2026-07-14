@@ -2,6 +2,7 @@ from typing import Annotated, cast
 from uuid import UUID
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
 
@@ -29,8 +30,14 @@ from neural_engine.application.playbook_evaluation_service import (
 )
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationPlaybookNotFoundError,
+    PlaybookRevisionActivationPreviousRevisionForbiddenError,
+    PlaybookRevisionActivationPreviousRevisionNotFoundError,
+    PlaybookRevisionActivationPreviousRevisionPlaybookMismatchError,
+    PlaybookRevisionActivationPreviousRevisionRequiredError,
+    PlaybookRevisionActivationProposalNotFoundError,
     PlaybookRevisionActivationRevisionNotFoundError,
     PlaybookRevisionActivationRevisionPlaybookMismatchError,
+    PlaybookRevisionActivationRevisionProposalMismatchError,
 )
 from neural_engine.application.playbook_revision_service import (
     KnowledgeNotFoundError as RevisionKnowledgeNotFoundError,
@@ -67,6 +74,7 @@ from neural_engine.domain import (
     PlaybookEvaluation,
     PlaybookRevision,
     PlaybookRevisionActivation,
+    PlaybookRevisionActivationDecision,
     PlaybookRun,
 )
 
@@ -790,6 +798,87 @@ def show_revision(revision_id: UUID) -> None:
         raise typer.Exit(code=1)
 
     _print_playbook_revision(revision)
+
+
+@revision_app.command("activate")
+def activate_revision(
+    revision_id: UUID,
+    playbook_id: Annotated[UUID, typer.Option("--playbook")],
+    proposal_id: Annotated[UUID, typer.Option("--proposal")],
+    reason: Annotated[str, typer.Option("--reason")],
+    decision: Annotated[
+        PlaybookRevisionActivationDecision,
+        typer.Option("--decision"),
+    ] = PlaybookRevisionActivationDecision.ACTIVE,
+    previous_revision_id: Annotated[UUID | None, typer.Option("--previous-revision")] = None,
+    decided_by: Annotated[str | None, typer.Option("--decided-by")] = None,
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record an explicit playbook revision lifecycle decision."""
+
+    service = container.playbook_revision_activation_service()
+    try:
+        activation = service.add(
+            playbook_id=playbook_id,
+            revision_id=revision_id,
+            proposal_id=proposal_id,
+            decision=decision,
+            reason=reason,
+            previous_revision_id=previous_revision_id,
+            decided_by=decided_by,
+            notes=notes,
+            tags=tags,
+        )
+    except PlaybookRevisionActivationPlaybookNotFoundError as error:
+        _exit_revision_activation_playbook_not_found(error)
+    except PlaybookRevisionActivationRevisionNotFoundError as error:
+        console.print(f"[red]Playbook revision not found: {error.revision_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationProposalNotFoundError as error:
+        console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationRevisionPlaybookMismatchError as error:
+        console.print(
+            "[red]Playbook revision "
+            f"{error.revision_id} belongs to playbook {error.actual_playbook_id}, "
+            f"expected {error.expected_playbook_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationRevisionProposalMismatchError as error:
+        console.print(
+            "[red]Playbook revision "
+            f"{error.revision_id} belongs to proposal {error.actual_proposal_id}, "
+            f"expected {error.expected_proposal_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationPreviousRevisionRequiredError as error:
+        console.print("[red]Superseded revision activation requires a previous revision ID.[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationPreviousRevisionNotFoundError as error:
+        console.print(
+            f"[red]Previous playbook revision not found: {error.previous_revision_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationPreviousRevisionPlaybookMismatchError as error:
+        console.print(
+            "[red]Previous playbook revision "
+            f"{error.previous_revision_id} belongs to playbook {error.actual_playbook_id}, "
+            f"expected {error.expected_playbook_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationPreviousRevisionForbiddenError as error:
+        console.print(
+            "[red]Rejected revision activation must not reference previous revision "
+            f"{error.previous_revision_id}.[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+
+    console.print("[green]Playbook revision activation recorded.[/green]")
+    _print_playbook_revision_activation(activation)
 
 
 @playbook_app.command("add")

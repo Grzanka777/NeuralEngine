@@ -199,7 +199,16 @@ neural revision add \
 
 neural revision list
 neural revision show 55555555-5555-5555-5555-555555555555
+neural revision activate 55555555-5555-5555-5555-555555555555 \
+  --playbook 11111111-1111-1111-1111-111111111111 \
+  --proposal 33333333-3333-3333-3333-333333333333 \
+  --reason "Manual reviewer selected this revision"
 ```
+
+`neural revision activate` records an explicit lifecycle decision only. It does
+not copy or materialize revision content into the Playbook, mutate the Playbook
+or revision, change proposal status, apply proposals, or perform automatic
+evolution.
 
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience
