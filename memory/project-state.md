@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-07-02
+Last updated: 2026-07-14
 
 ## Current implementation
 
@@ -245,24 +245,33 @@ PlaybookRevision. This preserves immutable revision snapshots, avoids implicit
 Playbook mutation, keeps accepted proposal status separate from application,
 and keeps automatic evolution out of scope.
 
-Neural Engine now has a PlaybookRevisionActivation domain foundation:
+Neural Engine now has a PlaybookRevisionActivation application service
+foundation:
 
 * Domain model: `neural_engine.domain.PlaybookRevisionActivation`
 * Decision enum: `neural_engine.domain.PlaybookRevisionActivationDecision`
+* Application service: `PlaybookRevisionActivationService`
 * Port: `PlaybookRevisionActivationRepository`
 * Infrastructure implementation: `JsonPlaybookRevisionActivationRepository`
 * Path constant: `NeuralPaths.PLAYBOOK_REVISION_ACTIVATIONS`
 * Dependency wiring: `Container.playbook_revision_activation_repository()`
+  and `Container.playbook_revision_activation_service()`
 
-This is domain and persistence foundation only. The domain model validates
-local lifecycle decision invariants such as required reason, non-blank optional
-text and tags, required previous revision for `superseded`, and no previous
-revision for `rejected`. It does not validate Playbook, PlaybookRevision,
-EvolutionProposal, or Knowledge existence. The repository port, JSON adapter,
-path constant, and container repository wiring provide basic persistence only.
-There is no application service, CLI command, activation behavior, lifecycle
-transition behavior, Playbook mutation, proposal application, proposal status
-change, or automatic evolution yet.
+The domain model validates local lifecycle decision invariants such as required
+reason, non-blank optional text and tags, required previous revision for
+`superseded`, and no previous revision for `rejected`.
+`PlaybookRevisionActivationService.add()` records explicit manual or
+external-system lifecycle decisions. It verifies the Playbook, PlaybookRevision,
+and EvolutionProposal exist, confirms the revision belongs to the supplied
+Playbook and proposal, verifies same-Playbook previous revision linkage for
+`superseded`, rejects previous revision linkage for `rejected`, saves through
+the `PlaybookRevisionActivationRepository` port, and returns the created
+activation. It does not validate Knowledge existence because activation acts on
+an existing revision. It also does not require or change proposal status.
+There is no CLI command, activation command, lifecycle query behavior,
+Playbook mutation, PlaybookRevision mutation, EvolutionProposal mutation,
+proposal application, proposal status change, repository query method, or
+automatic evolution.
 
 ## Validation
 
@@ -273,7 +282,7 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 393 tests.
+Pytest collected 408 tests.
 
 ## Notes for next work
 

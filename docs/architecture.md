@@ -10,8 +10,7 @@ Domain:
   `Playbook`, `PlaybookRun`, `PlaybookEvaluation`, `EvolutionProposal`, and
   `PlaybookRevision`.
 * Owns the domain foundation for `PlaybookRevisionActivation`, which represents
-  an explicit lifecycle decision for a PlaybookRevision but does not yet have
-  persistence, application service, or CLI behavior.
+  an explicit lifecycle decision for a PlaybookRevision.
 * Has no dependency on infrastructure.
 
 Application:
@@ -19,7 +18,8 @@ Application:
 * Coordinates use cases such as adding, listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
   retrieving knowledge, playbooks, playbook runs, playbook evaluations, and
-  evolution proposals and playbook revisions.
+  evolution proposals and playbook revisions, and adding playbook revision
+  activation decisions.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -41,8 +41,7 @@ Infrastructure:
 * The current playbook revision repository stores one JSON file per playbook
   revision.
 * The current playbook revision activation repository stores one JSON file per
-  playbook revision activation decision. No activation application service or
-  CLI behavior exists yet.
+  playbook revision activation decision. No activation CLI behavior exists yet.
 
 CLI:
 
@@ -348,3 +347,25 @@ through the same service and repository stack.
 
 `PlaybookRevisionService.get_by_id()` retrieves one playbook revision through
 the `PlaybookRevisionRepository` port.
+
+## Playbook Revision Activation Flow
+
+`PlaybookRevisionActivationService.add()` records an explicit manual or
+external-system lifecycle decision for one existing PlaybookRevision. Validation
+runs in the following order:
+
+1. verifies the referenced Playbook exists,
+2. verifies the referenced PlaybookRevision exists,
+3. verifies the referenced EvolutionProposal exists,
+4. confirms the revision belongs to the supplied Playbook,
+5. confirms the revision belongs to the supplied EvolutionProposal,
+6. for `superseded`, requires an existing previous revision that belongs to the
+   same Playbook,
+7. for `rejected`, rejects any previous revision reference,
+8. saves the `PlaybookRevisionActivation`.
+
+The service validates only existence and linkage. It does not require the
+proposal to be accepted, does not validate Knowledge items, does not mutate
+Playbook content, does not mutate PlaybookRevision content, does not change
+EvolutionProposal status, does not apply proposals, and does not perform
+automatic evolution. No CLI command or lifecycle query behavior exists yet.

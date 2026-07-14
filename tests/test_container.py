@@ -1,4 +1,7 @@
 from neural_engine.application.container import Container
+from neural_engine.application.playbook_revision_activation_service import (
+    PlaybookRevisionActivationService,
+)
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.core.paths import NeuralPaths
@@ -37,3 +40,13 @@ def test_container_wires_playbook_revision_activation_repository() -> None:
 
     assert isinstance(repository, JsonPlaybookRevisionActivationRepository)
     assert repository._directory == NeuralPaths.PLAYBOOK_REVISION_ACTIVATIONS
+
+
+def test_container_wires_playbook_revision_activation_service_with_json_repositories() -> None:
+    service = Container().playbook_revision_activation_service()
+
+    assert isinstance(service, PlaybookRevisionActivationService)
+    assert isinstance(service._activation_repository, JsonPlaybookRevisionActivationRepository)
+    assert isinstance(service._revision_repository, JsonPlaybookRevisionRepository)
+    assert isinstance(service._playbook_repository, JsonPlaybookRepository)
+    assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)

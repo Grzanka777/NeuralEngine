@@ -132,8 +132,12 @@ decision enum, local domain validation, and focused domain tests. The
 persistence foundation also exists: `PlaybookRevisionActivationRepository`,
 `JsonPlaybookRevisionActivationRepository`,
 `NeuralPaths.PLAYBOOK_REVISION_ACTIVATIONS`, and container repository wiring.
-These foundations do not add CLI behavior, application service behavior,
-activation behavior, lifecycle transitions, or broad relation navigation.
+The application service foundation also exists:
+`PlaybookRevisionActivationService` creates and persists explicit lifecycle
+decisions after validating Playbook, PlaybookRevision, EvolutionProposal, and
+same-Playbook supersession linkage. These foundations do not add CLI behavior,
+lifecycle query behavior, Playbook mutation, proposal application, automatic
+evolution, or broad relation navigation.
 
 Rejected options are less suitable now because they store lifecycle state by
 mutating existing records. That is simpler at first, but it weakens the audit
@@ -351,7 +355,7 @@ query is justified by scale.
 3. Add activation application service:
    validation for missing revision, missing Playbook, proposal mismatch,
    same-Playbook supersession, required reason, and no persistence before
-   validation completes.
+   validation completes. Completed.
 4. Add read-only lifecycle inspection:
    service methods and CLI for `neural playbook active-revision UUID` and
    `neural playbook revision-history UUID`.
