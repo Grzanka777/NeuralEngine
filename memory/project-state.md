@@ -320,6 +320,14 @@ There is no lifecycle mutation, Playbook mutation, PlaybookRevision mutation,
 EvolutionProposal mutation, proposal application, proposal status change,
 repository query method, automatic evolution, or materialization of revision
 content into Playbook content.
+The explicit PlaybookRevision materialization/apply boundary has been designed
+in `docs/playbook-revision-lifecycle.md` and summarized in
+`docs/architecture.md`. The recommended future concept is
+`PlaybookRevisionApplication`, a separate explicit application/audit artifact
+that would be distinct from `PlaybookRevisionActivation`. This design-only
+update does not add production behavior, CLI behavior, repository ports,
+schemas, tests, Playbook mutation, proposal status changes, proposal
+application, or automatic evolution.
 
 ## Validation
 
@@ -334,6 +342,7 @@ Pytest collected 493 tests.
 
 ## Notes for next work
 
-The next logical step is to design the explicit PlaybookRevision
-materialization/apply boundary, without implementing Playbook mutation or
-automatic evolution as part of that design.
+The next logical step is to add the `PlaybookRevisionApplication` domain
+foundation only after the materialization/apply boundary design is accepted.
+That future implementation must remain explicit and must not make activation
+mutate Playbook content.

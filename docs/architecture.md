@@ -445,3 +445,18 @@ Both convenience commands write only `PlaybookRevisionActivation` records. They
 do not materialize revision content into the Playbook, mutate Playbook content,
 mutate PlaybookRevision content, mutate EvolutionProposal content, change
 proposal status, apply proposals, or perform automatic evolution.
+
+## Future Playbook Revision Application Boundary
+
+`PlaybookRevisionApplication` is the recommended future explicit boundary for
+applying a selected PlaybookRevision into Playbook content. Activation does not
+imply application: `PlaybookRevisionActivation` remains lifecycle and audit
+state only, while application would be a separate future write use case with its
+own domain record, application service, repository port, validation, and audit
+trail.
+
+If implemented later, application must be explicit, must validate that the
+revision is eligible to be applied, and must not silently change
+EvolutionProposal status. Existing activation commands and inspection commands
+must continue to avoid Playbook mutation, proposal application, and automatic
+evolution.
