@@ -142,8 +142,12 @@ foundations include read-only CLI inspection through
 `neural playbook revision-history UUID` and
 `neural playbook active-revision UUID`, plus the record-only activation write
 command `neural revision activate REVISION_UUID --playbook PLAYBOOK_UUID
---proposal PROPOSAL_UUID --reason TEXT`. They do not add Playbook mutation,
-proposal application, automatic evolution, or broad relation navigation.
+--proposal PROPOSAL_UUID --reason TEXT`, and convenience write commands
+`neural revision supersede NEW_REVISION_UUID --playbook PLAYBOOK_UUID
+--proposal PROPOSAL_UUID --previous-revision OLD_REVISION_UUID --reason TEXT`
+and `neural revision reject REVISION_UUID --playbook PLAYBOOK_UUID --proposal
+PROPOSAL_UUID --reason TEXT`. They do not add Playbook mutation, proposal
+application, automatic evolution, or broad relation navigation.
 
 Rejected options are less suitable now because they store lifecycle state by
 mutating existing records. That is simpler at first, but it weakens the audit
@@ -172,8 +176,7 @@ The lifecycle design must preserve these invariants:
 
 ## Proposed CLI
 
-These commands are proposed for future implementation only. They are not part
-of the current design task.
+These commands describe the lifecycle CLI surface implemented so far.
 
 ### First Command To Implement
 
@@ -233,7 +236,11 @@ It must not infer missing decisions, activate revisions, or mutate records.
 ### Supersede An Active Revision
 
 ```bash
-neural revision supersede REVISION_UUID --by OTHER_REVISION_UUID --reason TEXT
+neural revision supersede NEW_REVISION_UUID \
+  --playbook PLAYBOOK_UUID \
+  --proposal PROPOSAL_UUID \
+  --previous-revision OLD_REVISION_UUID \
+  --reason TEXT
 ```
 
 Behavior:
@@ -243,14 +250,18 @@ Behavior:
 * exit `1` for missing revisions, cross-Playbook supersession, or invalid
   lifecycle transition,
 * exit `2` for invalid UUID or invalid CLI input,
-* records an explicit lifecycle decision.
+* delegates to `PlaybookRevisionActivationService.add(...)`,
+* records an explicit `superseded` lifecycle decision.
 
 It must not delete or rewrite older activation records.
 
 ### Reject A Candidate Revision
 
 ```bash
-neural revision reject REVISION_UUID --reason TEXT
+neural revision reject REVISION_UUID \
+  --playbook PLAYBOOK_UUID \
+  --proposal PROPOSAL_UUID \
+  --reason TEXT
 ```
 
 Behavior:
@@ -258,7 +269,9 @@ Behavior:
 * write command,
 * exit `0` when a rejection decision is recorded,
 * exit `1` for missing revision or invalid lifecycle transition,
-* exit `2` for invalid UUID or invalid CLI input.
+* exit `2` for invalid UUID or invalid CLI input,
+* delegates to `PlaybookRevisionActivationService.add(...)`,
+* records an explicit `rejected` lifecycle decision.
 
 It must not change EvolutionProposal status and must not delete the candidate
 revision.
@@ -372,7 +385,8 @@ query is justified by scale.
    Completed.
 6. Add supersession and rejection decisions:
    service methods and CLI for `neural revision supersede ...` and
-   `neural revision reject ...`.
+   `neural revision reject ...`. Completed for CLI convenience commands that
+   delegate to `PlaybookRevisionActivationService.add(...)`.
 7. Add relation navigation:
    lifecycle decisions by revision and by proposal, owned by the lifecycle
    application service.

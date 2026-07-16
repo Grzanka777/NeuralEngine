@@ -406,3 +406,20 @@ It writes only a `PlaybookRevisionActivation` record. It does not materialize
 revision content into the Playbook, mutate Playbook content, mutate
 PlaybookRevision content, mutate EvolutionProposal content, change proposal
 status, apply proposals, or perform automatic evolution.
+
+`neural revision supersede NEW_REVISION_UUID --playbook PLAYBOOK_UUID
+--proposal PROPOSAL_UUID --previous-revision OLD_REVISION_UUID --reason TEXT`
+is a convenience wrapper for recording a `superseded` lifecycle decision through
+`PlaybookRevisionActivationService.add()`. It accepts optional `--decided-by`,
+`--notes`, and repeated `--tag` values.
+
+`neural revision reject REVISION_UUID --playbook PLAYBOOK_UUID --proposal
+PROPOSAL_UUID --reason TEXT` is a convenience wrapper for recording a
+`rejected` lifecycle decision through `PlaybookRevisionActivationService.add()`.
+It accepts optional `--decided-by`, `--notes`, and repeated `--tag` values and
+does not expose `--previous-revision`.
+
+Both convenience commands write only `PlaybookRevisionActivation` records. They
+do not materialize revision content into the Playbook, mutate Playbook content,
+mutate PlaybookRevision content, mutate EvolutionProposal content, change
+proposal status, apply proposals, or perform automatic evolution.

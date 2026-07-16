@@ -291,6 +291,14 @@ PROPOSAL_UUID --reason TEXT` delegates to
 activation decision. It supports `--decision`, `--previous-revision`,
 `--decided-by`, `--notes`, and repeated `--tag` values. It writes only a
 `PlaybookRevisionActivation` record.
+`neural revision supersede NEW_REVISION_UUID --playbook PLAYBOOK_UUID
+--proposal PROPOSAL_UUID --previous-revision OLD_REVISION_UUID --reason TEXT`
+delegates to `PlaybookRevisionActivationService.add()` with the fixed
+`superseded` decision. `neural revision reject REVISION_UUID --playbook
+PLAYBOOK_UUID --proposal PROPOSAL_UUID --reason TEXT` delegates to the same
+service with the fixed `rejected` decision and does not expose
+`--previous-revision`. Both commands support `--decided-by`, `--notes`, and
+repeated `--tag` values. They write only `PlaybookRevisionActivation` records.
 There is no lifecycle mutation, Playbook mutation, PlaybookRevision mutation,
 EvolutionProposal mutation, proposal application, proposal status change,
 repository query method, automatic evolution, or materialization of revision
@@ -305,9 +313,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 453 tests.
+Pytest collected 473 tests.
 
 ## Notes for next work
 
-The next logical step is to keep expanding read-only relation navigation where
-it improves inspectability, without adding automatic evolution.
+The next logical step is to add lifecycle relation navigation by revision or by
+proposal where it improves inspectability, without adding repository query
+methods or automatic evolution.

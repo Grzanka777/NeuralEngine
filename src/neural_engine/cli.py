@@ -817,67 +817,76 @@ def activate_revision(
 ) -> None:
     """Record an explicit playbook revision lifecycle decision."""
 
-    service = container.playbook_revision_activation_service()
-    try:
-        activation = service.add(
-            playbook_id=playbook_id,
-            revision_id=revision_id,
-            proposal_id=proposal_id,
-            decision=decision,
-            reason=reason,
-            previous_revision_id=previous_revision_id,
-            decided_by=decided_by,
-            notes=notes,
-            tags=tags,
-        )
-    except PlaybookRevisionActivationPlaybookNotFoundError as error:
-        _exit_revision_activation_playbook_not_found(error)
-    except PlaybookRevisionActivationRevisionNotFoundError as error:
-        console.print(f"[red]Playbook revision not found: {error.revision_id}[/red]")
-        raise typer.Exit(code=1) from error
-    except PlaybookRevisionActivationProposalNotFoundError as error:
-        console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
-        raise typer.Exit(code=1) from error
-    except PlaybookRevisionActivationRevisionPlaybookMismatchError as error:
-        console.print(
-            "[red]Playbook revision "
-            f"{error.revision_id} belongs to playbook {error.actual_playbook_id}, "
-            f"expected {error.expected_playbook_id}[/red]"
-        )
-        raise typer.Exit(code=1) from error
-    except PlaybookRevisionActivationRevisionProposalMismatchError as error:
-        console.print(
-            "[red]Playbook revision "
-            f"{error.revision_id} belongs to proposal {error.actual_proposal_id}, "
-            f"expected {error.expected_proposal_id}[/red]"
-        )
-        raise typer.Exit(code=1) from error
-    except PlaybookRevisionActivationPreviousRevisionRequiredError as error:
-        console.print("[red]Superseded revision activation requires a previous revision ID.[/red]")
-        raise typer.Exit(code=1) from error
-    except PlaybookRevisionActivationPreviousRevisionNotFoundError as error:
-        console.print(
-            f"[red]Previous playbook revision not found: {error.previous_revision_id}[/red]"
-        )
-        raise typer.Exit(code=1) from error
-    except PlaybookRevisionActivationPreviousRevisionPlaybookMismatchError as error:
-        console.print(
-            "[red]Previous playbook revision "
-            f"{error.previous_revision_id} belongs to playbook {error.actual_playbook_id}, "
-            f"expected {error.expected_playbook_id}[/red]"
-        )
-        raise typer.Exit(code=1) from error
-    except PlaybookRevisionActivationPreviousRevisionForbiddenError as error:
-        console.print(
-            "[red]Rejected revision activation must not reference previous revision "
-            f"{error.previous_revision_id}.[/red]"
-        )
-        raise typer.Exit(code=1) from error
-    except ValidationError as error:
-        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
-        raise typer.Exit(code=1) from error
+    activation = _record_playbook_revision_activation(
+        playbook_id=playbook_id,
+        revision_id=revision_id,
+        proposal_id=proposal_id,
+        decision=decision,
+        reason=reason,
+        previous_revision_id=previous_revision_id,
+        decided_by=decided_by,
+        notes=notes,
+        tags=tags,
+    )
 
     console.print("[green]Playbook revision activation recorded.[/green]")
+    _print_playbook_revision_activation(activation)
+
+
+@revision_app.command("supersede")
+def supersede_revision(
+    revision_id: UUID,
+    playbook_id: Annotated[UUID, typer.Option("--playbook")],
+    proposal_id: Annotated[UUID, typer.Option("--proposal")],
+    previous_revision_id: Annotated[UUID, typer.Option("--previous-revision")],
+    reason: Annotated[str, typer.Option("--reason")],
+    decided_by: Annotated[str | None, typer.Option("--decided-by")] = None,
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record a supersession lifecycle decision for a playbook revision."""
+
+    activation = _record_playbook_revision_activation(
+        playbook_id=playbook_id,
+        revision_id=revision_id,
+        proposal_id=proposal_id,
+        decision=PlaybookRevisionActivationDecision.SUPERSEDED,
+        reason=reason,
+        previous_revision_id=previous_revision_id,
+        decided_by=decided_by,
+        notes=notes,
+        tags=tags,
+    )
+
+    console.print("[green]Playbook revision supersession recorded.[/green]")
+    _print_playbook_revision_activation(activation)
+
+
+@revision_app.command("reject")
+def reject_revision(
+    revision_id: UUID,
+    playbook_id: Annotated[UUID, typer.Option("--playbook")],
+    proposal_id: Annotated[UUID, typer.Option("--proposal")],
+    reason: Annotated[str, typer.Option("--reason")],
+    decided_by: Annotated[str | None, typer.Option("--decided-by")] = None,
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record a rejection lifecycle decision for a playbook revision."""
+
+    activation = _record_playbook_revision_activation(
+        playbook_id=playbook_id,
+        revision_id=revision_id,
+        proposal_id=proposal_id,
+        decision=PlaybookRevisionActivationDecision.REJECTED,
+        reason=reason,
+        previous_revision_id=None,
+        decided_by=decided_by,
+        notes=notes,
+        tags=tags,
+    )
+
+    console.print("[green]Playbook revision rejection recorded.[/green]")
     _print_playbook_revision_activation(activation)
 
 
@@ -1307,6 +1316,80 @@ def _print_playbook_revision_activation(activation: PlaybookRevisionActivation) 
     )
     console.print(f"Notes: {activation.notes if activation.notes is not None else '-'}")
     console.print(f"Tags: {', '.join(activation.tags) if activation.tags else '-'}")
+
+
+def _record_playbook_revision_activation(
+    playbook_id: UUID,
+    revision_id: UUID,
+    proposal_id: UUID,
+    decision: PlaybookRevisionActivationDecision,
+    reason: str,
+    previous_revision_id: UUID | None = None,
+    decided_by: str | None = None,
+    notes: str | None = None,
+    tags: list[str] | None = None,
+) -> PlaybookRevisionActivation:
+    service = container.playbook_revision_activation_service()
+    try:
+        return service.add(
+            playbook_id=playbook_id,
+            revision_id=revision_id,
+            proposal_id=proposal_id,
+            decision=decision,
+            reason=reason,
+            previous_revision_id=previous_revision_id,
+            decided_by=decided_by,
+            notes=notes,
+            tags=tags,
+        )
+    except PlaybookRevisionActivationPlaybookNotFoundError as error:
+        _exit_revision_activation_playbook_not_found(error)
+    except PlaybookRevisionActivationRevisionNotFoundError as error:
+        console.print(f"[red]Playbook revision not found: {error.revision_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationProposalNotFoundError as error:
+        console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationRevisionPlaybookMismatchError as error:
+        console.print(
+            "[red]Playbook revision "
+            f"{error.revision_id} belongs to playbook {error.actual_playbook_id}, "
+            f"expected {error.expected_playbook_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationRevisionProposalMismatchError as error:
+        console.print(
+            "[red]Playbook revision "
+            f"{error.revision_id} belongs to proposal {error.actual_proposal_id}, "
+            f"expected {error.expected_proposal_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationPreviousRevisionRequiredError as error:
+        console.print("[red]Superseded revision activation requires a previous revision ID.[/red]")
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationPreviousRevisionNotFoundError as error:
+        console.print(
+            f"[red]Previous playbook revision not found: {error.previous_revision_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationPreviousRevisionPlaybookMismatchError as error:
+        console.print(
+            "[red]Previous playbook revision "
+            f"{error.previous_revision_id} belongs to playbook {error.actual_playbook_id}, "
+            f"expected {error.expected_playbook_id}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except PlaybookRevisionActivationPreviousRevisionForbiddenError as error:
+        console.print(
+            "[red]Rejected revision activation must not reference previous revision "
+            f"{error.previous_revision_id}.[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+
+    raise AssertionError("Unreachable playbook revision activation error path")
 
 
 def _print_evolution_proposal(proposal: EvolutionProposal) -> None:

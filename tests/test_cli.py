@@ -4318,6 +4318,57 @@ def invoke_revision_activate(
     )
 
 
+def invoke_revision_supersede(
+    runner: CliRunner,
+    revision_id: UUID,
+    playbook_id: UUID,
+    proposal_id: UUID,
+    previous_revision_id: UUID,
+    extra_args: list[str] | None = None,
+) -> CliResult:
+    return runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "supersede",
+            str(revision_id),
+            "--playbook",
+            str(playbook_id),
+            "--proposal",
+            str(proposal_id),
+            "--previous-revision",
+            str(previous_revision_id),
+            "--reason",
+            "Manual supersession decision",
+            *(extra_args or []),
+        ],
+    )
+
+
+def invoke_revision_reject(
+    runner: CliRunner,
+    revision_id: UUID,
+    playbook_id: UUID,
+    proposal_id: UUID,
+    extra_args: list[str] | None = None,
+) -> CliResult:
+    return runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "reject",
+            str(revision_id),
+            "--playbook",
+            str(playbook_id),
+            "--proposal",
+            str(proposal_id),
+            "--reason",
+            "Manual rejection decision",
+            *(extra_args or []),
+        ],
+    )
+
+
 def test_revision_activate_delegates_default_active_decision_and_prints_activation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4789,6 +4840,615 @@ def test_revision_activate_domain_validation_error_returns_controlled_failure(
 
     assert result.exit_code == 1
     assert "Optional text fields must not be blank when supplied." in result.output
+    assert service.list_for_playbook_calls == []
+    assert service.get_active_revision_for_playbook_calls == []
+
+
+def test_revision_supersede_delegates_fixed_superseded_decision_and_prints_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000038")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000039")
+    proposal_id = UUID("11111111-2222-3333-4444-00000000003a")
+    previous_revision_id = UUID("11111111-2222-3333-4444-00000000003b")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        playbook_id,
+        proposal_id,
+        previous_revision_id,
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls == [
+        (
+            playbook_id,
+            revision_id,
+            proposal_id,
+            PlaybookRevisionActivationDecision.SUPERSEDED,
+            "Manual supersession decision",
+            previous_revision_id,
+            None,
+            None,
+            None,
+        )
+    ]
+    assert "Playbook revision supersession recorded." in result.output
+    assert f"ID: {service.activations[0].id}" in result.output
+    assert "Decision: superseded" in result.output
+    assert f"Revision ID: {revision_id}" in result.output
+    assert f"Previous revision ID: {previous_revision_id}" in result.output
+    assert service.list_for_playbook_calls == []
+    assert service.get_active_revision_for_playbook_calls == []
+
+
+def test_revision_supersede_delegates_optional_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-00000000003c")
+    playbook_id = UUID("11111111-2222-3333-4444-00000000003d")
+    proposal_id = UUID("11111111-2222-3333-4444-00000000003e")
+    previous_revision_id = UUID("11111111-2222-3333-4444-00000000003f")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        playbook_id,
+        proposal_id,
+        previous_revision_id,
+        [
+            "--decided-by",
+            "reviewer",
+            "--notes",
+            "Supersession note",
+            "--tag",
+            "manual",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls[0][6] == "reviewer"
+    assert service.add_calls[0][7] == "Supersession note"
+    assert service.add_calls[0][8] == ["manual"]
+    assert "Decided by: reviewer" in result.output
+    assert "Notes: Supersession note" in result.output
+    assert "Tags: manual" in result.output
+
+
+def test_revision_supersede_missing_previous_revision_option_fails_before_service_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000040")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000041")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000042")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "revision",
+            "supersede",
+            str(revision_id),
+            "--playbook",
+            str(playbook_id),
+            "--proposal",
+            str(proposal_id),
+            "--reason",
+            "Manual supersession decision",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Missing option" in result.output
+    assert "--previous-revision" in result.output
+    assert service.add_calls == []
+
+
+def test_revision_supersede_missing_previous_revision_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000043")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000044")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000045")
+    missing_previous_revision_id = UUID("11111111-2222-3333-4444-000000000046")
+    service = FakePlaybookRevisionActivationService(
+        [],
+        missing_previous_revision_id=missing_previous_revision_id,
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        playbook_id,
+        proposal_id,
+        missing_previous_revision_id,
+    )
+
+    assert result.exit_code == 1
+    assert f"Previous playbook revision not found: {missing_previous_revision_id}" in result.output
+
+
+def test_revision_supersede_missing_playbook_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000054")
+    missing_playbook_id = UUID("11111111-2222-3333-4444-000000000055")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000056")
+    previous_revision_id = UUID("11111111-2222-3333-4444-000000000057")
+    service = FakePlaybookRevisionActivationService([], missing_playbook_id=missing_playbook_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        missing_playbook_id,
+        proposal_id,
+        previous_revision_id,
+    )
+
+    assert result.exit_code == 1
+    assert f"Playbook not found: {missing_playbook_id}" in result.output
+
+
+def test_revision_supersede_missing_revision_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_revision_id = UUID("11111111-2222-3333-4444-000000000058")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000059")
+    proposal_id = UUID("11111111-2222-3333-4444-00000000005a")
+    previous_revision_id = UUID("11111111-2222-3333-4444-00000000005b")
+    service = FakePlaybookRevisionActivationService([], missing_revision_id=missing_revision_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        missing_revision_id,
+        playbook_id,
+        proposal_id,
+        previous_revision_id,
+    )
+
+    assert result.exit_code == 1
+    assert f"Playbook revision not found: {missing_revision_id}" in result.output
+
+
+def test_revision_supersede_missing_proposal_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-00000000005c")
+    playbook_id = UUID("11111111-2222-3333-4444-00000000005d")
+    missing_proposal_id = UUID("11111111-2222-3333-4444-00000000005e")
+    previous_revision_id = UUID("11111111-2222-3333-4444-00000000005f")
+    service = FakePlaybookRevisionActivationService([], missing_proposal_id=missing_proposal_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        playbook_id,
+        missing_proposal_id,
+        previous_revision_id,
+    )
+
+    assert result.exit_code == 1
+    assert f"Evolution proposal not found: {missing_proposal_id}" in result.output
+
+
+def test_revision_supersede_revision_playbook_mismatch_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000060")
+    expected_playbook_id = UUID("11111111-2222-3333-4444-000000000061")
+    actual_playbook_id = UUID("11111111-2222-3333-4444-000000000062")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000063")
+    previous_revision_id = UUID("11111111-2222-3333-4444-000000000064")
+    service = FakePlaybookRevisionActivationService(
+        [],
+        revision_mismatch=(revision_id, expected_playbook_id, actual_playbook_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        expected_playbook_id,
+        proposal_id,
+        previous_revision_id,
+    )
+
+    assert result.exit_code == 1
+    assert str(revision_id) in result.output
+    assert str(expected_playbook_id) in result.output
+    assert str(actual_playbook_id) in result.output
+
+
+def test_revision_supersede_revision_proposal_mismatch_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000065")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000066")
+    expected_proposal_id = UUID("11111111-2222-3333-4444-000000000067")
+    actual_proposal_id = UUID("11111111-2222-3333-4444-000000000068")
+    previous_revision_id = UUID("11111111-2222-3333-4444-000000000069")
+    service = FakePlaybookRevisionActivationService(
+        [],
+        proposal_mismatch=(revision_id, expected_proposal_id, actual_proposal_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        playbook_id,
+        expected_proposal_id,
+        previous_revision_id,
+    )
+
+    assert result.exit_code == 1
+    assert str(revision_id) in result.output
+    assert str(expected_proposal_id) in result.output
+    assert str(actual_proposal_id) in result.output
+
+
+def test_revision_supersede_previous_revision_playbook_mismatch_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-00000000006a")
+    playbook_id = UUID("11111111-2222-3333-4444-00000000006b")
+    proposal_id = UUID("11111111-2222-3333-4444-00000000006c")
+    previous_revision_id = UUID("11111111-2222-3333-4444-00000000006d")
+    actual_playbook_id = UUID("11111111-2222-3333-4444-00000000006e")
+    service = FakePlaybookRevisionActivationService(
+        [],
+        previous_revision_mismatch=(previous_revision_id, playbook_id, actual_playbook_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        playbook_id,
+        proposal_id,
+        previous_revision_id,
+    )
+
+    assert result.exit_code == 1
+    assert str(previous_revision_id) in result.output
+    assert str(playbook_id) in result.output
+    assert str(actual_playbook_id) in result.output
+
+
+def test_revision_supersede_domain_validation_error_returns_controlled_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-00000000006f")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000070")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000071")
+    previous_revision_id = UUID("11111111-2222-3333-4444-000000000072")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_supersede(
+        runner,
+        revision_id,
+        playbook_id,
+        proposal_id,
+        previous_revision_id,
+        ["--tag", " "],
+    )
+
+    assert result.exit_code == 1
+    assert "Tags must not contain blank values." in result.output
+    assert service.list_for_playbook_calls == []
+    assert service.get_active_revision_for_playbook_calls == []
+
+
+def test_revision_reject_delegates_fixed_rejected_decision_and_prints_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000047")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000048")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000049")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(runner, revision_id, playbook_id, proposal_id)
+
+    assert result.exit_code == 0
+    assert service.add_calls == [
+        (
+            playbook_id,
+            revision_id,
+            proposal_id,
+            PlaybookRevisionActivationDecision.REJECTED,
+            "Manual rejection decision",
+            None,
+            None,
+            None,
+            None,
+        )
+    ]
+    assert "Playbook revision rejection recorded." in result.output
+    assert f"ID: {service.activations[0].id}" in result.output
+    assert "Decision: rejected" in result.output
+    assert f"Revision ID: {revision_id}" in result.output
+    assert "Previous revision ID: -" in result.output
+    assert service.list_for_playbook_calls == []
+    assert service.get_active_revision_for_playbook_calls == []
+
+
+def test_revision_reject_delegates_optional_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-00000000004a")
+    playbook_id = UUID("11111111-2222-3333-4444-00000000004b")
+    proposal_id = UUID("11111111-2222-3333-4444-00000000004c")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(
+        runner,
+        revision_id,
+        playbook_id,
+        proposal_id,
+        [
+            "--decided-by",
+            "reviewer",
+            "--notes",
+            "Rejection note",
+            "--tag",
+            "manual",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls[0][6] == "reviewer"
+    assert service.add_calls[0][7] == "Rejection note"
+    assert service.add_calls[0][8] == ["manual"]
+    assert "Decided by: reviewer" in result.output
+    assert "Notes: Rejection note" in result.output
+    assert "Tags: manual" in result.output
+
+
+def test_revision_reject_does_not_expose_previous_revision_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-00000000004d")
+    playbook_id = UUID("11111111-2222-3333-4444-00000000004e")
+    proposal_id = UUID("11111111-2222-3333-4444-00000000004f")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(
+        runner,
+        revision_id,
+        playbook_id,
+        proposal_id,
+        [
+            "--previous-revision",
+            "11111111-2222-3333-4444-000000000050",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+    assert "--previous-revision" in result.output
+    assert service.add_calls == []
+
+
+def test_revision_reject_missing_revision_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_revision_id = UUID("11111111-2222-3333-4444-000000000051")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000052")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000053")
+    service = FakePlaybookRevisionActivationService([], missing_revision_id=missing_revision_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(runner, missing_revision_id, playbook_id, proposal_id)
+
+    assert result.exit_code == 1
+    assert f"Playbook revision not found: {missing_revision_id}" in result.output
+
+
+def test_revision_reject_missing_playbook_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000073")
+    missing_playbook_id = UUID("11111111-2222-3333-4444-000000000074")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000075")
+    service = FakePlaybookRevisionActivationService([], missing_playbook_id=missing_playbook_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(runner, revision_id, missing_playbook_id, proposal_id)
+
+    assert result.exit_code == 1
+    assert f"Playbook not found: {missing_playbook_id}" in result.output
+
+
+def test_revision_reject_missing_proposal_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000076")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000077")
+    missing_proposal_id = UUID("11111111-2222-3333-4444-000000000078")
+    service = FakePlaybookRevisionActivationService([], missing_proposal_id=missing_proposal_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(runner, revision_id, playbook_id, missing_proposal_id)
+
+    assert result.exit_code == 1
+    assert f"Evolution proposal not found: {missing_proposal_id}" in result.output
+
+
+def test_revision_reject_revision_playbook_mismatch_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000079")
+    expected_playbook_id = UUID("11111111-2222-3333-4444-00000000007a")
+    actual_playbook_id = UUID("11111111-2222-3333-4444-00000000007b")
+    proposal_id = UUID("11111111-2222-3333-4444-00000000007c")
+    service = FakePlaybookRevisionActivationService(
+        [],
+        revision_mismatch=(revision_id, expected_playbook_id, actual_playbook_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(runner, revision_id, expected_playbook_id, proposal_id)
+
+    assert result.exit_code == 1
+    assert str(revision_id) in result.output
+    assert str(expected_playbook_id) in result.output
+    assert str(actual_playbook_id) in result.output
+
+
+def test_revision_reject_revision_proposal_mismatch_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-00000000007d")
+    playbook_id = UUID("11111111-2222-3333-4444-00000000007e")
+    expected_proposal_id = UUID("11111111-2222-3333-4444-00000000007f")
+    actual_proposal_id = UUID("11111111-2222-3333-4444-000000000080")
+    service = FakePlaybookRevisionActivationService(
+        [],
+        proposal_mismatch=(revision_id, expected_proposal_id, actual_proposal_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(runner, revision_id, playbook_id, expected_proposal_id)
+
+    assert result.exit_code == 1
+    assert str(revision_id) in result.output
+    assert str(expected_proposal_id) in result.output
+    assert str(actual_proposal_id) in result.output
+
+
+def test_revision_reject_domain_validation_error_returns_controlled_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("11111111-2222-3333-4444-000000000081")
+    playbook_id = UUID("11111111-2222-3333-4444-000000000082")
+    proposal_id = UUID("11111111-2222-3333-4444-000000000083")
+    service = FakePlaybookRevisionActivationService([])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_activation_service=service),
+    )
+    runner = CliRunner()
+
+    result = invoke_revision_reject(
+        runner,
+        revision_id,
+        playbook_id,
+        proposal_id,
+        ["--reason", " "],
+    )
+
+    assert result.exit_code == 1
+    assert "Playbook revision activation requires a reason." in result.output
     assert service.list_for_playbook_calls == []
     assert service.get_active_revision_for_playbook_calls == []
 
