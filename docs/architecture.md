@@ -483,3 +483,34 @@ history commands. It does not materialize revision content into Playbook
 content, mutate Playbook records, mutate PlaybookRevision records, mutate
 EvolutionProposal records, change proposal status, apply proposals, or perform
 automatic evolution.
+
+## Decision Learning Design
+
+The self-observation and development decision architecture is defined in
+`docs/decision-learning-lifecycle.md`. The accepted direction adds a future
+staged family of immutable records rather than one mutable workflow aggregate:
+
+```text
+Decision
+-> DecisionAcceptance
+-> DecisionAction
+-> DecisionOutcome
+-> DecisionReview
+```
+
+Decision tracking complements the existing Observation-to-Playbook chain.
+Observation stores development facts, Decision stores a bounded choice and its
+rationale, DecisionOutcome stores what happened, Experience stores interpreted
+operational learning, Knowledge stores generalized truth, and Playbook stores
+repeatable procedure. Promotion between these stages remains explicit.
+
+Future development evidence should be referenced through small embedded
+`EvidenceReference` values containing bounded locators and optional hashes, not
+by embedding prompts, reviews, diffs, or validation logs. Consigliere remains a
+future reasoning and advisory layer; NeuralEngine remains the authoritative
+store for accepted context, decisions, actions, outcomes, and reviewed learning.
+
+`NeuralPaths.DECISIONS` is currently only a reserved and initialized directory.
+No Decision model, persistence, application service, CLI behavior, ingestion,
+automatic learning, Consigliere integration, or Handbook synchronization is
+implemented by this design.

@@ -1,0 +1,527 @@
+# Decision Learning Lifecycle Design
+
+## Purpose
+
+NeuralEngine should become its own first real user by recording development
+decisions, their execution, their results, and the reviewed lessons that follow.
+The design extends durable memory from observations into explicit decision
+history without replacing the existing Observation-to-Playbook learning chain.
+
+The target workflow is:
+
+```text
+development event
+-> Observation
+-> Decision context
+-> selected Decision
+-> DecisionAction
+-> DecisionOutcome
+-> Experience
+-> Knowledge
+-> Playbook improvement
+```
+
+## Scope
+
+This document defines future boundaries for:
+
+* recording a decision problem, alternatives, proposed selection, and rationale,
+* explicitly accepting a proposed decision,
+* recording actions, outcomes, and reviews as separate immutable records,
+* referencing development evidence without ingesting large files,
+* deriving decision lifecycle state,
+* connecting reviewed outcomes to existing learning and Playbook evolution,
+* dogfooding the workflow during NeuralEngine development,
+* preventing duplicate capture, and
+* sketching future CLI and implementation milestones.
+
+`NeuralPaths.DECISIONS` already reserves a directory and `Brain.initialize()`
+creates it. No Decision domain model, repository, service, or CLI behavior
+currently exists.
+
+## Non-Goals
+
+This design does not implement:
+
+* production code or persisted schemas,
+* domain classes, repositories, services, or CLI commands,
+* file ingestion, git integration, or command execution,
+* automatic Observation, Experience, Knowledge, or Playbook creation,
+* automatic decision acceptance, execution, review, or evolution,
+* Playbook mutation or PlaybookRevision materialization,
+* Consigliere integration,
+* Handbook generation or synchronization, or
+* new dependencies.
+
+## Terminology
+
+**Development event** is an external fact from project work, such as an agent
+prompt, review finding, validation run, commit, push, or Handbook sync.
+
+**Decision** is an immutable proposal that captures one bounded problem,
+alternatives considered, a proposed selection, rationale, provenance, and the
+observations that established its context. Creation means `proposed`; it does
+not mean accepted or executed.
+
+**DecisionAcceptance** is an immutable manual or external-system confirmation
+that a proposed Decision may be executed. It is separate because recommendation
+and authority are different concerns.
+
+**DecisionAction** is an immutable record of work performed under an accepted
+Decision. More than one action may belong to one Decision.
+
+**DecisionOutcome** is an immutable factual account of what happened after one
+or more DecisionActions, including validation results and evidence references.
+
+**DecisionReview** is an immutable assessment of one or more outcomes. It
+records whether the decision was effective, review findings, and candidate
+lessons. It does not itself create Experience, Knowledge, or Playbook changes.
+
+**EvidenceReference** is a small immutable value embedded in a record. It points
+to evidence and identifies it without copying the evidence body into
+NeuralEngine.
+
+**Derived lifecycle state** is a read model calculated from the immutable
+records for a Decision. It is not a mutable status field on Decision.
+
+## Proposed Records
+
+The recommended sequence is deliberately staged:
+
+```text
+Decision
+-> DecisionAcceptance
+-> DecisionAction (one or more)
+-> DecisionOutcome
+-> DecisionReview
+```
+
+These should be separate records rather than one aggregate that accumulates
+context, mutable status, actions, validation, review, and learning. Each future
+repository should remain persistence-focused, and application services should
+own cross-record validation and relation navigation.
+
+### Decision
+
+Recommended conceptual fields:
+
+```text
+id
+created_at
+project_key
+title
+objective
+context_summary
+alternatives
+proposed_option
+rationale
+observation_ids
+evidence_references
+proposed_by
+supersedes_decision_id
+idempotency_key
+tags
+```
+
+`alternatives` should preserve the options that were genuinely considered,
+including significant risks or trade-offs. `proposed_option` is a recommendation
+until a separate acceptance exists. A correction that materially changes the
+problem, alternatives, selection, or rationale should create a new Decision
+linked through `supersedes_decision_id`; the older record remains unchanged.
+
+### DecisionAcceptance
+
+Recommended conceptual fields:
+
+```text
+id
+accepted_at
+decision_id
+accepted_by
+reason
+evidence_references
+idempotency_key
+```
+
+The initial model supports one acceptance per Decision. Rejection means the
+proposal remains unaccepted; a replacement proposal is a new Decision. This
+keeps the first lifecycle monotonic. Reopen, withdrawal, and reversal semantics
+should not be introduced until a real workflow requires them.
+
+### DecisionAction
+
+Recommended conceptual fields:
+
+```text
+id
+recorded_at
+decision_id
+acceptance_id
+sequence
+summary
+actor
+changed_files
+commands_or_operations
+playbook_run_id
+evidence_references
+idempotency_key
+```
+
+`changed_files` is a bounded path summary, not file content. A `playbook_run_id`
+may be supplied when the action followed an existing Playbook, but it is not
+required for ad hoc development work.
+
+### DecisionOutcome
+
+Recommended conceptual fields:
+
+```text
+id
+recorded_at
+decision_id
+action_ids
+summary
+result
+validation_summary
+evidence_references
+idempotency_key
+```
+
+The outcome records facts: what completed, what failed, and what validation
+reported. It must not infer generalized lessons or silently create downstream
+learning records.
+
+### DecisionReview
+
+Recommended conceptual fields:
+
+```text
+id
+reviewed_at
+decision_id
+outcome_ids
+effectiveness
+findings
+corrective_decision_ids
+lesson_candidates
+reviewed_by
+evidence_references
+idempotency_key
+```
+
+Corrective work should be represented by a new Decision linked from the review,
+not by rewriting the original Decision or Outcome. `lesson_candidates` are
+review input only; promotion to Experience or Knowledge requires an explicit
+later use case.
+
+## Invariants
+
+1. All decision workflow records are immutable after persistence.
+2. Decision creation means proposed, not accepted or executed.
+3. Acceptance must be explicit and attributable to a human or authorized
+   external system.
+4. Actions require an accepted Decision.
+5. Outcomes reference existing actions for the same Decision.
+6. Reviews reference existing outcomes for the same Decision.
+7. Validation completes before any record is persisted.
+8. Corrections append records; they do not rewrite history.
+9. Evidence references identify provenance but do not imply that referenced
+   content was ingested or verified.
+10. Derived state has one canonical application-service owner.
+11. Repository ports expose persistence operations, not lifecycle queries.
+12. CLI handlers only translate input and render service results.
+13. No record automatically creates Observation, Experience, Knowledge,
+    Playbook, EvolutionProposal, or revision lifecycle artifacts.
+14. No Consigliere recommendation is accepted merely because it exists.
+15. No hidden mutation or automatic evolution is allowed.
+
+## Lifecycle And State Derivation
+
+The initial lifecycle is monotonic:
+
+```text
+proposed -> accepted -> executed -> reviewed
+```
+
+The canonical future decision application service should derive state as
+follows:
+
+* `proposed`: the Decision exists and no DecisionAcceptance exists,
+* `accepted`: a valid DecisionAcceptance exists and no DecisionAction exists,
+* `executed`: at least one valid DecisionAction and DecisionOutcome exist,
+* `reviewed`: a valid DecisionReview exists for a DecisionOutcome.
+
+An action without an outcome is execution in progress, not `executed`. This may
+be exposed as projection metadata without adding another persisted status.
+
+The first model should not replay a generic status-event stream. Acceptance,
+action, outcome, and review records already provide the authoritative events;
+duplicating them as lifecycle events would create two sources of truth. If later
+requirements introduce withdrawal, reopening, cancellation, or reversal, add a
+dedicated immutable lifecycle event model and centralize replay in one service,
+following the ownership lesson from `PlaybookRevisionActivationService`.
+
+Repository order alone should not define chronology. Future projections should
+use validated timestamps plus deterministic record IDs or explicit sequence
+fields where ordering matters.
+
+## Relationship To The Existing Domain Chain
+
+Decision tracking complements the current chain; it does not replace any stage.
+
+| Existing concept | Decision-learning relationship |
+| --- | --- |
+| Observation | Captures raw development facts. Decision references one or more observations as context. |
+| Experience | Captures interpreted operational learning from reviewed outcomes. It is not a DecisionOutcome. |
+| Knowledge | Generalizes one or more Experiences into reusable truth. It does not store decision history. |
+| Playbook | Encodes a repeatable procedure supported by Knowledge. It is not mutated by a DecisionReview. |
+| PlaybookRun | May be referenced by DecisionAction when an existing Playbook guided the work. |
+| PlaybookEvaluation | Assesses that PlaybookRun and may use DecisionOutcome evidence without becoming a decision review. |
+| EvolutionProposal | Proposes a Playbook improvement after explicit learning and evaluation. DecisionReview does not create it automatically. |
+| PlaybookRevision | Holds an explicit immutable candidate snapshot resulting from an accepted proposal. |
+| PlaybookRevisionActivation | Records lifecycle selection for a revision; it is unrelated to acceptance of a development Decision. |
+| PlaybookRevisionApplication | Records revision application intent; it is not a DecisionAction and does not materialize content. |
+
+The learning and Playbook-evolution bridges are explicit and separate:
+
+```text
+DecisionOutcome
+-> DecisionReview
+-> Experience
+-> Knowledge
+
+Knowledge -> new explicitly created Playbook
+
+DecisionAction
+-> referenced PlaybookRun
+-> PlaybookEvaluation
+-> EvolutionProposal
+-> PlaybookRevision
+-> PlaybookRevisionActivation
+-> PlaybookRevisionApplication
+```
+
+Knowledge created from reviewed outcomes may later be selected explicitly as
+supporting provenance for a PlaybookRevision. It does not bypass the existing
+PlaybookRun, PlaybookEvaluation, and EvolutionProposal requirements for
+improving an existing Playbook.
+
+A future Experience provenance extension may reference DecisionOutcome IDs.
+That schema change must be designed and reviewed separately. Until then, shared
+Observation IDs and EvidenceReferences can preserve traceability without
+claiming a direct implemented relation.
+
+## Self-Observation Dogfooding Workflow
+
+The first NeuralEngine development workflow should be:
+
+| Step | Capture policy | Durable record or summary |
+| --- | --- | --- |
+| Prompt received | Automatic candidate; manual confirmation before persistence | Observation plus prompt EvidenceReference |
+| Agent execution | Automatic candidate summary | No Decision state change; possible Observation references |
+| Review finding | Automatic candidate; human confirms material findings | Observation plus review EvidenceReference |
+| Decision or correction | Manual selection and rationale | Decision, then DecisionAcceptance |
+| Implementation | Agent may prepare capture; caller confirms | One or more DecisionAction records |
+| Validation | Command output may be summarized automatically; caller confirms association | DecisionOutcome evidence and validation summary |
+| Commit | Automatic ingestion candidate after commit exists | EvidenceReference on Outcome or Review |
+| Push | Automatic ingestion candidate after remote confirmation | EvidenceReference on Outcome or Review |
+| Post-work lesson | Human or external review | DecisionReview, then explicit Experience creation |
+
+Automatic candidates may discover paths, hashes, changed-file summaries, and
+validation metadata. They must remain pending input until a user or authorized
+external workflow explicitly asks NeuralEngine to persist them. Derived
+summaries are replaceable views and must never be treated as source evidence.
+
+The corrective architecture example maps cleanly:
+
+```text
+Observation: application service duplicated active-revision derivation
+Decision: activation service remains the canonical owner
+DecisionAction: remove local replay and inject/delegate to activation service
+DecisionOutcome: validation passed with 537 tests
+DecisionReview: ownership is explicit and repository replay is no longer duplicated
+Experience: centralizing lifecycle derivation prevented architectural drift
+Knowledge: lifecycle state derivation must have one canonical owner
+Playbook improvement: architecture review checks responsibility ownership
+```
+
+## Consigliere Boundary
+
+```text
+Consigliere = reasoning and advisory layer
+NeuralEngine = durable memory, audit, decisions, outcomes, learning, and playbooks
+```
+
+Consigliere may later analyze context, generate alternatives, assess risks,
+recommend an option, or identify candidate lessons. Its output is external
+recommendation evidence. NeuralEngine owns persistence, provenance, explicit
+acceptance, actions, results, and reviewed promotion into Experience, Knowledge,
+and Playbook evolution.
+
+No Consigliere response may directly mutate NeuralEngine records, accept a
+Decision, create learning artifacts, or apply a Playbook revision. Integration
+requires a separate adapter and explicit application use cases in a future task.
+
+## Evidence And Provenance Model
+
+Use an embedded `EvidenceReference` value in Decision workflow records for the
+initial design. Do not create a separately persisted evidence aggregate until
+evidence itself needs lifecycle, access control, retention, or ingestion.
+
+Recommended conceptual fields:
+
+```text
+kind
+locator
+repository_or_project
+content_hash
+captured_at
+source
+summary
+```
+
+Supported future `kind` values may include:
+
+```text
+agent_prompt
+agent_review
+git_commit
+git_push
+validation_run
+changed_file_summary
+handbook_sync
+manual_decision
+external_recommendation
+```
+
+`locator` should be a bounded identifier such as a repository-relative path,
+commit hash, remote ref, review path, or validation-run key. It must not contain
+file bodies or unrestricted command output. `content_hash` identifies the
+referenced version when available; it does not prove authenticity by itself.
+
+Observation remains the durable raw-fact record. Its current `source`,
+`content`, and `tags` fields are too small to own all development provenance.
+Decision records should reference Observation IDs and carry EvidenceReferences
+for decision-specific traceability rather than copying observations or files.
+
+## Idempotency Policy
+
+Every future write service should accept an explicit non-blank idempotency key.
+The initial duplicate policy is deterministic within a record type and project:
+
+```text
+(project_key, record_type, idempotency_key)
+```
+
+Recommended source keys are:
+
+* prompt or review: normalized repository-relative path plus content hash,
+* commit: repository identity plus full commit hash,
+* push: repository identity plus remote, ref, and full commit hash,
+* validation: command identity plus source commit or worktree fingerprint plus
+  output hash,
+* changed-file summary: source commit or worktree fingerprint plus sorted path
+  hash,
+* Handbook sync: source commit plus Handbook commit or generated artifact hash.
+
+Repeated ingestion with the same key and equivalent payload should return the
+existing record. The same key with a different payload should fail visibly; it
+must not overwrite the first record. Path alone is insufficient because file
+content can change. Commit hash is authoritative only for committed content and
+must not identify an uncommitted validation run.
+
+The first implementation should detect duplicates by loading and filtering in
+the application service, matching current repository conventions. No
+idempotency-specific repository query is justified initially.
+
+## Future CLI Sketch
+
+These commands are design direction only and do not exist:
+
+```bash
+neural decision add
+neural decision list
+neural decision show DECISION_UUID
+
+neural decision accept DECISION_UUID
+neural decision action add DECISION_UUID
+neural decision outcome add DECISION_UUID
+neural decision review add DECISION_UUID
+
+neural project ingest-review REVIEW_PATH
+neural project ingest-commit COMMIT_HASH
+```
+
+The first milestone should expose only `decision add`, `decision list`, and
+`decision show`. Acceptance, action, outcome, review, and project ingestion
+belong to later slices. Every CLI handler must resolve a service from the
+container, translate input, render output, and contain no business rules.
+
+## First Implementation Milestone
+
+The recommended next slice is:
+
+```text
+Decision foundation
++ DecisionRepository port
++ JSON adapter using the existing NeuralPaths.DECISIONS directory
++ DecisionService add/list/show
++ thin neural decision add/list/show CLI
++ focused tests and documentation
+```
+
+This is smaller than implementing the full decision workflow. It is immediately
+useful for recording real NeuralEngine architecture decisions, establishes
+provenance and idempotency conventions, and leaves acceptance, actions,
+outcomes, reviews, ingestion, and learning for separately reviewed slices.
+
+The milestone must keep Decision immutable, require one bounded objective, at
+least two meaningful alternatives, one proposed option that matches an
+alternative, non-blank rationale, explicit provenance, and an idempotency key.
+It must not automatically create Observations or downstream learning records.
+
+## Risks And Rejected Alternatives
+
+**One large Decision aggregate** was rejected because appending actions,
+validation, outcomes, review, and lessons would require mutation or replacement
+of an ever-growing record and would blur ownership.
+
+**A mutable Decision status** was rejected because it loses transition history
+and duplicates facts already represented by acceptance, action, outcome, and
+review records.
+
+**A generic lifecycle event stream in the first slice** was rejected because
+semantic records already establish the monotonic lifecycle. Add replay only if
+real reversible transitions require it.
+
+**Decision as a replacement for Observation or Experience** was rejected.
+Observation captures facts; Decision captures choice; Outcome captures result;
+Experience captures interpreted operational learning.
+
+**Embedding prompts, reviews, diffs, or validation logs** was rejected because
+it would produce large unstable records and duplicate authoritative sources.
+
+**A dedicated Evidence repository now** was rejected as premature. Embedded
+references are sufficient until evidence has independent lifecycle needs.
+
+**Automatic ingestion and learning** were rejected because they would hide
+persistence decisions, weaken provenance, and cross the human-control boundary.
+
+**Using Consigliere as durable storage** was rejected because advisory reasoning
+and authoritative memory have different responsibilities.
+
+## Handbook Synchronization Policy
+
+Handbook synchronization remains a separate repository workflow:
+
+```text
+major NeuralEngine milestone
+-> commit and push NeuralEngine
+-> synchronize NeuralEngine-Handbook separately
+-> generate the Handbook SKILL.md
+-> copy the generated SKILL.md back to NeuralEngine
+-> commit and push that synchronization separately
+```
+
+Agents working on NeuralEngine must not manually edit generated Handbook
+artifacts. This design task does not perform any Handbook synchronization.

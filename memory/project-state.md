@@ -359,6 +359,33 @@ records through `PlaybookRevisionApplicationRepository.load_all()`, filter in
 the application layer, preserve repository order, and do not add repository
 query methods. No CLI apply or application-history commands were added.
 
+The self-observation and development decision tracking boundary is now designed
+in `docs/decision-learning-lifecycle.md` and summarized in
+`docs/architecture.md`. The accepted direction is a staged immutable record
+family:
+
+```text
+Decision
+-> DecisionAcceptance
+-> DecisionAction
+-> DecisionOutcome
+-> DecisionReview
+```
+
+Decision complements rather than replaces Observation and Experience.
+Development evidence is referenced through bounded embedded
+`EvidenceReference` values instead of ingesting large prompts, reviews, diffs,
+or validation logs. Initial lifecycle state is a monotonic projection over the
+semantic records, not a mutable status field or duplicate generic event stream.
+Consigliere remains a future advisory layer; NeuralEngine owns durable accepted
+context, decisions, actions, outcomes, provenance, and reviewed promotion into
+Experience, Knowledge, and Playbook evolution.
+
+This design update adds no production behavior, domain classes, repositories,
+services, CLI commands, file or git ingestion, automatic learning, Consigliere
+integration, dependencies, or Handbook artifact changes. `NeuralPaths.DECISIONS`
+remains only a pre-existing reserved directory.
+
 ## Validation
 
 Latest validation passed:
@@ -372,6 +399,9 @@ Pytest collected 537 tests.
 
 ## Notes for next work
 
-The next logical step is to add PlaybookRevisionApplication CLI inspection and
-record commands. That future scope should still avoid Playbook mutation unless
-explicitly designed and reviewed.
+The next recommended implementation milestone is the immutable Decision
+foundation only: domain model, persistence-focused repository port, JSON adapter
+using the existing `NeuralPaths.DECISIONS` directory, application service,
+thin `neural decision add/list/show` CLI, focused tests, and docs. Acceptance,
+actions, outcomes, reviews, ingestion, automatic learning, Consigliere, and
+downstream Experience/Knowledge/Playbook creation remain later explicit slices.
