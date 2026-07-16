@@ -329,6 +329,36 @@ update does not add production behavior, CLI behavior, repository ports,
 schemas, tests, Playbook mutation, proposal status changes, proposal
 application, or automatic evolution.
 
+Neural Engine now has a PlaybookRevisionApplication foundation slice:
+
+* Domain model: `neural_engine.domain.PlaybookRevisionApplication`
+* Application service: `PlaybookRevisionApplicationService`
+* Port: `PlaybookRevisionApplicationRepository`
+* Infrastructure implementation: `JsonPlaybookRevisionApplicationRepository`
+* Path constant: `NeuralPaths.PLAYBOOK_REVISION_APPLICATIONS`
+* Dependency wiring: `Container.playbook_revision_application_repository()`
+  and `Container.playbook_revision_application_service()`
+
+`PlaybookRevisionApplication` is an immutable audit record for explicit
+application intent. It records Playbook, PlaybookRevision, and
+EvolutionProposal IDs, reason, `applied_at`, optional `applied_by`, notes, tags,
+source activation ID, idempotency key, and `content_changed`. The foundation
+defaults `content_changed` to `False` and does not mutate Playbook content.
+`PlaybookRevisionApplicationService.add()` verifies the Playbook,
+PlaybookRevision, and EvolutionProposal exist, requires the proposal to still
+be `accepted`, confirms the revision belongs to the supplied Playbook and
+proposal, validates an optional source activation record belongs to the same
+Playbook/revision/proposal relation, delegates active revision resolution to
+`PlaybookRevisionActivationService.get_active_revision_for_playbook()`, requires
+the requested revision to match that active revision, saves only the application
+audit record, and returns it. The service does not mutate Playbook,
+PlaybookRevision, EvolutionProposal, or PlaybookRevisionActivation records and
+does not call their save methods. `list_for_playbook()`, `list_for_revision()`, and
+`list_for_proposal()` verify the source entity exists, load all application
+records through `PlaybookRevisionApplicationRepository.load_all()`, filter in
+the application layer, preserve repository order, and do not add repository
+query methods. No CLI apply or application-history commands were added.
+
 ## Validation
 
 Latest validation passed:
@@ -338,11 +368,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 493 tests.
+Pytest collected 537 tests.
 
 ## Notes for next work
 
-The next logical step is to add the `PlaybookRevisionApplication` domain
-foundation only after the materialization/apply boundary design is accepted.
-That future implementation must remain explicit and must not make activation
-mutate Playbook content.
+The next logical step is to add PlaybookRevisionApplication CLI inspection and
+record commands. That future scope should still avoid Playbook mutation unless
+explicitly designed and reviewed.

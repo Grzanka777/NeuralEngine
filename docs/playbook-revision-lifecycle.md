@@ -373,7 +373,7 @@ Repository ports should initially expose simple persistence operations such as
 relation navigation by loading and filtering until a persistence-specific
 query is justified by scale.
 
-## Explicit PlaybookRevision Application / Materialization Boundary
+## PlaybookRevisionApplication Foundation
 
 Activation and application must remain separate concepts.
 
@@ -381,14 +381,18 @@ Activation means a lifecycle or audit decision was recorded for a
 PlaybookRevision. It answers which revision was selected, superseded, or
 rejected, when, and why. Activation does not change Playbook content.
 
-Application means Playbook content is explicitly changed from a selected
-PlaybookRevision. This is a future write use case with its own validation,
-audit trail, and persistence boundary. It must not be triggered automatically
-by activation state.
+Application now has a foundation audit artifact,
+`PlaybookRevisionApplication`, with its own repository port, JSON adapter, path
+constant, container wiring, and application service. In this foundation slice,
+application records explicit intent/audit only: saved records set
+`content_changed` to `False` and do not change Playbook content. Future
+materialization of revision content into a Playbook remains a separate design
+and implementation step. Application must not be triggered automatically by
+activation state.
 
 ### Recommended Concept Name
 
-The preferred future concept name is `PlaybookRevisionApplication`.
+The concept name is `PlaybookRevisionApplication`.
 
 This name is better than `PlaybookRevisionMaterialization` or
 `PlaybookRevisionApply` because application describes a deliberate domain
@@ -398,7 +402,7 @@ carry audit metadata about who applied it, when, and why.
 
 ### Application Invariants
 
-Future application behavior must preserve these invariants:
+Application behavior must preserve these invariants:
 
 1. `PlaybookRevision` remains immutable.
 2. `PlaybookRevisionActivation` remains audit and lifecycle state only.
@@ -412,35 +416,39 @@ Future application behavior must preserve these invariants:
    re-activated by a later explicit lifecycle decision.
 8. Applying a revision must preserve auditability.
 9. Applying a revision must be idempotency-aware.
-10. Applying a revision must record who, when, and why if implemented later.
+10. Applying a revision must record who, when, and why.
 11. Applying a revision must not silently change EvolutionProposal status.
 
-### Future Application Validation
+### Application Validation
 
-A future `PlaybookRevisionApplicationService` must complete validation before
-any Playbook content is changed or application record is persisted.
+`PlaybookRevisionApplicationService` completes validation before any
+application record is persisted. Because this foundation slice does not mutate
+Playbook content, the saved audit record explicitly reports
+`content_changed = False`.
 
-Required validation should include:
+Current validation includes:
 
 * Playbook exists.
 * PlaybookRevision exists.
+* EvolutionProposal exists and is still `accepted`.
 * Revision belongs to the supplied Playbook.
 * Revision belongs to the expected EvolutionProposal.
-* Revision is currently active according to activation history.
-* Revision content is valid for replacing or updating Playbook content.
-* Applying would not conflict with a newer already-applied revision.
-* EvolutionProposal status policy is checked explicitly.
+* Optional source activation exists when supplied.
+* Optional source activation belongs to the same Playbook/revision/proposal
+  relation.
+* Revision is currently active according to
+  `PlaybookRevisionActivationService.get_active_revision_for_playbook()`.
 
 The conservative proposal status policy is that application should require the
-proposal to still be `accepted`, matching revision creation. Even with that
-check, `PlaybookRevisionApplication` must not automatically change proposal
-status. If a future workflow needs proposal status updates, that must be a
-separate explicit command or service action.
+proposal to still be `accepted`, matching revision creation. The foundation
+implements that policy without changing proposal status. If a future workflow
+needs proposal status updates, that must be a separate explicit command or
+service action.
 
 ### Audit Trail
 
-A future application record should contain enough information to reconstruct
-what changed and why without relying on mutable Playbook state alone.
+The current application record contains enough information to reconstruct the
+audit decision without relying on mutable Playbook state alone.
 
 Recommended fields:
 
@@ -452,25 +460,24 @@ Recommended fields:
 * source activation id, when available,
 * applied_by,
 * reason,
-* previous Playbook snapshot reference or before/after metadata,
-* whether Playbook content changed,
+* whether Playbook content changed (`False` in this foundation),
 * idempotency key,
 * notes,
 * tags.
 
-Before/after metadata can initially be minimal, but the design must leave room
-to prove which Playbook content was replaced and which revision content became
-current.
+Future before/after metadata can be added only with an explicit materialization
+design that proves which Playbook content was replaced and which revision
+content became current.
 
-### Future Repository Boundary
+### Repository Boundary
 
-The likely future repository port is:
+The repository port is:
 
 ```text
 PlaybookRevisionApplicationRepository
 ```
 
-Initial methods should stay persistence-focused:
+Methods stay persistence-focused:
 
 ```text
 save(application)
@@ -478,30 +485,34 @@ load_all()
 get_by_id(application_id)
 ```
 
-No query methods should be added initially. Relation navigation such as
+No query methods are added. Relation navigation such as
 applications for one Playbook or one PlaybookRevision should first be composed
 in `PlaybookRevisionApplicationService` by loading and filtering records in the
 application layer.
 
-### Future Application Service Boundary
+### Application Service Boundary
 
-The likely future service is:
+The service is:
 
 ```text
 PlaybookRevisionApplicationService
 ```
 
-Potential future methods:
+Current methods:
 
 ```text
-apply_revision(playbook_id, revision_id, proposal_id, reason, applied_by=None, notes=None, tags=None)
+add(playbook_id, revision_id, proposal_id, reason, applied_by=None, notes=None, tags=(), source_activation_id=None, idempotency_key=None)
 list_for_playbook(playbook_id)
 list_for_revision(revision_id)
+list_for_proposal(proposal_id)
 ```
 
-`apply_revision(...)` would be the only method in this group allowed to change
-Playbook content, and only after explicit validation succeeds. The read-only
-methods should follow the existing load-and-filter relation navigation pattern.
+`add(...)` records the application audit artifact only. It is not allowed to
+change Playbook content in this foundation slice. The read-only methods follow
+the existing load-and-filter relation navigation pattern. The service delegates
+active revision resolution to
+`PlaybookRevisionActivationService.get_active_revision_for_playbook()` and does
+not replay activation history itself.
 
 ### Future CLI/API Sketch
 
@@ -539,10 +550,8 @@ This design does not implement:
 * Playbook mutation,
 * PlaybookRevision materialization,
 * an apply command,
-* application service methods,
-* repository ports,
 * schemas,
-* tests for unimplemented behavior,
+* CLI application history commands,
 * proposal status changes,
 * automatic evolution.
 
@@ -575,10 +584,13 @@ This design does not implement:
    application service. Completed for read-only service and CLI inspection.
 8. Design explicit PlaybookRevision application/materialization boundary.
    Completed in this document. Activation remains separate from application.
-9. Add future `PlaybookRevisionApplication` domain, service, repository, and
-   CLI behavior only after this design is accepted. This future implementation
-   must keep application explicit and must not make activation mutate Playbook
-   content.
+9. Add `PlaybookRevisionApplication` domain, service, repository, and relation
+   navigation foundation. Completed for audit records, JSON persistence,
+   container wiring, service validation, load/filter relation navigation, and
+   tests. No CLI behavior or Playbook content mutation was added.
+10. Add future CLI inspection and record commands only after this foundation is
+    accepted. That future implementation must still avoid Playbook mutation
+    unless an explicit materialization design is reviewed.
 
 ## Non-Goals
 
@@ -588,7 +600,7 @@ This design still does not implement:
 * migrations,
 * proposal application,
 * Playbook mutation,
-* PlaybookRevision application or materialization,
+* PlaybookRevision materialization,
 * proposal status changes,
 * automatic evolution,
 * LLM-generated revision content.

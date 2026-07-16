@@ -11,6 +11,9 @@ Domain:
   `PlaybookRevision`.
 * Owns the domain foundation for `PlaybookRevisionActivation`, which represents
   an explicit lifecycle decision for a PlaybookRevision.
+* Owns the domain foundation for `PlaybookRevisionApplication`, which
+  represents an explicit application audit record without mutating Playbook
+  content in the current foundation slice.
 * Has no dependency on infrastructure.
 
 Application:
@@ -19,7 +22,8 @@ Application:
   adding, listing, and retrieving experiences, and adding, listing, and
   retrieving knowledge, playbooks, playbook runs, playbook evaluations, and
   evolution proposals and playbook revisions, and adding playbook revision
-  activation decisions and inspecting playbook revision activation state.
+  activation decisions and inspecting playbook revision activation state, and
+  recording playbook revision application audit records.
 * Depends on ports instead of concrete infrastructure implementations.
 
 Ports:
@@ -42,6 +46,8 @@ Infrastructure:
   revision.
 * The current playbook revision activation repository stores one JSON file per
   playbook revision activation decision.
+* The current playbook revision application repository stores one JSON file per
+  playbook revision application audit record.
 
 CLI:
 
@@ -446,17 +452,34 @@ do not materialize revision content into the Playbook, mutate Playbook content,
 mutate PlaybookRevision content, mutate EvolutionProposal content, change
 proposal status, apply proposals, or perform automatic evolution.
 
-## Future Playbook Revision Application Boundary
+## Playbook Revision Application Foundation
 
-`PlaybookRevisionApplication` is the recommended future explicit boundary for
-applying a selected PlaybookRevision into Playbook content. Activation does not
+`PlaybookRevisionApplication` is the explicit boundary for recording that a
+selected PlaybookRevision reached the application stage. Activation does not
 imply application: `PlaybookRevisionActivation` remains lifecycle and audit
-state only, while application would be a separate future write use case with its
-own domain record, application service, repository port, validation, and audit
-trail.
+state only, while application is a separate audit artifact with its own domain
+record, application service, repository port, validation, and JSON adapter.
 
-If implemented later, application must be explicit, must validate that the
-revision is eligible to be applied, and must not silently change
-EvolutionProposal status. Existing activation commands and inspection commands
-must continue to avoid Playbook mutation, proposal application, and automatic
-evolution.
+`PlaybookRevisionApplicationService.add()` records an application audit record
+only after validation. It verifies that the Playbook, PlaybookRevision, and
+EvolutionProposal exist; requires the proposal to still be `accepted`; confirms
+the revision belongs to the supplied Playbook and proposal; validates an
+optional source activation record belongs to the same Playbook, revision, and
+proposal; and requires the revision to be currently active.
+`PlaybookRevisionApplicationService` delegates active revision resolution to
+`PlaybookRevisionActivationService.get_active_revision_for_playbook()`. The
+saved record sets `content_changed` to `False`.
+
+`PlaybookRevisionApplicationService.list_for_playbook()`,
+`list_for_revision()`, and `list_for_proposal()` verify the source entity
+exists, load all application records through
+`PlaybookRevisionApplicationRepository.load_all()`, filter in the application
+layer, and preserve repository order. The repository port intentionally exposes
+only `save()`, `load_all()`, and `get_by_id()`; no relation-specific query
+methods were added.
+
+The current foundation does not implement CLI apply commands or application
+history commands. It does not materialize revision content into Playbook
+content, mutate Playbook records, mutate PlaybookRevision records, mutate
+EvolutionProposal records, change proposal status, apply proposals, or perform
+automatic evolution.

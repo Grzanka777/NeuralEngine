@@ -9,6 +9,7 @@ from .playbook_revision_activation import (
     PlaybookRevisionActivation,
     PlaybookRevisionActivationDecision,
 )
+from .playbook_revision_application import PlaybookRevisionApplication
 from .playbook_run import PlaybookRun
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "PlaybookRevision",
     "PlaybookRevisionActivation",
     "PlaybookRevisionActivationDecision",
+    "PlaybookRevisionApplication",
     "PlaybookRun",
 ]
