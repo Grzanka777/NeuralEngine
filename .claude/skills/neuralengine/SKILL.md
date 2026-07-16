@@ -78,6 +78,44 @@ NeuralEngine follows a hexagonal architecture.
 - CLI translates input and renders output.
 - Relationship navigation should be composed in services when it does not belong in persistence.
 
+## Revision lifecycle and application boundary
+
+The current end of the domain chain is deliberately split across three immutable records:
+
+```text
+PlaybookRevision
+→ PlaybookRevisionActivation
+→ PlaybookRevisionApplication
+```
+
+`PlaybookRevision` is a candidate snapshot. `PlaybookRevisionActivation` records lifecycle and
+audit decisions. `PlaybookRevisionApplication` records application intent and audit state.
+Activation does not imply application.
+
+`PlaybookRevisionActivationService.get_active_revision_for_playbook(playbook_id)` is the canonical
+owner of active-revision resolution. `PlaybookRevisionApplicationService` delegates to it and must
+not duplicate activation-history replay.
+
+The application foundation has a domain model, repository port, JSON adapter at
+`NeuralPaths.PLAYBOOK_REVISION_APPLICATIONS`, and container wiring for both repository and service.
+`PlaybookRevisionApplicationService.add(...)` validates that the Playbook, revision, and proposal
+exist; the proposal is still accepted; the revision belongs to the supplied Playbook and proposal;
+an optional source activation exists and matches the same relation; and the requested revision is
+currently active.
+
+Read-only application navigation verifies the source entity, calls
+`PlaybookRevisionApplicationRepository.load_all()`, filters in the application layer, and preserves
+repository order. No relation-specific repository query methods exist.
+
+Activation inspection and lifecycle-write CLI commands exist. Application CLI commands do not.
+Records created by the current application service have `content_changed=False`; there is no
+Playbook content mutation, revision materialization, proposal mutation or application, proposal
+status change, or automatic evolution.
+
+This architecture snapshot corresponds to source commit `88921c5` (`feat: add playbook revision
+application foundation`). Source validation for that milestone reported 537 passing tests; this is
+a milestone snapshot, not a timeless guarantee.
+
 ## Domain chain
 
 # Domain Chain
@@ -92,6 +130,18 @@ The confirmed NeuralEngine chain is:
 → `PlaybookEvaluation`
 → `EvolutionProposal`
 → `PlaybookRevision`
+→ `PlaybookRevisionActivation`
+→ `PlaybookRevisionApplication`
+
+The final three stages are separate records with separate responsibilities:
+
+- `PlaybookRevision` is an immutable candidate snapshot.
+- `PlaybookRevisionActivation` is an immutable lifecycle and audit decision.
+- `PlaybookRevisionApplication` is an immutable application-intent and audit record.
+
+Creating a revision does not activate or apply it. Activation does not imply application.
+The current application foundation records intent only: it does not materialize revision
+content into a Playbook or mutate any related record.
 
 ## Relationship ownership
 
@@ -100,6 +150,10 @@ Relationship navigation belongs in application services unless persistence itsel
 Confirmed example:
 
 - `PlaybookRevisionService.list_for_playbook(UUID)` owns playbook revision navigation.
+- `PlaybookRevisionActivationService` owns activation navigation and canonical active-revision
+  derivation through `get_active_revision_for_playbook(playbook_id)`.
+- `PlaybookRevisionApplicationService` owns application-record navigation and delegates active
+  revision resolution to `PlaybookRevisionActivationService`.
 - Repository interfaces remain persistence-focused.
 - `PlaybookService` should not gain unrelated persistence dependencies.
 
