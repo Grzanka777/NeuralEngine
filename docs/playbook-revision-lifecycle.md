@@ -136,18 +136,20 @@ The application service foundation also exists:
 `PlaybookRevisionActivationService` creates and persists explicit lifecycle
 decisions after validating Playbook, PlaybookRevision, EvolutionProposal, and
 same-Playbook supersession linkage. It also provides read-only lifecycle
-inspection for listing activation records for one Playbook and deriving the
-current active revision from activation records in repository order. These
-foundations include read-only CLI inspection through
+inspection for listing activation records for one Playbook, one
+PlaybookRevision, or one EvolutionProposal, and deriving the current active
+revision from activation records in repository order. These foundations include
+read-only CLI inspection through
 `neural playbook revision-history UUID` and
-`neural playbook active-revision UUID`, plus the record-only activation write
-command `neural revision activate REVISION_UUID --playbook PLAYBOOK_UUID
---proposal PROPOSAL_UUID --reason TEXT`, and convenience write commands
-`neural revision supersede NEW_REVISION_UUID --playbook PLAYBOOK_UUID
+`neural playbook active-revision UUID`, `neural revision activation-history
+UUID`, and `neural proposal activation-history UUID`, plus the record-only
+activation write command `neural revision activate REVISION_UUID --playbook
+PLAYBOOK_UUID --proposal PROPOSAL_UUID --reason TEXT`, and convenience write
+commands `neural revision supersede NEW_REVISION_UUID --playbook PLAYBOOK_UUID
 --proposal PROPOSAL_UUID --previous-revision OLD_REVISION_UUID --reason TEXT`
 and `neural revision reject REVISION_UUID --playbook PLAYBOOK_UUID --proposal
 PROPOSAL_UUID --reason TEXT`. They do not add Playbook mutation, proposal
-application, automatic evolution, or broad relation navigation.
+application, automatic evolution, or repository query methods.
 
 Rejected options are less suitable now because they store lifecycle state by
 mutating existing records. That is simpler at first, but it weakens the audit
@@ -358,6 +360,14 @@ Initial relation navigation needs:
 * list lifecycle decisions for one PlaybookRevision,
 * optionally list lifecycle decisions for one EvolutionProposal.
 
+The PlaybookRevision and EvolutionProposal relation navigation now exists as
+read-only application service methods:
+`PlaybookRevisionActivationService.list_for_revision(UUID)` and
+`PlaybookRevisionActivationService.list_for_proposal(UUID)`. Each method
+verifies the source entity exists, loads activation records through
+`PlaybookRevisionActivationRepository.load_all()`, filters in the application
+layer, preserves repository order, and avoids repository query methods.
+
 Repository ports should initially expose simple persistence operations such as
 `save()`, `load_all()`, and `get_by_id()`. Application services should compose
 relation navigation by loading and filtering until a persistence-specific
@@ -389,7 +399,7 @@ query is justified by scale.
    delegate to `PlaybookRevisionActivationService.add(...)`.
 7. Add relation navigation:
    lifecycle decisions by revision and by proposal, owned by the lifecycle
-   application service.
+   application service. Completed for read-only service and CLI inspection.
 8. Review whether a current Playbook materialization use case is needed:
    if needed, design it separately and keep it explicit rather than making
    activation mutate Playbook content.

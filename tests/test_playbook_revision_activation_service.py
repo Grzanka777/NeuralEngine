@@ -237,13 +237,14 @@ def make_activation(
     proposal_id: UUID,
     decision: PlaybookRevisionActivationDecision = PlaybookRevisionActivationDecision.ACTIVE,
     previous_revision_id: UUID | None = None,
+    reason: str = "Recorded lifecycle decision",
 ) -> PlaybookRevisionActivation:
     return PlaybookRevisionActivation(
         playbook_id=playbook_id,
         revision_id=revision_id,
         proposal_id=proposal_id,
         decision=decision,
-        reason="Recorded lifecycle decision",
+        reason=reason,
         previous_revision_id=previous_revision_id,
     )
 
@@ -611,6 +612,231 @@ def test_list_for_playbook_does_not_mutate_records() -> None:
     assert proposal == original_proposal
     assert activation == original_activation
     assert activation_repo.save_calls == []
+
+
+def test_list_for_revision_verifies_revision_exists() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    service, activation_repo, revision_repo, _, _ = make_service([playbook], [revision], [proposal])
+
+    assert service.list_for_revision(revision.id) == []
+    assert revision_repo.requested_ids == [revision.id]
+    assert activation_repo.load_all_calls == 1
+
+
+def test_list_for_revision_raises_when_revision_is_missing() -> None:
+    missing_revision_id = UUID("99999999-aaaa-bbbb-cccc-111111111111")
+    service, activation_repo, revision_repo, playbook_repo, proposal_repo = make_service()
+
+    with pytest.raises(PlaybookRevisionActivationRevisionNotFoundError) as error:
+        service.list_for_revision(missing_revision_id)
+
+    assert error.value.revision_id == missing_revision_id
+    assert revision_repo.requested_ids == [missing_revision_id]
+    assert activation_repo.load_all_calls == 0
+    assert playbook_repo.requested_ids == []
+    assert proposal_repo.requested_ids == []
+
+
+def test_list_for_revision_returns_only_linked_activation_records() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id, "Matched revision")
+    other_revision = make_revision(playbook.id, proposal.id, "Other revision")
+    first = make_activation(playbook.id, revision.id, proposal.id)
+    unrelated = make_activation(playbook.id, other_revision.id, proposal.id)
+    second = make_activation(
+        playbook.id,
+        revision.id,
+        proposal.id,
+        PlaybookRevisionActivationDecision.REJECTED,
+    )
+    service, activation_repo, _, _, _ = make_service(
+        [playbook],
+        [revision, other_revision],
+        [proposal],
+    )
+    activation_repo.saved = [first, unrelated, second]
+
+    assert service.list_for_revision(revision.id) == [first, second]
+
+
+def test_list_for_revision_preserves_repository_order() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    first = make_activation(playbook.id, revision.id, proposal.id, reason="First decision")
+    second = make_activation(playbook.id, revision.id, proposal.id, reason="Second decision")
+    service, activation_repo, _, _, _ = make_service([playbook], [revision], [proposal])
+    activation_repo.saved = [second, first]
+
+    assert service.list_for_revision(revision.id) == [second, first]
+
+
+def test_list_for_revision_returns_empty_list_when_revision_has_no_activations() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    other_revision = make_revision(playbook.id, proposal.id, "Other revision")
+    service, activation_repo, _, _, _ = make_service(
+        [playbook],
+        [revision, other_revision],
+        [proposal],
+    )
+    activation_repo.saved = [make_activation(playbook.id, other_revision.id, proposal.id)]
+
+    assert service.list_for_revision(revision.id) == []
+    assert activation_repo.load_all_calls == 1
+
+
+def test_list_for_revision_does_not_mutate_records_or_save() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    activation = make_activation(playbook.id, revision.id, proposal.id)
+    original_playbook = playbook.model_copy(deep=True)
+    original_revision = revision.model_copy(deep=True)
+    original_proposal = proposal.model_copy(deep=True)
+    original_activation = activation.model_copy(deep=True)
+    service, activation_repo, _, playbook_repo, proposal_repo = make_service(
+        [playbook],
+        [revision],
+        [proposal],
+    )
+    activation_repo.saved = [activation]
+
+    result = service.list_for_revision(revision.id)
+
+    assert result == [activation]
+    assert playbook == original_playbook
+    assert revision == original_revision
+    assert proposal == original_proposal
+    assert activation == original_activation
+    assert activation_repo.save_calls == []
+    assert playbook_repo.requested_ids == []
+    assert proposal_repo.requested_ids == []
+
+
+def test_list_for_proposal_verifies_proposal_exists() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    service, activation_repo, _, _, proposal_repo = make_service([playbook], proposals=[proposal])
+
+    assert service.list_for_proposal(proposal.id) == []
+    assert proposal_repo.requested_ids == [proposal.id]
+    assert activation_repo.load_all_calls == 1
+
+
+def test_list_for_proposal_raises_when_proposal_is_missing() -> None:
+    missing_proposal_id = UUID("aaaaaaaa-bbbb-cccc-dddd-222222222222")
+    service, activation_repo, revision_repo, playbook_repo, proposal_repo = make_service()
+
+    with pytest.raises(PlaybookRevisionActivationProposalNotFoundError) as error:
+        service.list_for_proposal(missing_proposal_id)
+
+    assert error.value.proposal_id == missing_proposal_id
+    assert proposal_repo.requested_ids == [missing_proposal_id]
+    assert activation_repo.load_all_calls == 0
+    assert revision_repo.requested_ids == []
+    assert playbook_repo.requested_ids == []
+
+
+def test_list_for_proposal_returns_only_linked_activation_records() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    other_proposal = make_proposal(playbook.id)
+    first = make_activation(
+        playbook.id,
+        UUID("bbbbbbbb-cccc-dddd-eeee-333333333333"),
+        proposal.id,
+    )
+    unrelated = make_activation(
+        playbook.id,
+        UUID("cccccccc-dddd-eeee-ffff-444444444444"),
+        other_proposal.id,
+    )
+    second = make_activation(
+        playbook.id,
+        UUID("dddddddd-eeee-ffff-1111-555555555555"),
+        proposal.id,
+    )
+    service, activation_repo, _, _, _ = make_service(
+        [playbook],
+        proposals=[proposal, other_proposal],
+    )
+    activation_repo.saved = [first, unrelated, second]
+
+    assert service.list_for_proposal(proposal.id) == [first, second]
+
+
+def test_list_for_proposal_preserves_repository_order() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    first = make_activation(
+        playbook.id,
+        UUID("eeeeeeee-ffff-1111-2222-666666666666"),
+        proposal.id,
+        reason="First decision",
+    )
+    second = make_activation(
+        playbook.id,
+        UUID("ffffffff-1111-2222-3333-777777777777"),
+        proposal.id,
+        reason="Second decision",
+    )
+    service, activation_repo, _, _, _ = make_service([playbook], proposals=[proposal])
+    activation_repo.saved = [second, first]
+
+    assert service.list_for_proposal(proposal.id) == [second, first]
+
+
+def test_list_for_proposal_returns_empty_list_when_proposal_has_no_activations() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    other_proposal = make_proposal(playbook.id)
+    service, activation_repo, _, _, _ = make_service(
+        [playbook],
+        proposals=[proposal, other_proposal],
+    )
+    activation_repo.saved = [
+        make_activation(
+            playbook.id,
+            UUID("11111111-2222-3333-4444-888888888888"),
+            other_proposal.id,
+        )
+    ]
+
+    assert service.list_for_proposal(proposal.id) == []
+    assert activation_repo.load_all_calls == 1
+
+
+def test_list_for_proposal_does_not_mutate_records_or_save() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    revision = make_revision(playbook.id, proposal.id)
+    activation = make_activation(playbook.id, revision.id, proposal.id)
+    original_playbook = playbook.model_copy(deep=True)
+    original_revision = revision.model_copy(deep=True)
+    original_proposal = proposal.model_copy(deep=True)
+    original_activation = activation.model_copy(deep=True)
+    service, activation_repo, revision_repo, playbook_repo, _ = make_service(
+        [playbook],
+        [revision],
+        [proposal],
+    )
+    activation_repo.saved = [activation]
+
+    result = service.list_for_proposal(proposal.id)
+
+    assert result == [activation]
+    assert playbook == original_playbook
+    assert revision == original_revision
+    assert proposal == original_proposal
+    assert activation == original_activation
+    assert activation_repo.save_calls == []
+    assert revision_repo.requested_ids == []
+    assert playbook_repo.requested_ids == []
 
 
 def test_get_active_revision_for_playbook_returns_none_without_activation_records() -> None:

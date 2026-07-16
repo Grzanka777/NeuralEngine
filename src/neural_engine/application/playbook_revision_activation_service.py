@@ -186,6 +186,22 @@ class PlaybookRevisionActivationService:
 
         return [activation for activation in activations if activation.playbook_id == playbook_id]
 
+    def list_for_revision(self, revision_id: UUID) -> list[PlaybookRevisionActivation]:
+        if self._revision_repository.get_by_id(revision_id) is None:
+            raise PlaybookRevisionActivationRevisionNotFoundError(revision_id)
+
+        activations = self._activation_repository.load_all()
+
+        return [activation for activation in activations if activation.revision_id == revision_id]
+
+    def list_for_proposal(self, proposal_id: UUID) -> list[PlaybookRevisionActivation]:
+        if self._proposal_repository.get_by_id(proposal_id) is None:
+            raise PlaybookRevisionActivationProposalNotFoundError(proposal_id)
+
+        activations = self._activation_repository.load_all()
+
+        return [activation for activation in activations if activation.proposal_id == proposal_id]
+
     def get_active_revision_for_playbook(self, playbook_id: UUID) -> PlaybookRevision | None:
         active_revision_id: UUID | None = None
 

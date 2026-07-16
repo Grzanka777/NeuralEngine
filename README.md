@@ -168,6 +168,7 @@ neural proposal list
 neural proposal show 11111111-1111-1111-1111-111111111111
 neural proposal status 11111111-1111-1111-1111-111111111111 --status accepted
 neural proposal revisions 11111111-1111-1111-1111-111111111111
+neural proposal activation-history 11111111-1111-1111-1111-111111111111
 neural playbook proposals 11111111-1111-1111-1111-111111111111
 neural evaluation proposals 22222222-2222-2222-2222-222222222222
 ```
@@ -199,6 +200,7 @@ neural revision add \
 
 neural revision list
 neural revision show 55555555-5555-5555-5555-555555555555
+neural revision activation-history 55555555-5555-5555-5555-555555555555
 neural revision activate 55555555-5555-5555-5555-555555555555 \
   --playbook 11111111-1111-1111-1111-111111111111 \
   --proposal 33333333-3333-3333-3333-333333333333 \
@@ -219,6 +221,11 @@ neural revision reject 88888888-8888-8888-8888-888888888888 \
 copy or materialize revision content into the Playbook, mutate the Playbook or
 revision, change proposal status, apply proposals, or perform automatic
 evolution.
+`neural revision activation-history` and `neural proposal activation-history`
+are read-only lifecycle inspection commands. They list activation records linked
+to an existing revision or proposal without adding repository query methods,
+creating lifecycle decisions, mutating records, changing proposal status,
+applying proposals, or performing automatic evolution.
 
 Observations are stored locally as JSON files under the Neural Engine brain
 directory. Experiences are stored locally as JSON files under the experience

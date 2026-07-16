@@ -695,6 +695,29 @@ def list_proposal_revisions(proposal_id: UUID) -> None:
         console.print()
 
 
+@proposal_app.command("activation-history")
+def list_proposal_activation_history(proposal_id: UUID) -> None:
+    """List playbook revision lifecycle decisions linked to one evolution proposal."""
+
+    service = container.playbook_revision_activation_service()
+    try:
+        activations = service.list_for_proposal(proposal_id)
+    except PlaybookRevisionActivationProposalNotFoundError as error:
+        console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not activations:
+        console.print(
+            f"[yellow]No playbook revision activation records found for proposal: "
+            f"{proposal_id}[/yellow]"
+        )
+        return
+
+    for activation in activations:
+        _print_playbook_revision_activation(activation)
+        console.print()
+
+
 @proposal_app.command("show")
 def show_proposal(proposal_id: UUID) -> None:
     """Show one evolution proposal."""
@@ -798,6 +821,29 @@ def show_revision(revision_id: UUID) -> None:
         raise typer.Exit(code=1)
 
     _print_playbook_revision(revision)
+
+
+@revision_app.command("activation-history")
+def list_revision_activation_history(revision_id: UUID) -> None:
+    """List playbook revision lifecycle decisions linked to one revision."""
+
+    service = container.playbook_revision_activation_service()
+    try:
+        activations = service.list_for_revision(revision_id)
+    except PlaybookRevisionActivationRevisionNotFoundError as error:
+        console.print(f"[red]Playbook revision not found: {error.revision_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not activations:
+        console.print(
+            f"[yellow]No playbook revision activation records found for revision: "
+            f"{revision_id}[/yellow]"
+        )
+        return
+
+    for activation in activations:
+        _print_playbook_revision_activation(activation)
+        console.print()
 
 
 @revision_app.command("activate")

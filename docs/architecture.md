@@ -375,6 +375,20 @@ Playbook, loads activation records through the
 `PlaybookRevisionActivationRepository.load_all()` port, filters matching
 `playbook_id` values in the application layer, and preserves repository order.
 
+`PlaybookRevisionActivationService.list_for_revision()` verifies one existing
+PlaybookRevision through the `PlaybookRevisionRepository` port, loads all
+activation records through `PlaybookRevisionActivationRepository.load_all()`,
+filters matching `revision_id` values in the application layer, and preserves
+repository order. It does not validate Playbook, EvolutionProposal, or
+Knowledge records during inspection.
+
+`PlaybookRevisionActivationService.list_for_proposal()` verifies one existing
+EvolutionProposal through the `EvolutionProposalRepository` port, loads all
+activation records through `PlaybookRevisionActivationRepository.load_all()`,
+filters matching `proposal_id` values in the application layer, and preserves
+repository order. It does not validate Playbook, PlaybookRevision, or Knowledge
+records during inspection.
+
 `PlaybookRevisionActivationService.get_active_revision_for_playbook()` verifies
 one existing Playbook and derives the current active revision from that
 Playbook's activation records in repository order. Later records override
@@ -393,10 +407,18 @@ activation decisions in service order.
 `PlaybookRevisionActivationService.get_active_revision_for_playbook()` and
 displays the derived active PlaybookRevision when one exists.
 
-Both commands are read-only. They do not create activation records, mutate
-Playbook content, mutate PlaybookRevision content, mutate EvolutionProposal
-content, change proposal status, apply proposals, or perform automatic
-evolution.
+`neural revision activation-history UUID` delegates to
+`PlaybookRevisionActivationService.list_for_revision()` and displays stored
+activation decisions linked to one PlaybookRevision in service order.
+
+`neural proposal activation-history UUID` delegates to
+`PlaybookRevisionActivationService.list_for_proposal()` and displays stored
+activation decisions linked to one EvolutionProposal in service order.
+
+These inspection commands are read-only. They do not create activation records,
+add repository query methods, mutate Playbook content, mutate PlaybookRevision
+content, mutate EvolutionProposal content, change proposal status, apply
+proposals, or perform automatic evolution.
 
 `neural revision activate REVISION_UUID --playbook PLAYBOOK_UUID --proposal
 PROPOSAL_UUID --reason TEXT` delegates to `PlaybookRevisionActivationService.add()`

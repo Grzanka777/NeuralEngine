@@ -272,6 +272,16 @@ an existing revision. It also does not require or change proposal status.
 Playbook, loads activation records through
 `PlaybookRevisionActivationRepository.load_all()`, filters by `playbook_id` in
 the application layer, and preserves repository order.
+`PlaybookRevisionActivationService.list_for_revision()` verifies one existing
+PlaybookRevision through `PlaybookRevisionRepository.get_by_id()`, loads
+activation records through `PlaybookRevisionActivationRepository.load_all()`,
+filters by `revision_id` in the application layer, and preserves repository
+order.
+`PlaybookRevisionActivationService.list_for_proposal()` verifies one existing
+EvolutionProposal through `EvolutionProposalRepository.get_by_id()`, loads
+activation records through `PlaybookRevisionActivationRepository.load_all()`,
+filters by `proposal_id` in the application layer, and preserves repository
+order.
 `PlaybookRevisionActivationService.get_active_revision_for_playbook()` verifies
 one existing Playbook, derives the current active revision from activation
 records in repository order, loads only the final derived revision through
@@ -285,6 +295,13 @@ activation records for one Playbook in service order.
 `PlaybookRevisionActivationService.get_active_revision_for_playbook()` and
 displays the current active PlaybookRevision when one exists. Both commands are
 read-only lifecycle inspection only.
+`neural revision activation-history UUID` delegates to
+`PlaybookRevisionActivationService.list_for_revision()` and displays activation
+records linked to one existing PlaybookRevision in service order.
+`neural proposal activation-history UUID` delegates to
+`PlaybookRevisionActivationService.list_for_proposal()` and displays activation
+records linked to one existing EvolutionProposal in service order. Both
+relation navigation commands are read-only lifecycle inspection only.
 `neural revision activate UUID --playbook PLAYBOOK_UUID --proposal
 PROPOSAL_UUID --reason TEXT` delegates to
 `PlaybookRevisionActivationService.add()` and records an explicit lifecycle
@@ -313,10 +330,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 473 tests.
+Pytest collected 493 tests.
 
 ## Notes for next work
 
-The next logical step is to add lifecycle relation navigation by revision or by
-proposal where it improves inspectability, without adding repository query
-methods or automatic evolution.
+The next logical step is to design the explicit PlaybookRevision
+materialization/apply boundary, without implementing Playbook mutation or
+automatic evolution as part of that design.
