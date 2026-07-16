@@ -5,6 +5,11 @@ import pytest
 from typer.testing import CliRunner
 
 from neural_engine import cli
+from neural_engine.application.decision_service import (
+    DecisionIdempotencyConflictError,
+    DecisionNotFoundError,
+    DecisionObservationNotFoundError,
+)
 from neural_engine.application.evolution_proposal_service import (
     EvolutionProposalChangesRequiredError,
     EvolutionProposalEvaluationPlaybookMismatchError,
@@ -59,6 +64,8 @@ from neural_engine.application.playbook_service import (
     PlaybookStepsRequiredError,
 )
 from neural_engine.domain import (
+    Decision,
+    EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
     Experience,
@@ -123,6 +130,95 @@ class FakeObservationService:
                 return observation
 
         return None
+
+
+class FakeDecisionService:
+    def __init__(
+        self,
+        decisions: list[Decision] | None = None,
+        missing_observation_id: UUID | None = None,
+        conflict: tuple[str, str] | None = None,
+    ) -> None:
+        self.decisions = decisions or []
+        self.missing_observation_id = missing_observation_id
+        self.conflict = conflict
+        self.add_calls: list[dict[str, object]] = []
+        self.list_calls: list[str | None] = []
+        self.show_calls: list[UUID] = []
+
+    def add(
+        self,
+        project_key: str,
+        title: str,
+        objective: str,
+        context_summary: str,
+        alternatives: list[str],
+        proposed_option: str,
+        rationale: str,
+        proposed_by: str,
+        idempotency_key: str,
+        observation_ids: list[UUID] | None = None,
+        evidence_references: list[EvidenceReference] | None = None,
+        supersedes_decision_id: UUID | None = None,
+        tags: list[str] | None = None,
+    ) -> Decision:
+        call: dict[str, object] = {
+            "project_key": project_key,
+            "title": title,
+            "objective": objective,
+            "context_summary": context_summary,
+            "alternatives": alternatives,
+            "proposed_option": proposed_option,
+            "rationale": rationale,
+            "proposed_by": proposed_by,
+            "idempotency_key": idempotency_key,
+            "observation_ids": observation_ids,
+            "evidence_references": evidence_references,
+            "supersedes_decision_id": supersedes_decision_id,
+            "tags": tags,
+        }
+        self.add_calls.append(call)
+
+        if self.missing_observation_id is not None:
+            raise DecisionObservationNotFoundError(self.missing_observation_id)
+
+        if self.conflict is not None:
+            raise DecisionIdempotencyConflictError(*self.conflict)
+
+        for decision in self.decisions:
+            if decision.project_key == project_key and decision.idempotency_key == idempotency_key:
+                return decision
+
+        decision = Decision(
+            project_key=project_key,
+            title=title,
+            objective=objective,
+            context_summary=context_summary,
+            alternatives=tuple(alternatives),
+            proposed_option=proposed_option,
+            rationale=rationale,
+            proposed_by=proposed_by,
+            idempotency_key=idempotency_key,
+            observation_ids=tuple(observation_ids or []),
+            evidence_references=tuple(evidence_references or []),
+            supersedes_decision_id=supersedes_decision_id,
+            tags=tuple(tags or []),
+        )
+        self.decisions.append(decision)
+        return decision
+
+    def list_decisions(self, project_key: str | None = None) -> list[Decision]:
+        self.list_calls.append(project_key)
+        if project_key is None:
+            return self.decisions
+        return [decision for decision in self.decisions if decision.project_key == project_key]
+
+    def show(self, decision_id: UUID) -> Decision:
+        self.show_calls.append(decision_id)
+        for decision in self.decisions:
+            if decision.id == decision_id:
+                return decision
+        raise DecisionNotFoundError(decision_id)
 
 
 class FakeExperienceService:
@@ -1060,6 +1156,7 @@ class FakePlaybookRevisionActivationService:
 class FakeContainer:
     def __init__(
         self,
+        decision_service: FakeDecisionService | None = None,
         observation_service: FakeObservationService | None = None,
         experience_service: FakeExperienceService | None = None,
         knowledge_service: FakeKnowledgeService | None = None,
@@ -1070,6 +1167,7 @@ class FakeContainer:
         playbook_revision_service: FakePlaybookRevisionService | None = None,
         playbook_revision_activation_service: FakePlaybookRevisionActivationService | None = None,
     ) -> None:
+        self._decision_service = decision_service
         self._observation_service = observation_service
         self._experience_service = experience_service
         self._knowledge_service = knowledge_service
@@ -1079,6 +1177,12 @@ class FakeContainer:
         self._evolution_proposal_service = evolution_proposal_service
         self._playbook_revision_service = playbook_revision_service
         self._playbook_revision_activation_service = playbook_revision_activation_service
+
+    def decision_service(self) -> FakeDecisionService:
+        if self._decision_service is None:
+            raise AssertionError("Decision service was not expected")
+
+        return self._decision_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -6224,3 +6328,261 @@ def test_revision_show_invalid_uuid_returns_usage_error_without_calling_service(
     assert result.exit_code == 2
     assert "Invalid value" in result.output
     assert service.requested_ids == []
+
+
+def make_cli_decision(**updates: object) -> Decision:
+    values: dict[str, object] = {
+        "project_key": "NeuralEngine",
+        "title": "Canonical decision ownership",
+        "objective": "Record one bounded architecture choice",
+        "context_summary": "A design requires an explicit durable Decision.",
+        "alternatives": ("Implement Decision foundation", "Keep design-only state"),
+        "proposed_option": "Implement Decision foundation",
+        "rationale": "The foundation enables controlled dogfooding.",
+        "proposed_by": "architecture-review",
+        "idempotency_key": "decision-foundation-1",
+    }
+    values.update(updates)
+    return Decision.model_validate(values)
+
+
+def decision_add_args() -> list[str]:
+    return [
+        "decision",
+        "add",
+        "--project-key",
+        "NeuralEngine",
+        "--title",
+        "Canonical decision ownership",
+        "--objective",
+        "Record one bounded architecture choice",
+        "--context-summary",
+        "A design requires an explicit durable Decision.",
+        "--alternative",
+        "Implement Decision foundation",
+        "--alternative",
+        "Keep design-only state",
+        "--proposed-option",
+        "Implement Decision foundation",
+        "--rationale",
+        "The foundation enables controlled dogfooding.",
+        "--proposed-by",
+        "architecture-review",
+        "--idempotency-key",
+        "decision-foundation-1",
+    ]
+
+
+def test_decision_help_exposes_only_foundation_commands() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["decision", "--help"])
+
+    assert result.exit_code == 0
+    assert "add" in result.output
+    assert "list" in result.output
+    assert "show" in result.output
+    assert "accept" not in result.output
+    assert "action" not in result.output
+    assert "outcome" not in result.output
+    assert "review" not in result.output
+
+
+def test_decision_add_delegates_all_inputs_and_displays_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observation_id = UUID("66666666-6666-6666-6666-666666666666")
+    superseded_id = UUID("77777777-7777-7777-7777-777777777777")
+    evidence_json = (
+        '{"kind":"agent_review","locator":".agent-work/reviews/review.md",'
+        '"repository_or_project":"NeuralEngine","content_hash":"sha256:abc",'
+        '"source":"reviewer","summary":"Architecture review"}'
+    )
+    service = FakeDecisionService()
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+    args = decision_add_args() + [
+        "--observation-id",
+        str(observation_id),
+        "--evidence",
+        evidence_json,
+        "--supersedes-decision-id",
+        str(superseded_id),
+        "--tag",
+        "architecture",
+    ]
+
+    result = runner.invoke(cli.app, args)
+
+    assert result.exit_code == 0
+    assert len(service.add_calls) == 1
+    call = service.add_calls[0]
+    assert call["alternatives"] == [
+        "Implement Decision foundation",
+        "Keep design-only state",
+    ]
+    assert call["observation_ids"] == [observation_id]
+    assert call["supersedes_decision_id"] == superseded_id
+    assert call["tags"] == ["architecture"]
+    evidence = call["evidence_references"]
+    assert isinstance(evidence, list)
+    assert evidence[0].kind == "agent_review"
+    assert evidence[0].locator == ".agent-work/reviews/review.md"
+    assert "Decision stored." in result.output
+    assert str(service.decisions[0].id) in result.output
+
+
+def test_decision_list_delegates_project_filter_and_renders_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = make_cli_decision(title="First decision", idempotency_key="first")
+    second = make_cli_decision(title="Second decision", idempotency_key="second")
+    service = FakeDecisionService([first, second])
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["decision", "list", "--project", "NeuralEngine"])
+
+    assert result.exit_code == 0
+    assert service.list_calls == ["NeuralEngine"]
+    assert "ID" in result.output
+    assert "Created" in result.output
+    assert "Project" in result.output
+    assert "Title" in result.output
+    assert "Proposed" in result.output
+    assert "option" in result.output
+    assert "by" in result.output
+    assert "First" in result.output
+    assert "Second" in result.output
+
+
+def test_decision_show_renders_full_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    observation_id = UUID("88888888-8888-8888-8888-888888888888")
+    superseded_id = UUID("99999999-9999-9999-9999-999999999999")
+    decision = make_cli_decision(
+        observation_ids=(observation_id,),
+        evidence_references=(
+            EvidenceReference(
+                kind="git_commit",
+                locator="8829fd8",
+                repository_or_project="NeuralEngine",
+                content_hash="sha256:def",
+                source="git",
+                summary="Design sync",
+            ),
+        ),
+        supersedes_decision_id=superseded_id,
+        tags=("architecture", "decision"),
+    )
+    service = FakeDecisionService([decision])
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["decision", "show", str(decision.id)])
+
+    assert result.exit_code == 0
+    assert service.show_calls == [decision.id]
+    assert "Title: Canonical decision ownership" in result.output
+    assert "Objective: Record one bounded architecture choice" in result.output
+    assert "Context summary: A design requires an explicit durable Decision." in result.output
+    assert "- Implement Decision foundation" in result.output
+    assert "Proposed option: Implement Decision foundation" in result.output
+    assert "Rationale: The foundation enables controlled dogfooding." in result.output
+    assert str(observation_id) in result.output
+    assert "kind=git_commit; locator=8829fd8" in result.output
+    assert f"Supersedes Decision ID: {superseded_id}" in result.output
+    assert "Idempotency key: decision-foundation-1" in result.output
+    assert "Tags: architecture, decision" in result.output
+
+
+def test_decision_show_missing_returns_controlled_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    service = FakeDecisionService()
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["decision", "show", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert service.show_calls == [missing_id]
+    assert f"Decision not found: {missing_id}" in result.output
+
+
+def test_decision_show_invalid_uuid_does_not_call_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeDecisionService()
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["decision", "show", "not-a-uuid"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert service.show_calls == []
+
+
+def test_decision_add_missing_observation_returns_controlled_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    service = FakeDecisionService(missing_observation_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        decision_add_args() + ["--observation-id", str(missing_id)],
+    )
+
+    assert result.exit_code == 1
+    assert f"Observation not found: {missing_id}" in result.output
+
+
+def test_decision_add_idempotent_replay_displays_existing_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = make_cli_decision()
+    service = FakeDecisionService([existing])
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, decision_add_args())
+
+    assert result.exit_code == 0
+    assert len(service.add_calls) == 1
+    assert str(existing.id) in result.output
+    assert service.decisions == [existing]
+
+
+def test_decision_add_conflicting_idempotency_key_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeDecisionService(conflict=("NeuralEngine", "decision-foundation-1"))
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, decision_add_args())
+
+    assert result.exit_code == 1
+    assert "decision-foundation-1" in result.output
+    assert "different payload" in result.output
+
+
+def test_decision_add_rejects_invalid_evidence_without_calling_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeDecisionService()
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        decision_add_args() + ["--evidence", '{"kind":"agent_review"}'],
+    )
+
+    assert result.exit_code == 1
+    assert "Field required" in result.output
+    assert service.add_calls == []

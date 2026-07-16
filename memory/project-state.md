@@ -381,10 +381,34 @@ Consigliere remains a future advisory layer; NeuralEngine owns durable accepted
 context, decisions, actions, outcomes, provenance, and reviewed promotion into
 Experience, Knowledge, and Playbook evolution.
 
-This design update adds no production behavior, domain classes, repositories,
-services, CLI commands, file or git ingestion, automatic learning, Consigliere
-integration, dependencies, or Handbook artifact changes. `NeuralPaths.DECISIONS`
-remains only a pre-existing reserved directory.
+NeuralEngine now has a Decision foundation vertical slice:
+
+* immutable `Decision` domain model,
+* immutable embedded `EvidenceReference` value,
+* persistence-focused `DecisionRepository`,
+* `JsonDecisionRepository` using `NeuralPaths.DECISIONS`,
+* `DecisionService` with `add()`, `list_decisions()`, and `show()`,
+* container repository/service wiring,
+* `neural decision add`, `neural decision list`, and
+  `neural decision show DECISION_UUID`.
+
+Decision validates non-blank required text, at least two trimmed unique
+alternatives, exact proposed-option membership, unique Observation IDs,
+non-self supersession, normalized tags, bounded evidence kind/locator, and
+UTC-aware timestamps. The service validates referenced Observations and
+same-project supersession before persistence. Idempotency is scoped by
+`(project_key, "decision", idempotency_key)`: equivalent semantic replay returns
+the existing Decision, while a conflicting payload fails without a write.
+Generated Decision identity/time and generated evidence capture times are not
+part of semantic equivalence. Duplicate detection uses
+`DecisionRepository.load_all()`; no query methods were added.
+
+Evidence values are embedded references only and the CLI accepts them as
+repeatable bounded JSON `--evidence` values. No locator is read or ingested.
+This slice adds no DecisionAcceptance, DecisionAction, DecisionOutcome,
+DecisionReview, lifecycle replay, file or git ingestion, automatic Observation
+or learning creation, automatic evolution, Consigliere integration,
+dependencies, or generated Handbook changes.
 
 ## Validation
 
@@ -395,13 +419,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 537 tests.
+Pytest collected 593 tests.
 
 ## Notes for next work
 
-The next recommended implementation milestone is the immutable Decision
-foundation only: domain model, persistence-focused repository port, JSON adapter
-using the existing `NeuralPaths.DECISIONS` directory, application service,
-thin `neural decision add/list/show` CLI, focused tests, and docs. Acceptance,
-actions, outcomes, reviews, ingestion, automatic learning, Consigliere, and
-downstream Experience/Knowledge/Playbook creation remain later explicit slices.
+The next recommended controlled milestone is DecisionAcceptance foundation
+only. It must remain immutable and separate from DecisionAction,
+DecisionOutcome, and DecisionReview.

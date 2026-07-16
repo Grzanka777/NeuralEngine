@@ -5,9 +5,18 @@ import typer
 from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 
 from neural_engine import APP_NAME, MISSION, __version__
 from neural_engine.application.container import Container
+from neural_engine.application.decision_service import (
+    DecisionIdempotencyConflictError,
+    DecisionNotFoundError,
+    DecisionObservationNotFoundError,
+    DecisionProjectKeyRequiredError,
+    DecisionSupersededNotFoundError,
+    DecisionSupersededProjectMismatchError,
+)
 from neural_engine.application.evolution_proposal_service import (
     EvolutionProposalChangesRequiredError,
     EvolutionProposalEvaluationPlaybookMismatchError,
@@ -62,6 +71,8 @@ from neural_engine.application.playbook_service import (
 )
 from neural_engine.core.brain import Brain
 from neural_engine.domain import (
+    Decision,
+    EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
     Experience,
@@ -81,6 +92,9 @@ from neural_engine.domain import (
 app = typer.Typer(
     add_completion=False,
     help="Neural Engine CLI",
+)
+decision_app = typer.Typer(
+    help="Record and inspect proposed decisions.",
 )
 experience_app = typer.Typer(
     help="Manage experiences.",
@@ -106,6 +120,7 @@ playbook_app = typer.Typer(
 run_app = typer.Typer(
     help="Record and inspect playbook runs.",
 )
+app.add_typer(decision_app, name="decision")
 app.add_typer(experience_app, name="experience")
 app.add_typer(evaluation_app, name="evaluation")
 app.add_typer(knowledge_app, name="knowledge")
@@ -175,6 +190,125 @@ def status() -> None:
     console.print(f"[bold cyan]{APP_NAME}[/bold cyan]")
     console.print(f"Version : {__version__}")
     console.print(f"Brain   : {state}")
+
+
+@decision_app.command("add")
+def add_decision(
+    project_key: Annotated[str, typer.Option("--project-key")],
+    title: Annotated[str, typer.Option("--title")],
+    objective: Annotated[str, typer.Option("--objective")],
+    context_summary: Annotated[str, typer.Option("--context-summary")],
+    alternatives: Annotated[list[str], typer.Option("--alternative")],
+    proposed_option: Annotated[str, typer.Option("--proposed-option")],
+    rationale: Annotated[str, typer.Option("--rationale")],
+    proposed_by: Annotated[str, typer.Option("--proposed-by")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    observation_ids: Annotated[list[UUID] | None, typer.Option("--observation-id")] = None,
+    evidence_values: Annotated[list[str] | None, typer.Option("--evidence")] = None,
+    supersedes_decision_id: Annotated[
+        UUID | None,
+        typer.Option("--supersedes-decision-id"),
+    ] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record one proposed Decision."""
+
+    try:
+        evidence_references = [
+            EvidenceReference.model_validate_json(value) for value in evidence_values or []
+        ]
+        decision = container.decision_service().add(
+            project_key=project_key,
+            title=title,
+            objective=objective,
+            context_summary=context_summary,
+            alternatives=alternatives,
+            proposed_option=proposed_option,
+            rationale=rationale,
+            proposed_by=proposed_by,
+            idempotency_key=idempotency_key,
+            observation_ids=observation_ids,
+            evidence_references=evidence_references,
+            supersedes_decision_id=supersedes_decision_id,
+            tags=tags,
+        )
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionObservationNotFoundError as error:
+        console.print(f"[red]Observation not found: {error.observation_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionSupersededNotFoundError as error:
+        console.print(f"[red]Superseded Decision not found: {error.decision_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionSupersededProjectMismatchError as error:
+        console.print(
+            f"[red]Superseded Decision {error.decision_id} belongs to project "
+            f"{error.actual_project_key}, expected {error.expected_project_key}[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except DecisionIdempotencyConflictError as error:
+        console.print(
+            f"[red]Decision idempotency key {error.idempotency_key!r} already exists for "
+            f"project {error.project_key!r} with a different payload.[/red]"
+        )
+        raise typer.Exit(code=1) from error
+
+    console.print(f"[green]Decision stored.[/green] ID: [cyan]{decision.id}[/cyan]")
+
+
+@decision_app.command("list")
+def list_decisions(
+    project_key: Annotated[str | None, typer.Option("--project")] = None,
+) -> None:
+    """List proposed Decisions."""
+
+    try:
+        decisions = container.decision_service().list_decisions(project_key)
+    except DecisionProjectKeyRequiredError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not decisions:
+        message = (
+            f"No Decisions found for project: {project_key}"
+            if project_key is not None
+            else "No Decisions found."
+        )
+        console.print(f"[yellow]{message}[/yellow]")
+        return
+
+    table = Table()
+    table.add_column("ID")
+    table.add_column("Created")
+    table.add_column("Project")
+    table.add_column("Title")
+    table.add_column("Proposed option")
+    table.add_column("Proposed by")
+    for decision in decisions:
+        table.add_row(
+            str(decision.id),
+            decision.created_at.isoformat(),
+            decision.project_key,
+            decision.title,
+            decision.proposed_option,
+            decision.proposed_by,
+        )
+
+    console.print(table)
+
+
+@decision_app.command("show")
+def show_decision(decision_id: UUID) -> None:
+    """Show one proposed Decision."""
+
+    try:
+        decision = container.decision_service().show(decision_id)
+    except DecisionNotFoundError as error:
+        console.print(f"[red]Decision not found: {error.decision_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    _print_decision(decision)
 
 
 @app.command()
@@ -1223,6 +1357,42 @@ def _print_experience(experience: Experience) -> None:
         )
     )
     console.print(f"Tags: {', '.join(experience.tags) if experience.tags else '-'}")
+
+
+def _print_decision(decision: Decision) -> None:
+    console.print(f"ID: {decision.id}")
+    console.print(f"Created: {decision.created_at}")
+    console.print(f"Project: {decision.project_key}")
+    console.print(f"Title: {decision.title}")
+    console.print(f"Objective: {decision.objective}")
+    console.print(f"Context summary: {decision.context_summary}")
+    _print_repeated_field("Alternatives", list(decision.alternatives))
+    console.print(f"Proposed option: {decision.proposed_option}")
+    console.print(f"Rationale: {decision.rationale}")
+    _print_repeated_field(
+        "Observation IDs",
+        [str(observation_id) for observation_id in decision.observation_ids],
+    )
+    _print_repeated_field(
+        "Evidence references",
+        [_format_evidence_reference(evidence) for evidence in decision.evidence_references],
+    )
+    console.print(f"Proposed by: {decision.proposed_by}")
+    console.print(
+        "Supersedes Decision ID: "
+        f"{decision.supersedes_decision_id if decision.supersedes_decision_id is not None else '-'}"
+    )
+    console.print(f"Idempotency key: {decision.idempotency_key}")
+    console.print(f"Tags: {', '.join(decision.tags) if decision.tags else '-'}")
+
+
+def _format_evidence_reference(evidence: EvidenceReference) -> str:
+    return (
+        f"kind={evidence.kind}; locator={evidence.locator}; "
+        f"repository/project={evidence.repository_or_project or '-'}; "
+        f"hash={evidence.content_hash or '-'}; captured={evidence.captured_at.isoformat()}; "
+        f"source={evidence.source or '-'}; summary={evidence.summary or '-'}"
+    )
 
 
 def _print_experience_summary(experience: Experience) -> None:

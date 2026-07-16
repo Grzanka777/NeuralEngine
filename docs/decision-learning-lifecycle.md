@@ -23,7 +23,8 @@ development event
 
 ## Scope
 
-This document defines future boundaries for:
+This document defines implemented Decision foundation boundaries and future
+boundaries for:
 
 * recording a decision problem, alternatives, proposed selection, and rationale,
 * explicitly accepting a proposed decision,
@@ -35,16 +36,48 @@ This document defines future boundaries for:
 * preventing duplicate capture, and
 * sketching future CLI and implementation milestones.
 
-`NeuralPaths.DECISIONS` already reserves a directory and `Brain.initialize()`
-creates it. No Decision domain model, repository, service, or CLI behavior
-currently exists.
+`NeuralPaths.DECISIONS` provides the persistence directory. The Decision
+foundation now implements the immutable Decision and embedded EvidenceReference
+models, repository port, JSON adapter, application service, container wiring,
+and add/list/show CLI. Later records remain unimplemented.
+
+## Implemented Decision Foundation
+
+The implemented slice contains:
+
+```text
+Decision
+EvidenceReference (embedded value only)
+DecisionRepository
+JsonDecisionRepository
+DecisionService
+Container wiring
+neural decision add/list/show
+```
+
+`Decision` stores all fields listed in the Decision section below. Required
+text is trimmed and must remain non-blank. Alternatives are trimmed, must contain
+at least two values, reject case-insensitive duplicates, and the proposed option
+must exactly match one stored alternative. Observation IDs must be unique.
+Tags are trimmed and case-insensitive duplicates are removed while preserving
+first-seen order. Decision and evidence timestamps are UTC-aware.
+
+EvidenceReference is immutable and embedded in Decision JSON. `kind` and
+`locator` are required, trimmed, non-blank, and bounded to 64 and 2048
+characters respectively. Optional evidence text is trimmed, bounded, and may
+not be blank when supplied. No evidence repository, service, or CLI exists.
+
+`DecisionService.add()` validates referenced Observations through the
+ObservationRepository port and validates that an optional superseded Decision
+exists in the same project. The service loads all Decisions for idempotency,
+persists only after validation, creates no other record, and performs no
+lifecycle transition.
 
 ## Non-Goals
 
-This design does not implement:
+This foundation does not implement:
 
-* production code or persisted schemas,
-* domain classes, repositories, services, or CLI commands,
+* DecisionAcceptance, DecisionAction, DecisionOutcome, or DecisionReview,
 * file ingestion, git integration, or command execution,
 * automatic Observation, Experience, Knowledge, or Playbook creation,
 * automatic decision acceptance, execution, review, or evolution,
@@ -436,13 +469,37 @@ idempotency-specific repository query is justified initially.
 
 ## Future CLI Sketch
 
-These commands are design direction only and do not exist:
+The first three commands are implemented:
 
 ```bash
 neural decision add
 neural decision list
 neural decision show DECISION_UUID
+```
 
+`decision add` uses repeatable options for collections. Evidence references use
+repeatable bounded JSON values and are not ingested:
+
+```bash
+neural decision add \
+  --project-key NeuralEngine \
+  --title "Canonical lifecycle ownership" \
+  --objective "Keep active revision derivation in one service" \
+  --context-summary "Application service duplicated lifecycle replay" \
+  --alternative "Delegate to activation service" \
+  --alternative "Keep local replay" \
+  --proposed-option "Delegate to activation service" \
+  --rationale "One owner prevents semantic drift" \
+  --proposed-by architecture-review \
+  --idempotency-key decision-active-revision-owner \
+  --observation-id OBSERVATION_UUID \
+  --evidence '{"kind":"agent_review","locator":".agent-work/reviews/review.md"}' \
+  --tag architecture
+```
+
+The following commands remain future-only and do not exist:
+
+```bash
 neural decision accept DECISION_UUID
 neural decision action add DECISION_UUID
 neural decision outcome add DECISION_UUID
@@ -452,14 +509,13 @@ neural project ingest-review REVIEW_PATH
 neural project ingest-commit COMMIT_HASH
 ```
 
-The first milestone should expose only `decision add`, `decision list`, and
-`decision show`. Acceptance, action, outcome, review, and project ingestion
-belong to later slices. Every CLI handler must resolve a service from the
-container, translate input, render output, and contain no business rules.
+The implemented handlers resolve DecisionService from the container, translate
+input, and render output. Acceptance, action, outcome, review, and project
+ingestion belong to later slices.
 
 ## First Implementation Milestone
 
-The recommended next slice is:
+The first slice is completed:
 
 ```text
 Decision foundation
@@ -470,15 +526,18 @@ Decision foundation
 + focused tests and documentation
 ```
 
-This is smaller than implementing the full decision workflow. It is immediately
-useful for recording real NeuralEngine architecture decisions, establishes
-provenance and idempotency conventions, and leaves acceptance, actions,
+This remains smaller than implementing the full decision workflow. It is
+immediately useful for recording real NeuralEngine architecture decisions,
+establishes provenance and idempotency conventions, and leaves acceptance, actions,
 outcomes, reviews, ingestion, and learning for separately reviewed slices.
 
-The milestone must keep Decision immutable, require one bounded objective, at
+The milestone keeps Decision immutable, requires one bounded objective, at
 least two meaningful alternatives, one proposed option that matches an
 alternative, non-blank rationale, explicit provenance, and an idempotency key.
-It must not automatically create Observations or downstream learning records.
+It does not automatically create Observations or downstream learning records.
+
+The next recommended controlled slice is DecisionAcceptance foundation only.
+It must remain separate from DecisionAction and DecisionOutcome.
 
 ## Risks And Rejected Alternatives
 

@@ -1,3 +1,4 @@
+from .decision import Decision, EvidenceReference
 from .evolution_proposal import EvolutionProposal, EvolutionProposalStatus
 from .experience import Experience, ExperienceResult
 from .knowledge import Knowledge, KnowledgeConfidence
@@ -13,6 +14,8 @@ from .playbook_revision_application import PlaybookRevisionApplication
 from .playbook_run import PlaybookRun
 
 __all__ = [
+    "Decision",
+    "EvidenceReference",
     "Experience",
     "ExperienceResult",
     "EvolutionProposal",

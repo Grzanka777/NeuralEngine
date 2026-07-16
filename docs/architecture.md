@@ -6,7 +6,7 @@ Neural Engine follows Clean Architecture.
 
 Domain:
 
-* Owns core concepts such as `Observation`, `Experience`, `Knowledge`,
+* Owns core concepts such as `Decision`, `Observation`, `Experience`, `Knowledge`,
   `Playbook`, `PlaybookRun`, `PlaybookEvaluation`, `EvolutionProposal`, and
   `PlaybookRevision`.
 * Owns the domain foundation for `PlaybookRevisionActivation`, which represents
@@ -18,7 +18,8 @@ Domain:
 
 Application:
 
-* Coordinates use cases such as adding, listing, and searching observations,
+* Coordinates use cases such as adding, listing, and showing Decisions, adding,
+  listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
   retrieving knowledge, playbooks, playbook runs, playbook evaluations, and
   evolution proposals and playbook revisions, and adding playbook revision
@@ -32,6 +33,7 @@ Ports:
 
 Infrastructure:
 
+* The current Decision repository stores one JSON file per Decision.
 * Implements ports using concrete storage mechanisms.
 * The current observation repository stores one JSON file per observation.
 * The current experience repository stores one JSON file per experience.
@@ -487,8 +489,8 @@ automatic evolution.
 ## Decision Learning Design
 
 The self-observation and development decision architecture is defined in
-`docs/decision-learning-lifecycle.md`. The accepted direction adds a future
-staged family of immutable records rather than one mutable workflow aggregate:
+`docs/decision-learning-lifecycle.md`. The accepted direction uses a staged
+family of immutable records rather than one mutable workflow aggregate:
 
 ```text
 Decision
@@ -510,7 +512,34 @@ by embedding prompts, reviews, diffs, or validation logs. Consigliere remains a
 future reasoning and advisory layer; NeuralEngine remains the authoritative
 store for accepted context, decisions, actions, outcomes, and reviewed learning.
 
-`NeuralPaths.DECISIONS` is currently only a reserved and initialized directory.
-No Decision model, persistence, application service, CLI behavior, ingestion,
-automatic learning, Consigliere integration, or Handbook synchronization is
-implemented by this design.
+The first Decision foundation is implemented. `Decision` and its embedded
+`EvidenceReference` value are immutable. `DecisionRepository` exposes only
+`save()`, `load_all()`, and `get_by_id()`, and `JsonDecisionRepository` stores
+one JSON file per Decision under the existing `NeuralPaths.DECISIONS` path.
+`DecisionService` owns Observation validation, same-project supersession
+validation, project filtering, not-found behavior, and idempotency.
+
+Idempotency is scoped by `(project_key, "decision", idempotency_key)`. An
+equivalent semantic replay returns the existing Decision; generated Decision ID
+and creation time and generated evidence capture times are excluded from the
+comparison. Reusing the key with a different semantic payload fails without a
+write. Duplicate detection loads and filters through the repository port; no
+query method was added.
+
+The thin CLI exposes:
+
+```text
+neural decision add
+neural decision list [--project PROJECT_KEY]
+neural decision show DECISION_UUID
+```
+
+`decision add` accepts repeated `--alternative`, `--observation-id`, `--tag`,
+and `--evidence` options. Each `--evidence` value is a bounded JSON object such
+as `{"kind":"agent_review","locator":".agent-work/reviews/review.md"}`.
+Evidence is embedded by reference only; the CLI does not read the locator.
+
+This foundation does not implement DecisionAcceptance, DecisionAction,
+DecisionOutcome, DecisionReview, lifecycle replay, file or git ingestion,
+automatic learning or evolution, Consigliere integration, or Handbook
+synchronization.

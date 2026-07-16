@@ -1,4 +1,5 @@
 from neural_engine.application.container import Container
+from neural_engine.application.decision_service import DecisionService
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationService,
 )
@@ -8,10 +9,12 @@ from neural_engine.application.playbook_revision_application_service import (
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.core.paths import NeuralPaths
+from neural_engine.infrastructure.json_decision_repository import JsonDecisionRepository
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
     JsonEvolutionProposalRepository,
 )
 from neural_engine.infrastructure.json_knowledge_repository import JsonKnowledgeRepository
+from neural_engine.infrastructure.json_observation_repository import JsonObservationRepository
 from neural_engine.infrastructure.json_playbook_repository import JsonPlaybookRepository
 from neural_engine.infrastructure.json_playbook_revision_activation_repository import (
     JsonPlaybookRevisionActivationRepository,
@@ -32,6 +35,21 @@ def test_container_wires_playbook_revision_service_with_json_repositories() -> N
     assert isinstance(service._playbook_repository, JsonPlaybookRepository)
     assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)
     assert isinstance(service._knowledge_repository, JsonKnowledgeRepository)
+
+
+def test_container_wires_decision_repository() -> None:
+    repository = Container().decision_repository()
+
+    assert isinstance(repository, JsonDecisionRepository)
+    assert repository._directory == NeuralPaths.DECISIONS
+
+
+def test_container_wires_decision_service_with_json_repositories() -> None:
+    service = Container().decision_service()
+
+    assert isinstance(service, DecisionService)
+    assert isinstance(service._decision_repository, JsonDecisionRepository)
+    assert isinstance(service._observation_repository, JsonObservationRepository)
 
 
 def test_container_wires_playbook_service_without_playbook_revision_repository() -> None:
