@@ -36,11 +36,13 @@ boundaries for:
 * preventing duplicate capture, and
 * sketching future CLI and implementation milestones.
 
-`NeuralPaths.DECISIONS` and `NeuralPaths.DECISION_ACCEPTANCES` provide separate
-persistence directories. The Decision and DecisionAcceptance foundations now
+`NeuralPaths.DECISIONS`, `NeuralPaths.DECISION_ACCEPTANCES`, and
+`NeuralPaths.DECISION_ACTIONS` provide separate persistence directories. The
+Decision, DecisionAcceptance, and DecisionAction foundations now
 implement immutable domain records, persistence-focused ports, JSON adapters,
-application services, container wiring, proposal commands, explicit acceptance,
-and acceptance-history inspection. Later records remain unimplemented.
+application services, container wiring, proposal/acceptance/action commands,
+relation history, and the minimal canonical lifecycle projection. Later records
+remain unimplemented.
 
 ## Implemented Decision Foundation
 
@@ -119,11 +121,40 @@ Decision with one valid acceptance -> accepted
 
 Execution and reviewed states remain unavailable until later foundations exist.
 
+## Implemented DecisionAction Foundation
+
+`DecisionAction` records work actually performed under an accepted Decision. It
+stores `id`, `recorded_at`, `decision_id`, `acceptance_id`, bounded
+`action_type`, `summary`, `performed_by`, `started_at`, optional `completed_at`,
+embedded evidence, optional `playbook_run_id`, `idempotency_key`, and normalized
+tags. It is immutable, all timestamps are UTC-aware, and completion cannot
+precede start. It has no mutable status and does not claim success, validation,
+an outcome, review, or learning.
+
+`DecisionActionService.add()` verifies the Decision, loads the exact acceptance,
+requires that acceptance to belong to the Decision, and validates an optional
+PlaybookRun exists before constructing or persisting the action. The current
+PlaybookRun and Playbook schemas expose no project key, so no stronger project
+compatibility assertion is currently derivable. Multiple distinct actions are
+allowed. Idempotency is scoped by
+`(decision_id, "decision_action", idempotency_key)` and excludes generated
+action ID/time and evidence capture times from semantic equivalence.
+
+The repository remains persistence-focused, while `list_for_decision()` filters
+`load_all()` in the application layer and preserves repository order. The CLI
+supports action add/history/show without executing commands or opening evidence.
+
+`DecisionLifecycleService` is the only lifecycle projection owner. It validates
+persisted relations and derives only `proposed`, `accepted`, or `in_progress`.
+Repository order does not define state; the presence of valid semantic relations
+does. Invalid action-to-acceptance relations and multiple persisted acceptances
+fail visibly.
+
 ## Non-Goals
 
 This foundation does not implement:
 
-* DecisionAction, DecisionOutcome, or DecisionReview,
+* DecisionOutcome or DecisionReview,
 * file ingestion, git integration, or command execution,
 * automatic Observation, Experience, Knowledge, or Playbook creation,
 * automatic decision acceptance, execution, review, or evolution,
@@ -237,19 +268,20 @@ id
 recorded_at
 decision_id
 acceptance_id
-sequence
+action_type
 summary
-actor
-changed_files
-commands_or_operations
-playbook_run_id
+performed_by
+started_at
+completed_at
 evidence_references
+playbook_run_id
 idempotency_key
+tags
 ```
 
-`changed_files` is a bounded path summary, not file content. A `playbook_run_id`
-may be supplied when the action followed an existing Playbook, but it is not
-required for ad hoc development work.
+The implemented `action_type` is a bounded string rather than a premature enum.
+A `playbook_run_id` may be supplied when an existing PlaybookRun is relevant,
+but it is not required for ad hoc development work.
 
 ### DecisionOutcome
 
@@ -317,22 +349,21 @@ later use case.
 
 ## Lifecycle And State Derivation
 
-The initial lifecycle is monotonic:
+The currently implemented lifecycle projection is monotonic:
 
 ```text
-proposed -> accepted -> executed -> reviewed
+proposed -> accepted -> in_progress
 ```
 
-The canonical future decision application service should derive state as
-follows:
+The canonical `DecisionLifecycleService` derives state as follows:
 
 * `proposed`: the Decision exists and no DecisionAcceptance exists,
 * `accepted`: a valid DecisionAcceptance exists and no DecisionAction exists,
-* `executed`: at least one valid DecisionAction and DecisionOutcome exist,
-* `reviewed`: a valid DecisionReview exists for a DecisionOutcome.
+* `in_progress`: a valid DecisionAcceptance and at least one valid
+  DecisionAction exist.
 
-An action without an outcome is execution in progress, not `executed`. This may
-be exposed as projection metadata without adding another persisted status.
+No `executed`, `completed`, `succeeded`, `failed`, or `reviewed` state is
+available. Those require future DecisionOutcome or DecisionReview records.
 
 The first model should not replay a generic status-event stream. Acceptance,
 action, outcome, and review records already provide the authoritative events;
@@ -516,7 +547,7 @@ idempotency-specific repository query is justified initially.
 
 ## CLI And Future Sketch
 
-The proposal and acceptance commands are implemented:
+The proposal, acceptance, action, and state commands are implemented:
 
 ```bash
 neural decision add
@@ -524,6 +555,10 @@ neural decision list
 neural decision show DECISION_UUID
 neural decision accept DECISION_UUID --accepted-by OWNER --reason REASON --idempotency-key KEY
 neural decision acceptance-history DECISION_UUID
+neural decision action add DECISION_UUID
+neural decision action-history DECISION_UUID
+neural decision action-show ACTION_UUID
+neural decision state DECISION_UUID
 ```
 
 `decision add` uses repeatable options for collections. Evidence references use
@@ -550,10 +585,13 @@ neural decision add \
 repeatable `--tag` values. `acceptance-history` is read-only and renders a
 controlled empty state when an existing Decision has no acceptance.
 
+Action add requires acceptance ID, action type, summary, performer, ISO-8601
+start time, and idempotency key. Completion time, PlaybookRun, evidence, and tags
+are optional.
+
 The following commands remain future-only and do not exist:
 
 ```bash
-neural decision action add DECISION_UUID
 neural decision outcome add DECISION_UUID
 neural decision review add DECISION_UUID
 
@@ -561,9 +599,9 @@ neural project ingest-review REVIEW_PATH
 neural project ingest-commit COMMIT_HASH
 ```
 
-The implemented handlers resolve DecisionService from the container, translate
-input, and render output. Acceptance, action, outcome, review, and project
-ingestion belong to later slices.
+The implemented handlers resolve application services from the container,
+translate input, and render output. Outcome, review, and project ingestion
+belong to later slices.
 
 ## First Implementation Milestone
 
@@ -588,9 +626,9 @@ least two meaningful alternatives, one proposed option that matches an
 alternative, non-blank rationale, explicit provenance, and an idempotency key.
 It does not automatically create Observations or downstream learning records.
 
-The DecisionAcceptance foundation is also complete. The next recommended
-controlled slice is DecisionAction foundation only. It must remain separate
-from DecisionOutcome and DecisionReview.
+The DecisionAcceptance and DecisionAction foundations are also complete. The
+next recommended controlled slice is DecisionOutcome foundation only. It must
+remain separate from DecisionReview.
 
 ## Risks And Rejected Alternatives
 

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, cast
 from uuid import UUID
 
@@ -13,6 +14,19 @@ from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
     DecisionAcceptanceIdempotencyConflictError,
     DecisionAlreadyAcceptedError,
+)
+from neural_engine.application.decision_action_service import (
+    DecisionActionAcceptanceMismatchError,
+    DecisionActionAcceptanceNotFoundError,
+    DecisionActionDecisionNotFoundError,
+    DecisionActionIdempotencyConflictError,
+    DecisionActionNotFoundError,
+    DecisionActionPlaybookRunNotFoundError,
+)
+from neural_engine.application.decision_lifecycle_service import (
+    DecisionLifecycleActionAcceptanceMismatchError,
+    DecisionLifecycleDecisionNotFoundError,
+    DecisionLifecycleMultipleAcceptancesError,
 )
 from neural_engine.application.decision_service import (
     DecisionIdempotencyConflictError,
@@ -77,6 +91,7 @@ from neural_engine.application.playbook_service import (
 from neural_engine.core.brain import Brain
 from neural_engine.domain import (
     Decision,
+    DecisionAction,
     EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
@@ -100,6 +115,9 @@ app = typer.Typer(
 )
 decision_app = typer.Typer(
     help="Record and inspect proposed decisions.",
+)
+decision_action_app = typer.Typer(
+    help="Record Decision actions.",
 )
 experience_app = typer.Typer(
     help="Manage experiences.",
@@ -126,6 +144,7 @@ run_app = typer.Typer(
     help="Record and inspect playbook runs.",
 )
 app.add_typer(decision_app, name="decision")
+decision_app.add_typer(decision_action_app, name="action")
 app.add_typer(experience_app, name="experience")
 app.add_typer(evaluation_app, name="evaluation")
 app.add_typer(knowledge_app, name="knowledge")
@@ -391,6 +410,152 @@ def decision_acceptance_history(decision_id: UUID) -> None:
         )
 
     console.print(table)
+
+
+@decision_action_app.command("add")
+def add_decision_action(
+    decision_id: UUID,
+    acceptance_id: Annotated[UUID, typer.Option("--acceptance-id")],
+    action_type: Annotated[str, typer.Option("--action-type")],
+    summary: Annotated[str, typer.Option("--summary")],
+    performed_by: Annotated[str, typer.Option("--performed-by")],
+    started_at_value: Annotated[str, typer.Option("--started-at")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    completed_at_value: Annotated[str | None, typer.Option("--completed-at")] = None,
+    playbook_run_id: Annotated[UUID | None, typer.Option("--playbook-run-id")] = None,
+    evidence_values: Annotated[list[str] | None, typer.Option("--evidence")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record work performed under an accepted Decision."""
+
+    try:
+        started_at = _parse_iso_datetime(started_at_value, "--started-at")
+        completed_at = (
+            _parse_iso_datetime(completed_at_value, "--completed-at")
+            if completed_at_value is not None
+            else None
+        )
+        evidence_references = [
+            EvidenceReference.model_validate_json(value) for value in evidence_values or []
+        ]
+        action = container.decision_action_service().add(
+            decision_id=decision_id,
+            acceptance_id=acceptance_id,
+            action_type=action_type,
+            summary=summary,
+            performed_by=performed_by,
+            started_at=started_at,
+            idempotency_key=idempotency_key,
+            completed_at=completed_at,
+            evidence_references=evidence_references,
+            playbook_run_id=playbook_run_id,
+            tags=tags,
+        )
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+    except ValueError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionActionDecisionNotFoundError as error:
+        console.print(f"[red]Decision not found: {error.decision_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionActionAcceptanceNotFoundError as error:
+        console.print(f"[red]Decision acceptance not found: {error.acceptance_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionActionAcceptanceMismatchError as error:
+        console.print(
+            f"[red]Decision acceptance {error.acceptance_id} belongs to Decision "
+            f"{error.actual_decision_id}, expected {error.expected_decision_id}.[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except DecisionActionPlaybookRunNotFoundError as error:
+        console.print(f"[red]Playbook run not found: {error.playbook_run_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionActionIdempotencyConflictError as error:
+        console.print(
+            f"[red]Decision action idempotency key {error.idempotency_key!r} already "
+            f"exists for Decision {error.decision_id} with a different payload.[/red]"
+        )
+        raise typer.Exit(code=1) from error
+
+    console.print(f"[green]Decision action stored.[/green] ID: [cyan]{action.id}[/cyan]")
+
+
+@decision_app.command("action-history")
+def decision_action_history(decision_id: UUID) -> None:
+    """Show recorded actions for one Decision."""
+
+    try:
+        actions = container.decision_action_service().list_for_decision(decision_id)
+    except DecisionActionDecisionNotFoundError as error:
+        console.print(f"[red]Decision not found: {error.decision_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not actions:
+        console.print(f"[yellow]No action history found for Decision: {decision_id}[/yellow]")
+        return
+
+    table = Table()
+    table.add_column("ID")
+    table.add_column("Recorded")
+    table.add_column("Action type")
+    table.add_column("Performed by")
+    table.add_column("Started")
+    table.add_column("Completed")
+    table.add_column("Summary")
+    for action in actions:
+        table.add_row(
+            str(action.id),
+            action.recorded_at.isoformat(),
+            action.action_type,
+            action.performed_by,
+            action.started_at.isoformat(),
+            action.completed_at.isoformat() if action.completed_at is not None else "-",
+            action.summary,
+        )
+
+    console.print(table)
+
+
+@decision_app.command("action-show")
+def show_decision_action(action_id: UUID) -> None:
+    """Show one recorded Decision action."""
+
+    try:
+        action = container.decision_action_service().show(action_id)
+    except DecisionActionNotFoundError as error:
+        console.print(f"[red]Decision action not found: {error.action_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    _print_decision_action(action)
+
+
+@decision_app.command("state")
+def show_decision_state(decision_id: UUID) -> None:
+    """Show the canonical minimal lifecycle state for one Decision."""
+
+    try:
+        state = container.decision_lifecycle_service().state(decision_id)
+    except DecisionLifecycleDecisionNotFoundError as error:
+        console.print(f"[red]Decision not found: {error.decision_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionLifecycleMultipleAcceptancesError as error:
+        console.print(f"[red]Decision has multiple acceptance records: {error.decision_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionLifecycleActionAcceptanceMismatchError as error:
+        expected = (
+            str(error.expected_acceptance_id)
+            if error.expected_acceptance_id is not None
+            else "none"
+        )
+        console.print(
+            f"[red]Decision action {error.action_id} references acceptance "
+            f"{error.actual_acceptance_id}, expected {expected}.[/red]"
+        )
+        raise typer.Exit(code=1) from error
+
+    console.print(state.value)
 
 
 @app.command()
@@ -1468,6 +1633,27 @@ def _print_decision(decision: Decision) -> None:
     console.print(f"Tags: {', '.join(decision.tags) if decision.tags else '-'}")
 
 
+def _print_decision_action(action: DecisionAction) -> None:
+    console.print(f"ID: {action.id}")
+    console.print(f"Recorded: {action.recorded_at}")
+    console.print(f"Decision ID: {action.decision_id}")
+    console.print(f"Acceptance ID: {action.acceptance_id}")
+    console.print(f"Action type: {action.action_type}")
+    console.print(f"Summary: {action.summary}")
+    console.print(f"Performed by: {action.performed_by}")
+    console.print(f"Started: {action.started_at}")
+    console.print(f"Completed: {action.completed_at if action.completed_at is not None else '-'}")
+    _print_repeated_field(
+        "Evidence references",
+        [_format_evidence_reference(evidence) for evidence in action.evidence_references],
+    )
+    console.print(
+        f"Playbook run ID: {action.playbook_run_id if action.playbook_run_id is not None else '-'}"
+    )
+    console.print(f"Idempotency key: {action.idempotency_key}")
+    console.print(f"Tags: {', '.join(action.tags) if action.tags else '-'}")
+
+
 def _format_evidence_reference(evidence: EvidenceReference) -> str:
     return (
         f"kind={evidence.kind}; locator={evidence.locator}; "
@@ -1475,6 +1661,13 @@ def _format_evidence_reference(evidence: EvidenceReference) -> str:
         f"hash={evidence.content_hash or '-'}; captured={evidence.captured_at.isoformat()}; "
         f"source={evidence.source or '-'}; summary={evidence.summary or '-'}"
     )
+
+
+def _parse_iso_datetime(value: str, option_name: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"Invalid ISO-8601 value for {option_name}: {value!r}.") from error
 
 
 def _print_experience_summary(experience: Experience) -> None:

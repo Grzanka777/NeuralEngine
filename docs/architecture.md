@@ -573,11 +573,46 @@ neural decision acceptance-history DECISION_UUID
 
 Repeated `--evidence` and `--tag` values are supported, and evidence locators
 are never read. Acceptance authorizes possible future execution; it does not
-execute the Decision or create actions, outcomes, reviews, or learning records.
-The derived state boundary currently supports only `proposed` and `accepted`.
+itself execute the Decision or create actions, outcomes, reviews, or learning.
 
-DecisionAction, DecisionOutcome, DecisionReview, execution, lifecycle reversal,
-file or git ingestion, automatic learning or evolution, Consigliere integration,
-and Handbook synchronization remain unimplemented. The next recommended
-controlled slice is DecisionAction foundation only, separate from
-DecisionOutcome and DecisionReview.
+The DecisionAction foundation records work performed under one accepted
+Decision. `DecisionAction` is immutable and stores `id`, `recorded_at`,
+`decision_id`, `acceptance_id`, bounded `action_type`, `summary`,
+`performed_by`, `started_at`, optional `completed_at`, embedded evidence,
+optional `playbook_run_id`, `idempotency_key`, and normalized tags. All
+timestamps are UTC-aware, and completion cannot precede start. The record has
+no mutable status and expresses no success, validation, outcome, or review.
+
+`DecisionActionRepository` exposes only `save()`, `load_all()`, and
+`get_by_id()`. `JsonDecisionActionRepository` stores deterministic one-file-per-
+record JSON under `NeuralPaths.DECISION_ACTIONS`. `DecisionActionService`
+requires the Decision and acceptance to exist, requires the acceptance to
+belong to that Decision, validates an optional PlaybookRun exists, and owns
+application-layer history filtering. The current PlaybookRun/Playbook model has
+no project key, so existence is the only compatible project-context check that
+can be derived without a separate schema change.
+
+Action idempotency is scoped by
+`(decision_id, "decision_action", idempotency_key)`. Generated action identity,
+recording time, and evidence capture times are excluded from semantic
+equivalence. Equivalent replay returns the existing action; conflicting reuse
+fails without a write. Multiple distinct actions are allowed.
+
+`DecisionLifecycleService` is the single canonical projection owner. It checks
+persisted acceptance/action relations and derives only:
+
+```text
+no acceptance -> proposed
+acceptance, no action -> accepted
+acceptance and at least one valid action -> in_progress
+```
+
+The CLI exposes `neural decision action add`, `action-history`, `action-show`,
+and `state`. It parses inputs and renders service results only; it executes no
+commands and reads no evidence locators.
+
+DecisionOutcome, DecisionReview, executed/completed/succeeded/failed/reviewed
+states, command execution, lifecycle reversal, file or git ingestion, automatic
+learning or evolution, Consigliere integration, and Handbook synchronization
+remain unimplemented. The next recommended controlled slice is DecisionOutcome
+foundation only, separate from DecisionReview.

@@ -1,4 +1,6 @@
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
+from neural_engine.application.decision_action_service import DecisionActionService
+from neural_engine.application.decision_lifecycle_service import DecisionLifecycleService
 from neural_engine.application.decision_service import DecisionService
 from neural_engine.application.evolution_proposal_service import EvolutionProposalService
 from neural_engine.application.experience_service import ExperienceService
@@ -18,6 +20,9 @@ from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
     JsonDecisionAcceptanceRepository,
+)
+from neural_engine.infrastructure.json_decision_action_repository import (
+    JsonDecisionActionRepository,
 )
 from neural_engine.infrastructure.json_decision_repository import JsonDecisionRepository
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
@@ -54,6 +59,21 @@ from neural_engine.infrastructure.json_playbook_run_repository import (
 
 class Container:
     """Application dependency container."""
+
+    def decision_action_service(self) -> DecisionActionService:
+        return DecisionActionService(
+            JsonDecisionActionRepository(),
+            JsonDecisionRepository(),
+            JsonDecisionAcceptanceRepository(),
+            JsonPlaybookRunRepository(),
+        )
+
+    def decision_lifecycle_service(self) -> DecisionLifecycleService:
+        return DecisionLifecycleService(
+            JsonDecisionRepository(),
+            JsonDecisionAcceptanceRepository(),
+            JsonDecisionActionRepository(),
+        )
 
     def decision_acceptance_service(self) -> DecisionAcceptanceService:
         return DecisionAcceptanceService(
@@ -151,3 +171,6 @@ class Container:
 
     def decision_acceptance_repository(self) -> JsonDecisionAcceptanceRepository:
         return JsonDecisionAcceptanceRepository()
+
+    def decision_action_repository(self) -> JsonDecisionActionRepository:
+        return JsonDecisionActionRepository()

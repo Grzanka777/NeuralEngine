@@ -1,5 +1,6 @@
 from .decision import Decision, EvidenceReference
 from .decision_acceptance import DecisionAcceptance
+from .decision_action import DecisionAction
 from .evolution_proposal import EvolutionProposal, EvolutionProposalStatus
 from .experience import Experience, ExperienceResult
 from .knowledge import Knowledge, KnowledgeConfidence
@@ -17,6 +18,7 @@ from .playbook_run import PlaybookRun
 __all__ = [
     "Decision",
     "DecisionAcceptance",
+    "DecisionAction",
     "EvidenceReference",
     "Experience",
     "ExperienceResult",

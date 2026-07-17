@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -9,6 +10,17 @@ from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
     DecisionAcceptanceIdempotencyConflictError,
     DecisionAlreadyAcceptedError,
+)
+from neural_engine.application.decision_action_service import (
+    DecisionActionAcceptanceMismatchError,
+    DecisionActionAcceptanceNotFoundError,
+    DecisionActionDecisionNotFoundError,
+    DecisionActionIdempotencyConflictError,
+    DecisionActionNotFoundError,
+)
+from neural_engine.application.decision_lifecycle_service import (
+    DecisionLifecycleDecisionNotFoundError,
+    DecisionLifecycleState,
 )
 from neural_engine.application.decision_service import (
     DecisionIdempotencyConflictError,
@@ -71,6 +83,7 @@ from neural_engine.application.playbook_service import (
 from neural_engine.domain import (
     Decision,
     DecisionAcceptance,
+    DecisionAction,
     EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
@@ -291,6 +304,76 @@ class FakeDecisionAcceptanceService:
         if self.missing_decision_id is not None:
             raise DecisionAcceptanceDecisionNotFoundError(self.missing_decision_id)
         return [item for item in self.acceptances if item.decision_id == decision_id]
+
+
+class FakeDecisionActionService:
+    def __init__(
+        self,
+        actions: list[DecisionAction] | None = None,
+        missing_decision_id: UUID | None = None,
+        missing_acceptance_id: UUID | None = None,
+        mismatch: tuple[UUID, UUID, UUID] | None = None,
+        conflict: tuple[UUID, str] | None = None,
+    ) -> None:
+        self.actions = actions or []
+        self.missing_decision_id = missing_decision_id
+        self.missing_acceptance_id = missing_acceptance_id
+        self.mismatch = mismatch
+        self.conflict = conflict
+        self.add_calls: list[dict[str, object]] = []
+        self.list_calls: list[UUID] = []
+        self.show_calls: list[UUID] = []
+
+    def add(self, **values: object) -> DecisionAction:
+        self.add_calls.append(values)
+        if self.missing_decision_id is not None:
+            raise DecisionActionDecisionNotFoundError(self.missing_decision_id)
+        if self.missing_acceptance_id is not None:
+            raise DecisionActionAcceptanceNotFoundError(self.missing_acceptance_id)
+        if self.mismatch is not None:
+            raise DecisionActionAcceptanceMismatchError(*self.mismatch)
+        if self.conflict is not None:
+            raise DecisionActionIdempotencyConflictError(*self.conflict)
+
+        decision_id = values["decision_id"]
+        idempotency_key = values["idempotency_key"]
+        for action in self.actions:
+            if action.decision_id == decision_id and action.idempotency_key == idempotency_key:
+                return action
+
+        action = DecisionAction.model_validate(values)
+        self.actions.append(action)
+        return action
+
+    def list_for_decision(self, decision_id: UUID) -> list[DecisionAction]:
+        self.list_calls.append(decision_id)
+        if self.missing_decision_id is not None:
+            raise DecisionActionDecisionNotFoundError(self.missing_decision_id)
+        return [action for action in self.actions if action.decision_id == decision_id]
+
+    def show(self, action_id: UUID) -> DecisionAction:
+        self.show_calls.append(action_id)
+        for action in self.actions:
+            if action.id == action_id:
+                return action
+        raise DecisionActionNotFoundError(action_id)
+
+
+class FakeDecisionLifecycleService:
+    def __init__(
+        self,
+        state_value: DecisionLifecycleState,
+        missing_decision_id: UUID | None = None,
+    ) -> None:
+        self.state_value = state_value
+        self.missing_decision_id = missing_decision_id
+        self.state_calls: list[UUID] = []
+
+    def state(self, decision_id: UUID) -> DecisionLifecycleState:
+        self.state_calls.append(decision_id)
+        if self.missing_decision_id is not None:
+            raise DecisionLifecycleDecisionNotFoundError(self.missing_decision_id)
+        return self.state_value
 
 
 class FakeExperienceService:
@@ -1230,6 +1313,8 @@ class FakeContainer:
         self,
         decision_service: FakeDecisionService | None = None,
         decision_acceptance_service: FakeDecisionAcceptanceService | None = None,
+        decision_action_service: FakeDecisionActionService | None = None,
+        decision_lifecycle_service: FakeDecisionLifecycleService | None = None,
         observation_service: FakeObservationService | None = None,
         experience_service: FakeExperienceService | None = None,
         knowledge_service: FakeKnowledgeService | None = None,
@@ -1242,6 +1327,8 @@ class FakeContainer:
     ) -> None:
         self._decision_service = decision_service
         self._decision_acceptance_service = decision_acceptance_service
+        self._decision_action_service = decision_action_service
+        self._decision_lifecycle_service = decision_lifecycle_service
         self._observation_service = observation_service
         self._experience_service = experience_service
         self._knowledge_service = knowledge_service
@@ -1263,6 +1350,16 @@ class FakeContainer:
             raise AssertionError("Decision acceptance service was not expected")
 
         return self._decision_acceptance_service
+
+    def decision_action_service(self) -> FakeDecisionActionService:
+        if self._decision_action_service is None:
+            raise AssertionError("Decision action service was not expected")
+        return self._decision_action_service
+
+    def decision_lifecycle_service(self) -> FakeDecisionLifecycleService:
+        if self._decision_lifecycle_service is None:
+            raise AssertionError("Decision lifecycle service was not expected")
+        return self._decision_lifecycle_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -6453,7 +6550,7 @@ def decision_add_args() -> list[str]:
     ]
 
 
-def test_decision_help_exposes_acceptance_but_no_later_lifecycle_commands() -> None:
+def test_decision_help_exposes_action_slice_but_no_later_lifecycle_commands() -> None:
     runner = CliRunner()
 
     result = runner.invoke(cli.app, ["decision", "--help"])
@@ -6464,7 +6561,10 @@ def test_decision_help_exposes_acceptance_but_no_later_lifecycle_commands() -> N
     assert "show" in result.output
     assert "accept" in result.output
     assert "acceptance-history" in result.output
-    assert "action" not in result.output
+    assert "action" in result.output
+    assert "action-history" in result.output
+    assert "action-show" in result.output
+    assert "state" in result.output
     assert "outcome" not in result.output
     assert "review" not in result.output
 
@@ -6894,3 +6994,266 @@ def test_decision_acceptance_history_invalid_uuid_does_not_call_service(
     assert result.exit_code == 2
     assert "Invalid value" in result.output
     assert service.list_calls == []
+
+
+def make_cli_action(decision_id: UUID, acceptance_id: UUID, **updates: object) -> DecisionAction:
+    values: dict[str, object] = {
+        "decision_id": decision_id,
+        "acceptance_id": acceptance_id,
+        "action_type": "implementation",
+        "summary": "Implemented the DecisionAction foundation.",
+        "performed_by": "codex",
+        "started_at": datetime(2026, 7, 17, 10, 0, tzinfo=UTC),
+        "idempotency_key": "decision-action-1",
+    }
+    values.update(updates)
+    return DecisionAction.model_validate(values)
+
+
+def decision_action_add_args(decision_id: UUID, acceptance_id: UUID) -> list[str]:
+    return [
+        "decision",
+        "action",
+        "add",
+        str(decision_id),
+        "--acceptance-id",
+        str(acceptance_id),
+        "--action-type",
+        "implementation",
+        "--summary",
+        "Implemented the DecisionAction foundation.",
+        "--performed-by",
+        "codex",
+        "--started-at",
+        "2026-07-17T10:00:00+00:00",
+        "--idempotency-key",
+        "decision-action-1",
+    ]
+
+
+def test_decision_action_add_delegates_inputs_and_displays_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("11111111-1111-1111-1111-111111111111")
+    acceptance_id = UUID("22222222-2222-2222-2222-222222222222")
+    run_id = UUID("33333333-3333-3333-3333-333333333333")
+    service = FakeDecisionActionService()
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+    args = decision_action_add_args(decision_id, acceptance_id) + [
+        "--completed-at",
+        "2026-07-17T11:00:00+00:00",
+        "--playbook-run-id",
+        str(run_id),
+        "--evidence",
+        '{"kind":"review","locator":"review:action"}',
+        "--tag",
+        "implementation",
+    ]
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == 0
+    call = service.add_calls[0]
+    assert call["decision_id"] == decision_id
+    assert call["acceptance_id"] == acceptance_id
+    assert call["started_at"] == datetime(2026, 7, 17, 10, 0, tzinfo=UTC)
+    assert call["completed_at"] == datetime(2026, 7, 17, 11, 0, tzinfo=UTC)
+    assert call["playbook_run_id"] == run_id
+    assert call["tags"] == ["implementation"]
+    assert "Decision action stored." in result.output
+    assert str(service.actions[0].id) in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["decision", "action", "add", "not-a-uuid"],
+        [
+            "decision",
+            "action",
+            "add",
+            "11111111-1111-1111-1111-111111111111",
+            "--acceptance-id",
+            "not-a-uuid",
+        ],
+    ],
+)
+def test_decision_action_add_rejects_invalid_uuids_before_service(
+    monkeypatch: pytest.MonkeyPatch,
+    args: list[str],
+) -> None:
+    service = FakeDecisionActionService()
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == 2
+    assert service.add_calls == []
+
+
+def test_decision_action_add_rejects_invalid_timestamp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("11111111-1111-1111-1111-111111111111")
+    acceptance_id = UUID("22222222-2222-2222-2222-222222222222")
+    service = FakeDecisionActionService()
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+    args = decision_action_add_args(decision_id, acceptance_id)
+    args[args.index("2026-07-17T10:00:00+00:00")] = "not-a-timestamp"
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == 1
+    assert service.add_calls == []
+
+
+def test_decision_action_add_rejects_invalid_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("11111111-1111-1111-1111-111111111111")
+    acceptance_id = UUID("22222222-2222-2222-2222-222222222222")
+    service = FakeDecisionActionService()
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+
+    result = CliRunner().invoke(
+        cli.app,
+        decision_action_add_args(decision_id, acceptance_id) + ["--evidence", '{"kind":"review"}'],
+    )
+
+    assert result.exit_code == 1
+    assert service.add_calls == []
+
+
+@pytest.mark.parametrize("error_kind", ["decision", "acceptance", "mismatch"])
+def test_decision_action_add_renders_controlled_relation_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    error_kind: str,
+) -> None:
+    decision_id = UUID("11111111-1111-1111-1111-111111111111")
+    acceptance_id = UUID("22222222-2222-2222-2222-222222222222")
+    other_decision_id = UUID("33333333-3333-3333-3333-333333333333")
+    if error_kind == "decision":
+        service = FakeDecisionActionService(missing_decision_id=decision_id)
+        expected = f"Decision not found: {decision_id}"
+    elif error_kind == "acceptance":
+        service = FakeDecisionActionService(missing_acceptance_id=acceptance_id)
+        expected = f"Decision acceptance not found: {acceptance_id}"
+    else:
+        service = FakeDecisionActionService(
+            mismatch=(acceptance_id, decision_id, other_decision_id)
+        )
+        expected = str(other_decision_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+
+    result = CliRunner().invoke(cli.app, decision_action_add_args(decision_id, acceptance_id))
+
+    assert result.exit_code == 1
+    assert expected in result.output
+
+
+def test_decision_action_add_idempotent_replay_displays_existing_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("44444444-4444-4444-4444-444444444444")
+    acceptance_id = UUID("55555555-5555-5555-5555-555555555555")
+    action = make_cli_action(decision_id, acceptance_id)
+    service = FakeDecisionActionService([action])
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+
+    result = CliRunner().invoke(cli.app, decision_action_add_args(decision_id, acceptance_id))
+
+    assert result.exit_code == 0
+    assert str(action.id) in result.output
+    assert service.actions == [action]
+
+
+def test_decision_action_add_idempotency_conflict_is_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("66666666-6666-6666-6666-666666666666")
+    acceptance_id = UUID("77777777-7777-7777-7777-777777777777")
+    service = FakeDecisionActionService(conflict=(decision_id, "decision-action-1"))
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+
+    result = CliRunner().invoke(cli.app, decision_action_add_args(decision_id, acceptance_id))
+
+    assert result.exit_code == 1
+    assert "different payload" in result.output
+
+
+def test_decision_action_history_renders_records_and_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("88888888-8888-8888-8888-888888888888")
+    acceptance_id = UUID("99999999-9999-9999-9999-999999999999")
+    action = make_cli_action(decision_id, acceptance_id)
+    service = FakeDecisionActionService([action])
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["decision", "action-history", str(decision_id)])
+
+    assert result.exit_code == 0
+    assert service.list_calls == [decision_id]
+    assert "Action" in result.output
+    assert "type" in result.output
+    assert "Performed" in result.output
+    assert "implem" in result.output
+
+    service.actions = []
+    empty = runner.invoke(cli.app, ["decision", "action-history", str(decision_id)])
+    assert empty.exit_code == 0
+    assert f"No action history found for Decision: {decision_id}" in empty.output
+
+
+def test_decision_action_show_renders_all_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    decision_id = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    acceptance_id = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    run_id = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    action = make_cli_action(
+        decision_id,
+        acceptance_id,
+        completed_at=datetime(2026, 7, 17, 11, 0, tzinfo=UTC),
+        evidence_references=(EvidenceReference(kind="review", locator="review:1"),),
+        playbook_run_id=run_id,
+        tags=("implementation",),
+    )
+    service = FakeDecisionActionService([action])
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_action_service=service))
+
+    result = CliRunner().invoke(cli.app, ["decision", "action-show", str(action.id)])
+
+    assert result.exit_code == 0
+    assert f"Decision ID: {decision_id}" in result.output
+    assert f"Acceptance ID: {acceptance_id}" in result.output
+    assert "Action type: implementation" in result.output
+    assert "Summary: Implemented the DecisionAction foundation." in result.output
+    assert "Performed by: codex" in result.output
+    assert "kind=review; locator=review:1" in result.output
+    assert f"Playbook run ID: {run_id}" in result.output
+    assert "Idempotency key: decision-action-1" in result.output
+    assert "Tags: implementation" in result.output
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        (DecisionLifecycleState.PROPOSED, "proposed"),
+        (DecisionLifecycleState.ACCEPTED, "accepted"),
+        (DecisionLifecycleState.IN_PROGRESS, "in_progress"),
+    ],
+)
+def test_decision_state_renders_only_canonical_minimal_states(
+    monkeypatch: pytest.MonkeyPatch,
+    state: DecisionLifecycleState,
+    expected: str,
+) -> None:
+    decision_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    service = FakeDecisionLifecycleService(state)
+    monkeypatch.setattr(cli, "container", FakeContainer(decision_lifecycle_service=service))
+
+    result = CliRunner().invoke(cli.app, ["decision", "state", str(decision_id)])
+
+    assert result.exit_code == 0
+    assert result.output.strip() == expected
+    assert service.state_calls == [decision_id]

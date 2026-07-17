@@ -428,11 +428,35 @@ stays in the service and preserves repository order. Supersession does not
 invalidate acceptance because it creates a separate immutable Decision rather
 than a reversal transition.
 
-The currently derivable state is only `proposed` or `accepted`. This slice adds
-no DecisionAction, DecisionOutcome, DecisionReview, execution, reversal,
-lifecycle replay beyond the acceptance projection, file or git ingestion,
-automatic Observation or learning creation, automatic evolution, Consigliere
-integration, dependencies, or generated Handbook changes.
+NeuralEngine now also has a DecisionAction foundation vertical slice:
+
+* immutable `DecisionAction` with Decision/acceptance relations, action type,
+  summary, performer, UTC timestamps, evidence, optional PlaybookRun,
+  idempotency key, and normalized tags,
+* persistence-focused `DecisionActionRepository`,
+* `JsonDecisionActionRepository` under `NeuralPaths.DECISION_ACTIONS`,
+* `DecisionActionService` with `add()`, `list_for_decision()`, and `show()`,
+* canonical `DecisionLifecycleService`,
+* container repository/service/projection wiring,
+* `neural decision action add`, `action-history`, `action-show`, and `state`.
+
+Action creation requires an existing Decision and an acceptance belonging to
+that Decision. Optional PlaybookRun references must exist; the current
+PlaybookRun/Playbook schema has no project key, so stronger project-context
+compatibility cannot yet be derived. Multiple distinct actions are allowed.
+Idempotency is scoped by `(decision_id, "decision_action", idempotency_key)`;
+equivalent replay returns the existing action and conflicting reuse fails
+without a write.
+
+`DecisionLifecycleService` is the only projection owner and derives exactly
+`proposed`, `accepted`, or `in_progress` from valid relations. It does not use
+repository order as state, write status to Decision, or derive execution,
+completion, success, failure, or review.
+
+This slice adds no DecisionOutcome, DecisionReview, command execution,
+reversal, ingestion, automatic Observation or learning creation, automatic
+evolution, Consigliere integration, dependencies, or generated Handbook
+changes.
 
 ## Validation
 
@@ -443,9 +467,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 626 tests.
+Pytest collected 681 tests.
 
 ## Notes for next work
 
-The next recommended controlled milestone is DecisionAction foundation only.
-It must remain immutable and separate from DecisionOutcome and DecisionReview.
+The next recommended controlled milestone is DecisionOutcome foundation only.
+It must remain immutable and separate from DecisionReview.

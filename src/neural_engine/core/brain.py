@@ -19,6 +19,7 @@ class Brain:
             NeuralPaths.PLAYBOOK_REVISIONS,
             NeuralPaths.DECISIONS,
             NeuralPaths.DECISION_ACCEPTANCES,
+            NeuralPaths.DECISION_ACTIONS,
             NeuralPaths.PROJECTS,
             NeuralPaths.LOGS,
         ]

@@ -20,6 +20,7 @@ class NeuralPaths:
     PLAYBOOK_REVISION_APPLICATIONS = BRAIN / "playbook-revision-applications"
     DECISIONS = BRAIN / "decisions"
     DECISION_ACCEPTANCES = BRAIN / "decision-acceptances"
+    DECISION_ACTIONS = BRAIN / "decision-actions"
 
     PROJECTS = HOME / "projects"
     LOGS = HOME / "logs"
