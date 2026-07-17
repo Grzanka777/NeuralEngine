@@ -6,9 +6,9 @@ Neural Engine follows Clean Architecture.
 
 Domain:
 
-* Owns core concepts such as `Decision`, `Observation`, `Experience`, `Knowledge`,
-  `Playbook`, `PlaybookRun`, `PlaybookEvaluation`, `EvolutionProposal`, and
-  `PlaybookRevision`.
+* Owns core concepts such as `Decision`, `DecisionAcceptance`, `Observation`,
+  `Experience`, `Knowledge`, `Playbook`, `PlaybookRun`, `PlaybookEvaluation`,
+  `EvolutionProposal`, and `PlaybookRevision`.
 * Owns the domain foundation for `PlaybookRevisionActivation`, which represents
   an explicit lifecycle decision for a PlaybookRevision.
 * Owns the domain foundation for `PlaybookRevisionApplication`, which
@@ -18,7 +18,8 @@ Domain:
 
 Application:
 
-* Coordinates use cases such as adding, listing, and showing Decisions, adding,
+* Coordinates use cases such as adding, listing, and showing Decisions,
+  explicitly accepting Decisions and inspecting acceptance history, adding,
   listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
   retrieving knowledge, playbooks, playbook runs, playbook evaluations, and
@@ -34,6 +35,8 @@ Ports:
 Infrastructure:
 
 * The current Decision repository stores one JSON file per Decision.
+* The current Decision acceptance repository stores one JSON file per
+  DecisionAcceptance.
 * Implements ports using concrete storage mechanisms.
 * The current observation repository stores one JSON file per observation.
 * The current experience repository stores one JSON file per experience.
@@ -539,7 +542,42 @@ and `--evidence` options. Each `--evidence` value is a bounded JSON object such
 as `{"kind":"agent_review","locator":".agent-work/reviews/review.md"}`.
 Evidence is embedded by reference only; the CLI does not read the locator.
 
-This foundation does not implement DecisionAcceptance, DecisionAction,
-DecisionOutcome, DecisionReview, lifecycle replay, file or git ingestion,
-automatic learning or evolution, Consigliere integration, or Handbook
-synchronization.
+The DecisionAcceptance foundation is implemented as a separate immutable
+authorization record with `id`, `accepted_at`, `decision_id`, `accepted_by`,
+`reason`, embedded `evidence_references`, `idempotency_key`, and normalized
+`tags`. Required text is trimmed and non-blank, timestamps are UTC-aware,
+evidence reuses `EvidenceReference`, and no mutable status or Decision payload
+is stored.
+
+`DecisionAcceptanceRepository` exposes only `save()`, `load_all()`, and
+`get_by_id()`. `JsonDecisionAcceptanceRepository` stores one deterministic JSON
+file per record under `NeuralPaths.DECISION_ACCEPTANCES`.
+`DecisionAcceptanceService` validates Decision existence, owns application-layer
+filtering, and implements `accept()`, `list_for_decision()`, and `show()`.
+
+Eligibility is monotonic: an existing Decision with no acceptance is proposed;
+its first acceptance makes it accepted. A distinct second acceptance is
+rejected. Supersession does not invalidate an acceptance because it is an
+immutable Decision relation, not a lifecycle reversal. Idempotency is scoped by
+`(decision_id, "decision_acceptance", idempotency_key)`. Equivalent semantic
+replay returns the existing record; reuse with a different payload fails
+without a write. Generated acceptance identity/time and evidence capture times
+are excluded from equivalence.
+
+The thin CLI additionally exposes:
+
+```text
+neural decision accept DECISION_UUID --accepted-by TEXT --reason TEXT --idempotency-key KEY
+neural decision acceptance-history DECISION_UUID
+```
+
+Repeated `--evidence` and `--tag` values are supported, and evidence locators
+are never read. Acceptance authorizes possible future execution; it does not
+execute the Decision or create actions, outcomes, reviews, or learning records.
+The derived state boundary currently supports only `proposed` and `accepted`.
+
+DecisionAction, DecisionOutcome, DecisionReview, execution, lifecycle reversal,
+file or git ingestion, automatic learning or evolution, Consigliere integration,
+and Handbook synchronization remain unimplemented. The next recommended
+controlled slice is DecisionAction foundation only, separate from
+DecisionOutcome and DecisionReview.

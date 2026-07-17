@@ -9,6 +9,11 @@ from rich.table import Table
 
 from neural_engine import APP_NAME, MISSION, __version__
 from neural_engine.application.container import Container
+from neural_engine.application.decision_acceptance_service import (
+    DecisionAcceptanceDecisionNotFoundError,
+    DecisionAcceptanceIdempotencyConflictError,
+    DecisionAlreadyAcceptedError,
+)
 from neural_engine.application.decision_service import (
     DecisionIdempotencyConflictError,
     DecisionNotFoundError,
@@ -309,6 +314,83 @@ def show_decision(decision_id: UUID) -> None:
         raise typer.Exit(code=1) from error
 
     _print_decision(decision)
+
+
+@decision_app.command("accept")
+def accept_decision(
+    decision_id: UUID,
+    accepted_by: Annotated[str, typer.Option("--accepted-by")],
+    reason: Annotated[str, typer.Option("--reason")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    evidence_values: Annotated[list[str] | None, typer.Option("--evidence")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Explicitly authorize one proposed Decision for future execution."""
+
+    try:
+        evidence_references = [
+            EvidenceReference.model_validate_json(value) for value in evidence_values or []
+        ]
+        acceptance = container.decision_acceptance_service().accept(
+            decision_id=decision_id,
+            accepted_by=accepted_by,
+            reason=reason,
+            idempotency_key=idempotency_key,
+            evidence_references=evidence_references,
+            tags=tags,
+        )
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionAcceptanceDecisionNotFoundError as error:
+        console.print(f"[red]Decision not found: {error.decision_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except DecisionAlreadyAcceptedError as error:
+        console.print(
+            f"[red]Decision {error.decision_id} is already accepted by acceptance "
+            f"{error.acceptance_id}.[/red]"
+        )
+        raise typer.Exit(code=1) from error
+    except DecisionAcceptanceIdempotencyConflictError as error:
+        console.print(
+            f"[red]Decision acceptance idempotency key {error.idempotency_key!r} already "
+            f"exists for Decision {error.decision_id} with a different payload.[/red]"
+        )
+        raise typer.Exit(code=1) from error
+
+    console.print(f"[green]Decision acceptance stored.[/green] ID: [cyan]{acceptance.id}[/cyan]")
+
+
+@decision_app.command("acceptance-history")
+def decision_acceptance_history(decision_id: UUID) -> None:
+    """Show the acceptance history for one Decision."""
+
+    try:
+        acceptances = container.decision_acceptance_service().list_for_decision(decision_id)
+    except DecisionAcceptanceDecisionNotFoundError as error:
+        console.print(f"[red]Decision not found: {error.decision_id}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not acceptances:
+        console.print(f"[yellow]No acceptance history found for Decision: {decision_id}[/yellow]")
+        return
+
+    table = Table()
+    table.add_column("ID")
+    table.add_column("Accepted")
+    table.add_column("Decision ID")
+    table.add_column("Accepted by")
+    table.add_column("Reason")
+    for acceptance in acceptances:
+        table.add_row(
+            str(acceptance.id),
+            acceptance.accepted_at.isoformat(),
+            str(acceptance.decision_id),
+            acceptance.accepted_by,
+            acceptance.reason,
+        )
+
+    console.print(table)
 
 
 @app.command()

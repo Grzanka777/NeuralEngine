@@ -36,10 +36,11 @@ boundaries for:
 * preventing duplicate capture, and
 * sketching future CLI and implementation milestones.
 
-`NeuralPaths.DECISIONS` provides the persistence directory. The Decision
-foundation now implements the immutable Decision and embedded EvidenceReference
-models, repository port, JSON adapter, application service, container wiring,
-and add/list/show CLI. Later records remain unimplemented.
+`NeuralPaths.DECISIONS` and `NeuralPaths.DECISION_ACCEPTANCES` provide separate
+persistence directories. The Decision and DecisionAcceptance foundations now
+implement immutable domain records, persistence-focused ports, JSON adapters,
+application services, container wiring, proposal commands, explicit acceptance,
+and acceptance-history inspection. Later records remain unimplemented.
 
 ## Implemented Decision Foundation
 
@@ -73,11 +74,56 @@ exists in the same project. The service loads all Decisions for idempotency,
 persists only after validation, creates no other record, and performs no
 lifecycle transition.
 
+## Implemented DecisionAcceptance Foundation
+
+The implemented acceptance slice contains:
+
+```text
+DecisionAcceptance
+DecisionAcceptanceRepository
+JsonDecisionAcceptanceRepository
+DecisionAcceptanceService
+Container wiring
+neural decision accept/acceptance-history
+```
+
+`DecisionAcceptance` is immutable and stores `id`, `accepted_at`, `decision_id`,
+`accepted_by`, `reason`, embedded `evidence_references`, `idempotency_key`, and
+`tags`. The Decision UUID is validated; required text is trimmed and non-blank;
+timestamps are normalized to UTC; tags use Decision normalization; and evidence
+reuses the existing immutable `EvidenceReference`. It has no lifecycle status
+and cannot embed or mutate the Decision payload.
+
+`DecisionAcceptanceService.accept()` verifies the Decision, then loads
+acceptance records through the persistence-focused repository. The first
+acceptance is eligible. An equivalent replay under
+`(decision_id, "decision_acceptance", idempotency_key)` returns the existing
+record; the same key with a different semantic payload fails; and a second key
+for an already accepted Decision fails. Identity, acceptance time, and evidence
+capture times are excluded from semantic equivalence. Validation completes
+before persistence, and Decision is never mutated.
+
+`list_for_decision()` verifies the Decision and filters `load_all()` results in
+the application layer while preserving repository order. `show()` owns explicit
+acceptance not-found behavior. No relation-specific repository query exists.
+Supersession does not invalidate acceptance: it creates a separate proposal and
+introduces no rejection, withdrawal, reversal, reopening, cancellation, or
+replacement transition.
+
+The currently derivable projection is only:
+
+```text
+Decision without acceptance -> proposed
+Decision with one valid acceptance -> accepted
+```
+
+Execution and reviewed states remain unavailable until later foundations exist.
+
 ## Non-Goals
 
 This foundation does not implement:
 
-* DecisionAcceptance, DecisionAction, DecisionOutcome, or DecisionReview,
+* DecisionAction, DecisionOutcome, or DecisionReview,
 * file ingestion, git integration, or command execution,
 * automatic Observation, Experience, Knowledge, or Playbook creation,
 * automatic decision acceptance, execution, review, or evolution,
@@ -174,6 +220,7 @@ accepted_by
 reason
 evidence_references
 idempotency_key
+tags
 ```
 
 The initial model supports one acceptance per Decision. Rejection means the
@@ -467,14 +514,16 @@ The first implementation should detect duplicates by loading and filtering in
 the application service, matching current repository conventions. No
 idempotency-specific repository query is justified initially.
 
-## Future CLI Sketch
+## CLI And Future Sketch
 
-The first three commands are implemented:
+The proposal and acceptance commands are implemented:
 
 ```bash
 neural decision add
 neural decision list
 neural decision show DECISION_UUID
+neural decision accept DECISION_UUID --accepted-by OWNER --reason REASON --idempotency-key KEY
+neural decision acceptance-history DECISION_UUID
 ```
 
 `decision add` uses repeatable options for collections. Evidence references use
@@ -497,10 +546,13 @@ neural decision add \
   --tag architecture
 ```
 
+`decision accept` also supports repeatable bounded JSON `--evidence` and
+repeatable `--tag` values. `acceptance-history` is read-only and renders a
+controlled empty state when an existing Decision has no acceptance.
+
 The following commands remain future-only and do not exist:
 
 ```bash
-neural decision accept DECISION_UUID
 neural decision action add DECISION_UUID
 neural decision outcome add DECISION_UUID
 neural decision review add DECISION_UUID
@@ -536,8 +588,9 @@ least two meaningful alternatives, one proposed option that matches an
 alternative, non-blank rationale, explicit provenance, and an idempotency key.
 It does not automatically create Observations or downstream learning records.
 
-The next recommended controlled slice is DecisionAcceptance foundation only.
-It must remain separate from DecisionAction and DecisionOutcome.
+The DecisionAcceptance foundation is also complete. The next recommended
+controlled slice is DecisionAction foundation only. It must remain separate
+from DecisionOutcome and DecisionReview.
 
 ## Risks And Rejected Alternatives
 

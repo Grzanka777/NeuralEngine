@@ -42,6 +42,11 @@ def test_brain_initializes_playbook_evaluations_directory(
         brain_path / "playbook-revisions",
     )
     monkeypatch.setattr(NeuralPaths, "DECISIONS", brain_path / "decisions")
+    monkeypatch.setattr(
+        NeuralPaths,
+        "DECISION_ACCEPTANCES",
+        brain_path / "decision-acceptances",
+    )
     monkeypatch.setattr(NeuralPaths, "PROJECTS", home / "projects")
     monkeypatch.setattr(NeuralPaths, "LOGS", home / "logs")
     monkeypatch.setattr(NeuralPaths, "CONFIG", home / "config.toml")
@@ -52,3 +57,4 @@ def test_brain_initializes_playbook_evaluations_directory(
     assert NeuralPaths.PLAYBOOK_EVALUATIONS.exists()
     assert NeuralPaths.EVOLUTION_PROPOSALS.exists()
     assert NeuralPaths.PLAYBOOK_REVISIONS.exists()
+    assert NeuralPaths.DECISION_ACCEPTANCES.exists()

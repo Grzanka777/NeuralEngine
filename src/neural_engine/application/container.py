@@ -1,3 +1,4 @@
+from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_service import DecisionService
 from neural_engine.application.evolution_proposal_service import EvolutionProposalService
 from neural_engine.application.experience_service import ExperienceService
@@ -15,6 +16,9 @@ from neural_engine.application.playbook_revision_application_service import (
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
+from neural_engine.infrastructure.json_decision_acceptance_repository import (
+    JsonDecisionAcceptanceRepository,
+)
 from neural_engine.infrastructure.json_decision_repository import JsonDecisionRepository
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
     JsonEvolutionProposalRepository,
@@ -50,6 +54,12 @@ from neural_engine.infrastructure.json_playbook_run_repository import (
 
 class Container:
     """Application dependency container."""
+
+    def decision_acceptance_service(self) -> DecisionAcceptanceService:
+        return DecisionAcceptanceService(
+            JsonDecisionAcceptanceRepository(),
+            JsonDecisionRepository(),
+        )
 
     def decision_service(self) -> DecisionService:
         return DecisionService(
@@ -138,3 +148,6 @@ class Container:
 
     def decision_repository(self) -> JsonDecisionRepository:
         return JsonDecisionRepository()
+
+    def decision_acceptance_repository(self) -> JsonDecisionAcceptanceRepository:
+        return JsonDecisionAcceptanceRepository()

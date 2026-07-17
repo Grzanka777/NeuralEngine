@@ -1,4 +1,5 @@
 from neural_engine.application.container import Container
+from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_service import DecisionService
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationService,
@@ -9,6 +10,9 @@ from neural_engine.application.playbook_revision_application_service import (
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.core.paths import NeuralPaths
+from neural_engine.infrastructure.json_decision_acceptance_repository import (
+    JsonDecisionAcceptanceRepository,
+)
 from neural_engine.infrastructure.json_decision_repository import JsonDecisionRepository
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
     JsonEvolutionProposalRepository,
@@ -50,6 +54,21 @@ def test_container_wires_decision_service_with_json_repositories() -> None:
     assert isinstance(service, DecisionService)
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._observation_repository, JsonObservationRepository)
+
+
+def test_container_wires_decision_acceptance_repository() -> None:
+    repository = Container().decision_acceptance_repository()
+
+    assert isinstance(repository, JsonDecisionAcceptanceRepository)
+    assert repository._directory == NeuralPaths.DECISION_ACCEPTANCES
+
+
+def test_container_wires_decision_acceptance_service_with_json_repositories() -> None:
+    service = Container().decision_acceptance_service()
+
+    assert isinstance(service, DecisionAcceptanceService)
+    assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
+    assert isinstance(service._decision_repository, JsonDecisionRepository)
 
 
 def test_container_wires_playbook_service_without_playbook_revision_repository() -> None:

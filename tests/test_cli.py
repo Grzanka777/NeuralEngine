@@ -5,6 +5,11 @@ import pytest
 from typer.testing import CliRunner
 
 from neural_engine import cli
+from neural_engine.application.decision_acceptance_service import (
+    DecisionAcceptanceDecisionNotFoundError,
+    DecisionAcceptanceIdempotencyConflictError,
+    DecisionAlreadyAcceptedError,
+)
 from neural_engine.application.decision_service import (
     DecisionIdempotencyConflictError,
     DecisionNotFoundError,
@@ -65,6 +70,7 @@ from neural_engine.application.playbook_service import (
 )
 from neural_engine.domain import (
     Decision,
+    DecisionAcceptance,
     EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
@@ -219,6 +225,72 @@ class FakeDecisionService:
             if decision.id == decision_id:
                 return decision
         raise DecisionNotFoundError(decision_id)
+
+
+class FakeDecisionAcceptanceService:
+    def __init__(
+        self,
+        acceptances: list[DecisionAcceptance] | None = None,
+        missing_decision_id: UUID | None = None,
+        already_accepted: tuple[UUID, UUID] | None = None,
+        conflict: tuple[UUID, str] | None = None,
+    ) -> None:
+        self.acceptances = acceptances or []
+        self.missing_decision_id = missing_decision_id
+        self.already_accepted = already_accepted
+        self.conflict = conflict
+        self.accept_calls: list[dict[str, object]] = []
+        self.list_calls: list[UUID] = []
+
+    def accept(
+        self,
+        decision_id: UUID,
+        accepted_by: str,
+        reason: str,
+        idempotency_key: str,
+        evidence_references: list[EvidenceReference] | None = None,
+        tags: list[str] | None = None,
+    ) -> DecisionAcceptance:
+        self.accept_calls.append(
+            {
+                "decision_id": decision_id,
+                "accepted_by": accepted_by,
+                "reason": reason,
+                "idempotency_key": idempotency_key,
+                "evidence_references": evidence_references,
+                "tags": tags,
+            }
+        )
+        if self.missing_decision_id is not None:
+            raise DecisionAcceptanceDecisionNotFoundError(self.missing_decision_id)
+        if self.already_accepted is not None:
+            raise DecisionAlreadyAcceptedError(*self.already_accepted)
+        if self.conflict is not None:
+            raise DecisionAcceptanceIdempotencyConflictError(*self.conflict)
+
+        for acceptance in self.acceptances:
+            if (
+                acceptance.decision_id == decision_id
+                and acceptance.idempotency_key == idempotency_key
+            ):
+                return acceptance
+
+        acceptance = DecisionAcceptance(
+            decision_id=decision_id,
+            accepted_by=accepted_by,
+            reason=reason,
+            idempotency_key=idempotency_key,
+            evidence_references=tuple(evidence_references or []),
+            tags=tuple(tags or []),
+        )
+        self.acceptances.append(acceptance)
+        return acceptance
+
+    def list_for_decision(self, decision_id: UUID) -> list[DecisionAcceptance]:
+        self.list_calls.append(decision_id)
+        if self.missing_decision_id is not None:
+            raise DecisionAcceptanceDecisionNotFoundError(self.missing_decision_id)
+        return [item for item in self.acceptances if item.decision_id == decision_id]
 
 
 class FakeExperienceService:
@@ -1157,6 +1229,7 @@ class FakeContainer:
     def __init__(
         self,
         decision_service: FakeDecisionService | None = None,
+        decision_acceptance_service: FakeDecisionAcceptanceService | None = None,
         observation_service: FakeObservationService | None = None,
         experience_service: FakeExperienceService | None = None,
         knowledge_service: FakeKnowledgeService | None = None,
@@ -1168,6 +1241,7 @@ class FakeContainer:
         playbook_revision_activation_service: FakePlaybookRevisionActivationService | None = None,
     ) -> None:
         self._decision_service = decision_service
+        self._decision_acceptance_service = decision_acceptance_service
         self._observation_service = observation_service
         self._experience_service = experience_service
         self._knowledge_service = knowledge_service
@@ -1183,6 +1257,12 @@ class FakeContainer:
             raise AssertionError("Decision service was not expected")
 
         return self._decision_service
+
+    def decision_acceptance_service(self) -> FakeDecisionAcceptanceService:
+        if self._decision_acceptance_service is None:
+            raise AssertionError("Decision acceptance service was not expected")
+
+        return self._decision_acceptance_service
 
     def observation_service(self) -> FakeObservationService:
         if self._observation_service is None:
@@ -6373,7 +6453,7 @@ def decision_add_args() -> list[str]:
     ]
 
 
-def test_decision_help_exposes_only_foundation_commands() -> None:
+def test_decision_help_exposes_acceptance_but_no_later_lifecycle_commands() -> None:
     runner = CliRunner()
 
     result = runner.invoke(cli.app, ["decision", "--help"])
@@ -6382,7 +6462,8 @@ def test_decision_help_exposes_only_foundation_commands() -> None:
     assert "add" in result.output
     assert "list" in result.output
     assert "show" in result.output
-    assert "accept" not in result.output
+    assert "accept" in result.output
+    assert "acceptance-history" in result.output
     assert "action" not in result.output
     assert "outcome" not in result.output
     assert "review" not in result.output
@@ -6586,3 +6667,230 @@ def test_decision_add_rejects_invalid_evidence_without_calling_service(
     assert result.exit_code == 1
     assert "Field required" in result.output
     assert service.add_calls == []
+
+
+def make_cli_acceptance(decision_id: UUID, **updates: object) -> DecisionAcceptance:
+    values: dict[str, object] = {
+        "decision_id": decision_id,
+        "accepted_by": "architecture-owner",
+        "reason": "Approved after architecture review.",
+        "idempotency_key": "decision-acceptance-1",
+    }
+    values.update(updates)
+    return DecisionAcceptance.model_validate(values)
+
+
+def decision_accept_args(decision_id: UUID) -> list[str]:
+    return [
+        "decision",
+        "accept",
+        str(decision_id),
+        "--accepted-by",
+        "architecture-owner",
+        "--reason",
+        "Approved after architecture review.",
+        "--idempotency-key",
+        "decision-acceptance-1",
+    ]
+
+
+def test_decision_accept_delegates_inputs_and_displays_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("11111111-2222-3333-4444-555555555555")
+    evidence_json = (
+        '{"kind":"manual_decision","locator":"approval:architecture-review",'
+        '"summary":"Explicit approval"}'
+    )
+    service = FakeDecisionAcceptanceService()
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        decision_accept_args(decision_id) + ["--evidence", evidence_json, "--tag", "architecture"],
+    )
+
+    assert result.exit_code == 0
+    assert len(service.accept_calls) == 1
+    call = service.accept_calls[0]
+    assert call["decision_id"] == decision_id
+    assert call["accepted_by"] == "architecture-owner"
+    assert call["reason"] == "Approved after architecture review."
+    assert call["idempotency_key"] == "decision-acceptance-1"
+    evidence = call["evidence_references"]
+    assert isinstance(evidence, list)
+    assert evidence[0].locator == "approval:architecture-review"
+    assert call["tags"] == ["architecture"]
+    assert "Decision acceptance stored." in result.output
+    assert str(service.acceptances[0].id) in result.output
+
+
+def test_decision_accept_missing_decision_returns_controlled_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_id = UUID("22222222-2222-2222-2222-222222222222")
+    service = FakeDecisionAcceptanceService(missing_decision_id=missing_id)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+
+    result = CliRunner().invoke(cli.app, decision_accept_args(missing_id))
+
+    assert result.exit_code == 1
+    assert f"Decision not found: {missing_id}" in result.output
+
+
+def test_decision_accept_already_accepted_returns_controlled_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("33333333-3333-3333-3333-333333333333")
+    acceptance_id = UUID("44444444-4444-4444-4444-444444444444")
+    service = FakeDecisionAcceptanceService(
+        already_accepted=(decision_id, acceptance_id),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+
+    result = CliRunner().invoke(cli.app, decision_accept_args(decision_id))
+
+    assert result.exit_code == 1
+    assert f"Decision {decision_id} is already accepted" in result.output
+    assert str(acceptance_id) in result.output
+
+
+def test_decision_accept_idempotent_replay_displays_existing_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("55555555-5555-5555-5555-555555555555")
+    existing = make_cli_acceptance(decision_id)
+    service = FakeDecisionAcceptanceService([existing])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+
+    result = CliRunner().invoke(cli.app, decision_accept_args(decision_id))
+
+    assert result.exit_code == 0
+    assert str(existing.id) in result.output
+    assert service.acceptances == [existing]
+
+
+def test_decision_accept_idempotency_conflict_returns_controlled_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("66666666-6666-6666-6666-666666666666")
+    service = FakeDecisionAcceptanceService(
+        conflict=(decision_id, "decision-acceptance-1"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+
+    result = CliRunner().invoke(cli.app, decision_accept_args(decision_id))
+
+    assert result.exit_code == 1
+    assert "decision-acceptance-1" in result.output
+    assert "different payload" in result.output
+
+
+def test_decision_accept_invalid_evidence_does_not_call_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("77777777-7777-7777-7777-777777777777")
+    service = FakeDecisionAcceptanceService()
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        decision_accept_args(decision_id) + ["--evidence", '{"kind":"manual"}'],
+    )
+
+    assert result.exit_code == 1
+    assert "Field required" in result.output
+    assert service.accept_calls == []
+
+
+def test_decision_acceptance_history_renders_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("88888888-8888-8888-8888-888888888888")
+    acceptance = make_cli_acceptance(decision_id)
+    service = FakeDecisionAcceptanceService([acceptance])
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["decision", "acceptance-history", str(decision_id)],
+    )
+
+    assert result.exit_code == 0
+    assert service.list_calls == [decision_id]
+    assert "ID" in result.output
+    assert "Accepted" in result.output
+    assert "Decision ID" in result.output
+    assert "Accepted by" in result.output
+    assert "Reason" in result.output
+    assert str(acceptance.id)[:12] in result.output
+    assert "architecture" in result.output
+
+
+def test_decision_acceptance_history_renders_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = UUID("99999999-9999-9999-9999-999999999999")
+    service = FakeDecisionAcceptanceService()
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["decision", "acceptance-history", str(decision_id)],
+    )
+
+    assert result.exit_code == 0
+    assert f"No acceptance history found for Decision: {decision_id}" in result.output
+
+
+def test_decision_acceptance_history_invalid_uuid_does_not_call_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeDecisionAcceptanceService()
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(decision_acceptance_service=service),
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["decision", "acceptance-history", "not-a-uuid"],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output
+    assert service.list_calls == []

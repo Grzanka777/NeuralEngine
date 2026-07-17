@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-07-14
+Last updated: 2026-07-17
 
 ## Current implementation
 
@@ -405,10 +405,34 @@ part of semantic equivalence. Duplicate detection uses
 
 Evidence values are embedded references only and the CLI accepts them as
 repeatable bounded JSON `--evidence` values. No locator is read or ingested.
-This slice adds no DecisionAcceptance, DecisionAction, DecisionOutcome,
-DecisionReview, lifecycle replay, file or git ingestion, automatic Observation
-or learning creation, automatic evolution, Consigliere integration,
-dependencies, or generated Handbook changes.
+NeuralEngine now also has a DecisionAcceptance foundation vertical slice:
+
+* immutable `DecisionAcceptance` with ID, UTC acceptance time, Decision ID,
+  accepting actor, reason, embedded evidence, idempotency key, and normalized
+  tags,
+* persistence-focused `DecisionAcceptanceRepository`,
+* one-file-per-record `JsonDecisionAcceptanceRepository` under
+  `NeuralPaths.DECISION_ACCEPTANCES`,
+* `DecisionAcceptanceService` with `accept()`, `list_for_decision()`, and
+  `show()`,
+* container repository/service wiring,
+* `neural decision accept DECISION_UUID`,
+* `neural decision acceptance-history DECISION_UUID`.
+
+Acceptance validates Decision existence and uses repository `load_all()` for
+idempotency and eligibility. The scope is
+`(decision_id, "decision_acceptance", idempotency_key)`: equivalent semantic
+replay returns the existing acceptance, a conflicting payload fails without a
+write, and a second acceptance with another key also fails. Relation filtering
+stays in the service and preserves repository order. Supersession does not
+invalidate acceptance because it creates a separate immutable Decision rather
+than a reversal transition.
+
+The currently derivable state is only `proposed` or `accepted`. This slice adds
+no DecisionAction, DecisionOutcome, DecisionReview, execution, reversal,
+lifecycle replay beyond the acceptance projection, file or git ingestion,
+automatic Observation or learning creation, automatic evolution, Consigliere
+integration, dependencies, or generated Handbook changes.
 
 ## Validation
 
@@ -419,10 +443,9 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 593 tests.
+Pytest collected 626 tests.
 
 ## Notes for next work
 
-The next recommended controlled milestone is DecisionAcceptance foundation
-only. It must remain immutable and separate from DecisionAction,
-DecisionOutcome, and DecisionReview.
+The next recommended controlled milestone is DecisionAction foundation only.
+It must remain immutable and separate from DecisionOutcome and DecisionReview.
