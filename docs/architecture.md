@@ -598,21 +598,49 @@ recording time, and evidence capture times are excluded from semantic
 equivalence. Equivalent replay returns the existing action; conflicting reuse
 fails without a write. Multiple distinct actions are allowed.
 
-`DecisionLifecycleService` is the single canonical projection owner. It checks
-persisted acceptance/action relations and derives only:
+The DecisionOutcome foundation adds immutable factual validation records with
+Decision, acceptance, and one-or-more action relations. Its exact fields are
+`id`, `recorded_at`, `decision_id`, `acceptance_id`, ordered unique
+`action_ids`, `result`, `summary`, `validated_by`, `validated_at`, embedded
+evidence, immutable scalar `metrics`, `idempotency_key`, and normalized tags.
+Result is bounded to `succeeded`, `failed`, `partial`, or `unknown`.
+
+Metrics contain at most 100 trimmed, bounded, case-insensitively unique keys and
+only bool, int, finite float, or bounded string values. Nested structures are
+rejected. The mapping is immutable and serialized with deterministic key order.
+`DecisionOutcomeRepository` exposes only persistence operations, while
+`DecisionOutcomeService` owns relation validation, history/show behavior,
+idempotency, and the non-persisted immutable `DecisionOutcomeSummary` read
+model. Outcome idempotency is scoped by
+`(decision_id, "decision_outcome", idempotency_key)` and excludes generated ID,
+recording time, and evidence capture times from semantic comparison.
+
+`DecisionLifecycleService` remains the single canonical projection owner. It
+checks persisted acceptance/action/outcome relations and derives exactly:
 
 ```text
 no acceptance -> proposed
 acceptance, no action -> accepted
 acceptance and at least one valid action -> in_progress
+latest valid outcome succeeded -> succeeded
+latest valid outcome failed -> failed
+latest valid outcome partial -> partial
+latest valid outcome unknown -> outcome_unknown
 ```
 
-The CLI exposes `neural decision action add`, `action-history`, `action-show`,
-and `state`. It parses inputs and renders service results only; it executes no
-commands and reads no evidence locators.
+Latest outcome and summary selection use `validated_at` followed by outcome UUID
+as a stable tie-breaker, never repository order. The summary reports outcome
+count, latest result/time, distinct linked actions, result counts, and whether
+success or failure exists. It is derived on demand and never persisted.
 
-DecisionOutcome, DecisionReview, executed/completed/succeeded/failed/reviewed
-states, command execution, lifecycle reversal, file or git ingestion, automatic
-learning or evolution, Consigliere integration, and Handbook synchronization
-remain unimplemented. The next recommended controlled slice is DecisionOutcome
-foundation only, separate from DecisionReview.
+The CLI additionally exposes `neural decision outcome add`, `outcome-history`,
+`outcome-show`, and `outcome-summary`. Repeated `--metric KEY=VALUE` values are
+parsed as unambiguous bool/int/float values or retained as strings. The CLI
+executes no commands and reads no evidence locators.
+
+DecisionReview and a `reviewed` state remain future-only. Outcome creation does
+not mean review or learning and creates no Experience, Knowledge, Playbook,
+PlaybookEvaluation, or EvolutionProposal. Execution, lifecycle reversal, file
+or git ingestion, Consigliere integration, automatic learning/evolution, and
+Handbook synchronization remain unimplemented. The next recommended controlled
+slice is exactly the DecisionReview foundation.

@@ -1,6 +1,7 @@
 from .decision import Decision, EvidenceReference
 from .decision_acceptance import DecisionAcceptance
 from .decision_action import DecisionAction
+from .decision_outcome import DecisionOutcome, DecisionOutcomeResult
 from .evolution_proposal import EvolutionProposal, EvolutionProposalStatus
 from .experience import Experience, ExperienceResult
 from .knowledge import Knowledge, KnowledgeConfidence
@@ -19,6 +20,8 @@ __all__ = [
     "Decision",
     "DecisionAcceptance",
     "DecisionAction",
+    "DecisionOutcome",
+    "DecisionOutcomeResult",
     "EvidenceReference",
     "Experience",
     "ExperienceResult",

@@ -7,14 +7,22 @@ from neural_engine.application.decision_lifecycle_service import (
     DecisionLifecycleActionAcceptanceMismatchError,
     DecisionLifecycleDecisionNotFoundError,
     DecisionLifecycleMultipleAcceptancesError,
+    DecisionLifecycleOutcomeActionNotFoundError,
     DecisionLifecycleService,
     DecisionLifecycleState,
 )
-from neural_engine.domain import Decision, DecisionAcceptance, DecisionAction
+from neural_engine.domain import (
+    Decision,
+    DecisionAcceptance,
+    DecisionAction,
+    DecisionOutcome,
+    DecisionOutcomeResult,
+)
 from neural_engine.ports.decision_acceptance_repository import (
     DecisionAcceptanceRepository,
 )
 from neural_engine.ports.decision_action_repository import DecisionActionRepository
+from neural_engine.ports.decision_outcome_repository import DecisionOutcomeRepository
 from neural_engine.ports.decision_repository import DecisionRepository
 
 
@@ -63,6 +71,20 @@ class FakeActionRepository(DecisionActionRepository):
         return next((action for action in self.actions if action.id == action_id), None)
 
 
+class FakeOutcomeRepository(DecisionOutcomeRepository):
+    def __init__(self, outcomes: list[DecisionOutcome]) -> None:
+        self.outcomes = outcomes
+
+    def save(self, outcome: DecisionOutcome) -> None:
+        self.outcomes.append(outcome)
+
+    def load_all(self) -> list[DecisionOutcome]:
+        return self.outcomes
+
+    def get_by_id(self, outcome_id: UUID) -> DecisionOutcome | None:
+        return next((outcome for outcome in self.outcomes if outcome.id == outcome_id), None)
+
+
 def make_decision() -> Decision:
     return Decision(
         project_key="NeuralEngine",
@@ -102,15 +124,37 @@ def make_action(decision_id: UUID, acceptance_id: UUID, **updates: object) -> De
     return DecisionAction.model_validate(values)
 
 
+def make_outcome(
+    decision_id: UUID,
+    acceptance_id: UUID,
+    action_ids: tuple[UUID, ...],
+    **updates: object,
+) -> DecisionOutcome:
+    values: dict[str, object] = {
+        "decision_id": decision_id,
+        "acceptance_id": acceptance_id,
+        "action_ids": action_ids,
+        "result": DecisionOutcomeResult.SUCCEEDED,
+        "summary": "Validation passed.",
+        "validated_by": "pytest",
+        "validated_at": datetime(2026, 7, 17, 11, 0, tzinfo=UTC),
+        "idempotency_key": "outcome-state",
+    }
+    values.update(updates)
+    return DecisionOutcome.model_validate(values)
+
+
 def make_service(
     decisions: list[Decision],
     acceptances: list[DecisionAcceptance] | None = None,
     actions: list[DecisionAction] | None = None,
+    outcomes: list[DecisionOutcome] | None = None,
 ) -> DecisionLifecycleService:
     return DecisionLifecycleService(
         FakeDecisionRepository(decisions),
         FakeAcceptanceRepository(acceptances or []),
         FakeActionRepository(actions or []),
+        FakeOutcomeRepository(outcomes or []),
     )
 
 
@@ -156,6 +200,10 @@ def test_multiple_actions_remain_in_progress() -> None:
         "proposed",
         "accepted",
         "in_progress",
+        "succeeded",
+        "failed",
+        "partial",
+        "outcome_unknown",
     }
 
 
@@ -178,3 +226,76 @@ def test_multiple_persisted_acceptances_fail_visibly() -> None:
 
     with pytest.raises(DecisionLifecycleMultipleAcceptancesError):
         make_service([decision], [first, second]).state(decision.id)
+
+
+@pytest.mark.parametrize(
+    ("result", "state"),
+    [
+        (DecisionOutcomeResult.SUCCEEDED, DecisionLifecycleState.SUCCEEDED),
+        (DecisionOutcomeResult.FAILED, DecisionLifecycleState.FAILED),
+        (DecisionOutcomeResult.PARTIAL, DecisionLifecycleState.PARTIAL),
+        (DecisionOutcomeResult.UNKNOWN, DecisionLifecycleState.OUTCOME_UNKNOWN),
+    ],
+)
+def test_latest_outcome_derives_extended_state(
+    result: DecisionOutcomeResult, state: DecisionLifecycleState
+) -> None:
+    decision = make_decision()
+    acceptance = make_acceptance(decision.id)
+    action = make_action(decision.id, acceptance.id)
+    earlier = make_outcome(
+        decision.id,
+        acceptance.id,
+        (action.id,),
+        id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        result=DecisionOutcomeResult.FAILED,
+        validated_at=datetime(2026, 7, 17, 10, 30, tzinfo=UTC),
+    )
+    latest = make_outcome(
+        decision.id,
+        acceptance.id,
+        (action.id,),
+        id=UUID("00000000-0000-0000-0000-000000000001"),
+        result=result,
+        idempotency_key="latest",
+    )
+
+    assert (
+        make_service([decision], [acceptance], [action], [latest, earlier]).state(decision.id)
+        is state
+    )
+
+
+def test_latest_outcome_uses_id_as_stable_timestamp_tie_breaker() -> None:
+    decision = make_decision()
+    acceptance = make_acceptance(decision.id)
+    action = make_action(decision.id, acceptance.id)
+    low = make_outcome(
+        decision.id,
+        acceptance.id,
+        (action.id,),
+        id=UUID("00000000-0000-0000-0000-000000000001"),
+        result=DecisionOutcomeResult.FAILED,
+    )
+    high = make_outcome(
+        decision.id,
+        acceptance.id,
+        (action.id,),
+        id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+        result=DecisionOutcomeResult.PARTIAL,
+        idempotency_key="high",
+    )
+
+    state = make_service([decision], [acceptance], [action], [high, low]).state(decision.id)
+
+    assert state is DecisionLifecycleState.PARTIAL
+
+
+def test_outcome_with_missing_action_fails_visibly() -> None:
+    decision = make_decision()
+    acceptance = make_acceptance(decision.id)
+    missing_action_id = UUID("11111111-1111-1111-1111-111111111111")
+    outcome = make_outcome(decision.id, acceptance.id, (missing_action_id,))
+
+    with pytest.raises(DecisionLifecycleOutcomeActionNotFoundError):
+        make_service([decision], [acceptance], outcomes=[outcome]).state(decision.id)

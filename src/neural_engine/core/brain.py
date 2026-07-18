@@ -20,6 +20,7 @@ class Brain:
             NeuralPaths.DECISIONS,
             NeuralPaths.DECISION_ACCEPTANCES,
             NeuralPaths.DECISION_ACTIONS,
+            NeuralPaths.DECISION_OUTCOMES,
             NeuralPaths.PROJECTS,
             NeuralPaths.LOGS,
         ]

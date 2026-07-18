@@ -21,6 +21,7 @@ class NeuralPaths:
     DECISIONS = BRAIN / "decisions"
     DECISION_ACCEPTANCES = BRAIN / "decision-acceptances"
     DECISION_ACTIONS = BRAIN / "decision-actions"
+    DECISION_OUTCOMES = BRAIN / "decision-outcomes"
 
     PROJECTS = HOME / "projects"
     LOGS = HOME / "logs"

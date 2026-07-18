@@ -448,15 +448,41 @@ Idempotency is scoped by `(decision_id, "decision_action", idempotency_key)`;
 equivalent replay returns the existing action and conflicting reuse fails
 without a write.
 
-`DecisionLifecycleService` is the only projection owner and derives exactly
-`proposed`, `accepted`, or `in_progress` from valid relations. It does not use
-repository order as state, write status to Decision, or derive execution,
-completion, success, failure, or review.
+NeuralEngine now also has a DecisionOutcome vertical slice:
 
-This slice adds no DecisionOutcome, DecisionReview, command execution,
-reversal, ingestion, automatic Observation or learning creation, automatic
-evolution, Consigliere integration, dependencies, or generated Handbook
-changes.
+* immutable `DecisionOutcome` with Decision, acceptance, and ordered action
+  relations; bounded result; validation actor/time; evidence; immutable scalar
+  metrics; idempotency key; and normalized tags,
+* persistence-focused `DecisionOutcomeRepository` and deterministic
+  `JsonDecisionOutcomeRepository` under `NeuralPaths.DECISION_OUTCOMES`,
+* `DecisionOutcomeService` with `add()`, `list_for_decision()`, `show()`, and
+  `summary_for_decision()`,
+* immutable non-persisted `DecisionOutcomeSummary`,
+* container and Brain path wiring,
+* `neural decision outcome add`, `outcome-history`, `outcome-show`, and
+  `outcome-summary`.
+
+Outcome creation validates the Decision, acceptance ownership, every linked
+action's Decision and acceptance, unique action IDs, and validation time against
+the earliest action start. Result is exactly `succeeded`, `failed`, `partial`,
+or `unknown`. Metrics allow at most 100 immutable scalar values with bounded,
+case-insensitively unique keys and deterministic serialization.
+
+Idempotency is scoped by
+`(decision_id, "decision_outcome", idempotency_key)`. Equivalent replay excludes
+generated outcome identity/time and evidence capture times; conflicting reuse
+fails without a write. Summary and lifecycle select latest by
+`(validated_at, outcome.id)` and validate relations rather than hiding corrupt
+records.
+
+`DecisionLifecycleService` remains the only projection owner and derives
+exactly `proposed`, `accepted`, `in_progress`, `succeeded`, `failed`, `partial`,
+or `outcome_unknown`. It persists no status and derives no review or learning.
+
+This slice adds no DecisionReview, command execution, reversal, ingestion,
+automatic Observation, Experience, Knowledge, Playbook, PlaybookEvaluation, or
+EvolutionProposal creation, automatic evolution, Consigliere integration,
+dependencies, or generated Handbook changes.
 
 ## Validation
 
@@ -467,9 +493,10 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 681 tests.
+Pytest collected 731 tests.
 
 ## Notes for next work
 
-The next recommended controlled milestone is DecisionOutcome foundation only.
-It must remain immutable and separate from DecisionReview.
+The next recommended controlled milestone is exactly DecisionReview foundation.
+It may record candidate lessons but must not automatically create Experience,
+Knowledge, Playbook, PlaybookEvaluation, or EvolutionProposal records.

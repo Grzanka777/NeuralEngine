@@ -2,6 +2,7 @@ from neural_engine.application.container import Container
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_action_service import DecisionActionService
 from neural_engine.application.decision_lifecycle_service import DecisionLifecycleService
+from neural_engine.application.decision_outcome_service import DecisionOutcomeService
 from neural_engine.application.decision_service import DecisionService
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationService,
@@ -17,6 +18,9 @@ from neural_engine.infrastructure.json_decision_acceptance_repository import (
 )
 from neural_engine.infrastructure.json_decision_action_repository import (
     JsonDecisionActionRepository,
+)
+from neural_engine.infrastructure.json_decision_outcome_repository import (
+    JsonDecisionOutcomeRepository,
 )
 from neural_engine.infrastructure.json_decision_repository import JsonDecisionRepository
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
@@ -92,6 +96,19 @@ def test_container_wires_decision_action_service_with_json_repositories() -> Non
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
 
 
+def test_container_wires_decision_outcome_repository_and_service() -> None:
+    repository = Container().decision_outcome_repository()
+    service = Container().decision_outcome_service()
+
+    assert isinstance(repository, JsonDecisionOutcomeRepository)
+    assert repository._directory == NeuralPaths.DECISION_OUTCOMES
+    assert isinstance(service, DecisionOutcomeService)
+    assert isinstance(service._outcome_repository, JsonDecisionOutcomeRepository)
+    assert isinstance(service._action_repository, JsonDecisionActionRepository)
+    assert isinstance(service._decision_repository, JsonDecisionRepository)
+    assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
+
+
 def test_container_wires_canonical_decision_lifecycle_service() -> None:
     service = Container().decision_lifecycle_service()
 
@@ -99,6 +116,7 @@ def test_container_wires_canonical_decision_lifecycle_service() -> None:
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
     assert isinstance(service._action_repository, JsonDecisionActionRepository)
+    assert isinstance(service._outcome_repository, JsonDecisionOutcomeRepository)
 
 
 def test_container_wires_playbook_service_without_playbook_revision_repository() -> None:

@@ -22,6 +22,12 @@ from neural_engine.application.decision_lifecycle_service import (
     DecisionLifecycleDecisionNotFoundError,
     DecisionLifecycleState,
 )
+from neural_engine.application.decision_outcome_service import (
+    DecisionOutcomeDecisionNotFoundError,
+    DecisionOutcomeIdempotencyConflictError,
+    DecisionOutcomeNotFoundError,
+    DecisionOutcomeSummary,
+)
 from neural_engine.application.decision_service import (
     DecisionIdempotencyConflictError,
     DecisionNotFoundError,
@@ -84,6 +90,8 @@ from neural_engine.domain import (
     Decision,
     DecisionAcceptance,
     DecisionAction,
+    DecisionOutcome,
+    DecisionOutcomeResult,
     EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
@@ -6550,7 +6558,7 @@ def decision_add_args() -> list[str]:
     ]
 
 
-def test_decision_help_exposes_action_slice_but_no_later_lifecycle_commands() -> None:
+def test_decision_help_exposes_outcome_slice_but_no_review_commands() -> None:
     runner = CliRunner()
 
     result = runner.invoke(cli.app, ["decision", "--help"])
@@ -6565,7 +6573,7 @@ def test_decision_help_exposes_action_slice_but_no_later_lifecycle_commands() ->
     assert "action-history" in result.output
     assert "action-show" in result.output
     assert "state" in result.output
-    assert "outcome" not in result.output
+    assert "outcome" in result.output
     assert "review" not in result.output
 
 
@@ -7241,6 +7249,10 @@ def test_decision_action_show_renders_all_fields(monkeypatch: pytest.MonkeyPatch
         (DecisionLifecycleState.PROPOSED, "proposed"),
         (DecisionLifecycleState.ACCEPTED, "accepted"),
         (DecisionLifecycleState.IN_PROGRESS, "in_progress"),
+        (DecisionLifecycleState.SUCCEEDED, "succeeded"),
+        (DecisionLifecycleState.FAILED, "failed"),
+        (DecisionLifecycleState.PARTIAL, "partial"),
+        (DecisionLifecycleState.OUTCOME_UNKNOWN, "outcome_unknown"),
     ],
 )
 def test_decision_state_renders_only_canonical_minimal_states(
@@ -7257,3 +7269,267 @@ def test_decision_state_renders_only_canonical_minimal_states(
     assert result.exit_code == 0
     assert result.output.strip() == expected
     assert service.state_calls == [decision_id]
+
+
+class FakeDecisionOutcomeService:
+    def __init__(self, outcomes: list[DecisionOutcome] | None = None) -> None:
+        self.outcomes = outcomes or []
+        self.add_calls: list[dict[str, object]] = []
+        self.missing_decision_id: UUID | None = None
+        self.conflict: tuple[UUID, str] | None = None
+
+    def add(self, **values: object) -> DecisionOutcome:
+        self.add_calls.append(values)
+        if self.missing_decision_id is not None:
+            raise DecisionOutcomeDecisionNotFoundError(self.missing_decision_id)
+        if self.conflict is not None:
+            raise DecisionOutcomeIdempotencyConflictError(*self.conflict)
+        values["evidence_references"] = values.get("evidence_references") or []
+        values["metrics"] = values.get("metrics") or {}
+        values["tags"] = values.get("tags") or []
+        outcome = DecisionOutcome.model_validate(values)
+        self.outcomes.append(outcome)
+        return outcome
+
+    def list_for_decision(self, decision_id: UUID) -> list[DecisionOutcome]:
+        if self.missing_decision_id is not None:
+            raise DecisionOutcomeDecisionNotFoundError(self.missing_decision_id)
+        return [outcome for outcome in self.outcomes if outcome.decision_id == decision_id]
+
+    def show(self, outcome_id: UUID) -> DecisionOutcome:
+        for outcome in self.outcomes:
+            if outcome.id == outcome_id:
+                return outcome
+        raise DecisionOutcomeNotFoundError(outcome_id)
+
+    def summary_for_decision(self, decision_id: UUID) -> DecisionOutcomeSummary:
+        if self.missing_decision_id is not None:
+            raise DecisionOutcomeDecisionNotFoundError(self.missing_decision_id)
+        outcomes = [outcome for outcome in self.outcomes if outcome.decision_id == decision_id]
+        latest = max(outcomes, key=lambda item: (item.validated_at, str(item.id)), default=None)
+        return DecisionOutcomeSummary(
+            decision_id=decision_id,
+            outcome_count=len(outcomes),
+            latest_result=latest.result if latest else None,
+            latest_validated_at=latest.validated_at if latest else None,
+            linked_action_count=len(
+                {action_id for outcome in outcomes for action_id in outcome.action_ids}
+            ),
+            results_by_type={
+                result.value: sum(outcome.result is result for outcome in outcomes)
+                for result in DecisionOutcomeResult
+            },
+            has_success=any(
+                outcome.result is DecisionOutcomeResult.SUCCEEDED for outcome in outcomes
+            ),
+            has_failure=any(outcome.result is DecisionOutcomeResult.FAILED for outcome in outcomes),
+        )
+
+
+class DecisionOutcomeContainer:
+    def __init__(self, service: FakeDecisionOutcomeService) -> None:
+        self.service = service
+
+    def decision_outcome_service(self) -> FakeDecisionOutcomeService:
+        return self.service
+
+
+def make_cli_outcome() -> DecisionOutcome:
+    return DecisionOutcome(
+        id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        recorded_at=datetime(2026, 7, 18, 11, 30, tzinfo=UTC),
+        decision_id=UUID("11111111-1111-1111-1111-111111111111"),
+        acceptance_id=UUID("22222222-2222-2222-2222-222222222222"),
+        action_ids=(
+            UUID("33333333-3333-3333-3333-333333333333"),
+            UUID("44444444-4444-4444-4444-444444444444"),
+        ),
+        result=DecisionOutcomeResult.SUCCEEDED,
+        summary="All checks passed.",
+        validated_by="pytest",
+        validated_at=datetime(2026, 7, 18, 12, 0, tzinfo=UTC),
+        evidence_references=(EvidenceReference(kind="test", locator="pytest:all"),),
+        metrics={"passed": 681, "clean": True},
+        idempotency_key="outcome-cli",
+        tags=("validation",),
+    )
+
+
+def outcome_add_args() -> list[str]:
+    outcome = make_cli_outcome()
+    return [
+        "decision",
+        "outcome",
+        "add",
+        str(outcome.decision_id),
+        "--acceptance-id",
+        str(outcome.acceptance_id),
+        "--action-id",
+        str(outcome.action_ids[0]),
+        "--action-id",
+        str(outcome.action_ids[1]),
+        "--result",
+        "succeeded",
+        "--summary",
+        outcome.summary,
+        "--validated-by",
+        outcome.validated_by,
+        "--validated-at",
+        outcome.validated_at.isoformat(),
+        "--idempotency-key",
+        outcome.idempotency_key,
+    ]
+
+
+def test_decision_help_exposes_outcomes_but_no_review_commands() -> None:
+    runner = CliRunner()
+    decision_help = runner.invoke(cli.app, ["decision", "--help"])
+    outcome_help = runner.invoke(cli.app, ["decision", "outcome", "--help"])
+
+    assert decision_help.exit_code == 0
+    assert outcome_help.exit_code == 0
+    assert "outcome-history" in decision_help.output
+    assert "outcome-show" in decision_help.output
+    assert "outcome-summary" in decision_help.output
+    assert "add" in outcome_help.output
+    assert "review" not in decision_help.output.casefold()
+
+
+def test_decision_outcome_add_parses_repeated_values_and_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeDecisionOutcomeService()
+    monkeypatch.setattr(cli, "container", DecisionOutcomeContainer(service))
+    args = outcome_add_args() + [
+        "--evidence",
+        '{"kind":"test","locator":"pytest:all"}',
+        "--metric",
+        "passed=681",
+        "--metric",
+        "coverage=99.5",
+        "--metric",
+        "clean=true",
+        "--metric",
+        "suite=full",
+        "--tag",
+        "validation",
+    ]
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == 0
+    call = service.add_calls[0]
+    assert call["action_ids"] == list(make_cli_outcome().action_ids)
+    assert call["metrics"] == {
+        "passed": 681,
+        "coverage": 99.5,
+        "clean": True,
+        "suite": "full",
+    }
+    assert "Decision outcome stored." in result.output
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "expected_exit"),
+    [
+        ("--result", "invalid", 2),
+        ("--validated-at", "invalid", 1),
+        ("--metric", "malformed", 1),
+        ("--metric", "Key=1", 0),
+    ],
+)
+def test_decision_outcome_add_validates_cli_inputs(
+    monkeypatch: pytest.MonkeyPatch, option: str, value: str, expected_exit: int
+) -> None:
+    service = FakeDecisionOutcomeService()
+    monkeypatch.setattr(cli, "container", DecisionOutcomeContainer(service))
+    args = outcome_add_args()
+    if option in args:
+        args[args.index(option) + 1] = value
+    else:
+        args.extend([option, value])
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == expected_exit
+
+
+def test_decision_outcome_add_rejects_invalid_evidence_and_duplicate_metric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeDecisionOutcomeService()
+    monkeypatch.setattr(cli, "container", DecisionOutcomeContainer(service))
+    runner = CliRunner()
+
+    evidence = runner.invoke(cli.app, outcome_add_args() + ["--evidence", '{"kind":"test"}'])
+    duplicate = runner.invoke(
+        cli.app,
+        outcome_add_args() + ["--metric", "Key=1", "--metric", "key=2"],
+    )
+
+    assert evidence.exit_code == 1
+    assert duplicate.exit_code == 1
+    assert "Duplicate metric key" in duplicate.output
+
+
+def test_decision_outcome_service_errors_are_controlled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = make_cli_outcome()
+    missing_service = FakeDecisionOutcomeService()
+    missing_service.missing_decision_id = outcome.decision_id
+    monkeypatch.setattr(cli, "container", DecisionOutcomeContainer(missing_service))
+    missing = CliRunner().invoke(cli.app, outcome_add_args())
+
+    conflict_service = FakeDecisionOutcomeService()
+    conflict_service.conflict = (outcome.decision_id, outcome.idempotency_key)
+    monkeypatch.setattr(cli, "container", DecisionOutcomeContainer(conflict_service))
+    conflict = CliRunner().invoke(cli.app, outcome_add_args())
+
+    assert missing.exit_code == 1
+    assert "Decision not found" in missing.output
+    assert conflict.exit_code == 1
+    assert "different payload" in conflict.output
+
+
+def test_decision_outcome_history_show_and_summary_render_all_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = make_cli_outcome()
+    service = FakeDecisionOutcomeService([outcome])
+    monkeypatch.setattr(cli, "container", DecisionOutcomeContainer(service))
+    runner = CliRunner()
+
+    history = runner.invoke(cli.app, ["decision", "outcome-history", str(outcome.decision_id)])
+    show = runner.invoke(cli.app, ["decision", "outcome-show", str(outcome.id)])
+    summary = runner.invoke(cli.app, ["decision", "outcome-summary", str(outcome.decision_id)])
+
+    assert history.exit_code == show.exit_code == summary.exit_code == 0
+    assert "Validated" in history.output
+    assert "succeeded" in history.output
+    assert f"Decision ID: {outcome.decision_id}" in show.output
+    assert "Action IDs" in show.output
+    assert "kind=test; locator=pytest:all" in show.output
+    assert "passed=681" in show.output
+    assert "Idempotency key: outcome-cli" in show.output
+    assert "Outcome count: 1" in summary.output
+    assert "Latest result: succeeded" in summary.output
+    assert "Linked action count: 2" in summary.output
+    assert "Has success: True" in summary.output
+
+
+def test_decision_outcome_history_and_summary_have_controlled_empty_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision_id = make_cli_outcome().decision_id
+    service = FakeDecisionOutcomeService()
+    monkeypatch.setattr(cli, "container", DecisionOutcomeContainer(service))
+    runner = CliRunner()
+
+    history = runner.invoke(cli.app, ["decision", "outcome-history", str(decision_id)])
+    summary = runner.invoke(cli.app, ["decision", "outcome-summary", str(decision_id)])
+
+    assert history.exit_code == summary.exit_code == 0
+    assert "No outcome history found" in history.output
+    assert "Outcome count: 0" in summary.output
+    assert "Latest result: -" in summary.output

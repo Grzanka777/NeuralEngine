@@ -36,13 +36,14 @@ boundaries for:
 * preventing duplicate capture, and
 * sketching future CLI and implementation milestones.
 
-`NeuralPaths.DECISIONS`, `NeuralPaths.DECISION_ACCEPTANCES`, and
-`NeuralPaths.DECISION_ACTIONS` provide separate persistence directories. The
-Decision, DecisionAcceptance, and DecisionAction foundations now
+`NeuralPaths.DECISIONS`, `NeuralPaths.DECISION_ACCEPTANCES`,
+`NeuralPaths.DECISION_ACTIONS`, and `NeuralPaths.DECISION_OUTCOMES` provide
+separate persistence directories. The Decision, DecisionAcceptance,
+DecisionAction, and DecisionOutcome foundations now
 implement immutable domain records, persistence-focused ports, JSON adapters,
-application services, container wiring, proposal/acceptance/action commands,
-relation history, and the minimal canonical lifecycle projection. Later records
-remain unimplemented.
+application services, container wiring, proposal/acceptance/action/outcome
+commands, relation history, summary projection, and the canonical lifecycle
+projection. DecisionReview remains unimplemented.
 
 ## Implemented Decision Foundation
 
@@ -144,17 +145,47 @@ The repository remains persistence-focused, while `list_for_decision()` filters
 `load_all()` in the application layer and preserves repository order. The CLI
 supports action add/history/show without executing commands or opening evidence.
 
-`DecisionLifecycleService` is the only lifecycle projection owner. It validates
-persisted relations and derives only `proposed`, `accepted`, or `in_progress`.
-Repository order does not define state; the presence of valid semantic relations
-does. Invalid action-to-acceptance relations and multiple persisted acceptances
-fail visibly.
+## Implemented DecisionOutcome Foundation
+
+`DecisionOutcome` is an immutable factual result and validation record for one
+or more existing DecisionActions. It stores `id`, `recorded_at`, `decision_id`,
+`acceptance_id`, ordered unique `action_ids`, bounded `result`, `summary`,
+`validated_by`, `validated_at`, embedded evidence, immutable `metrics`,
+`idempotency_key`, and normalized tags. Its result is exactly `succeeded`,
+`failed`, `partial`, or `unknown`; it has no mutable lifecycle status.
+
+Metrics are a maximum of 100 scalar entries (`str -> int | float | str | bool`).
+Keys are trimmed, non-blank, at most 64 characters, and case-insensitively
+unique. String values are bounded to 1000 characters, floats must be finite,
+nested structures are rejected, the exposed mapping is immutable, and JSON
+serialization sorts metric keys deterministically.
+
+`DecisionOutcomeService.add()` verifies the Decision and its acceptance, then
+verifies every unique linked action belongs to both. Validation time cannot
+precede the earliest linked action start. Idempotency is scoped by
+`(decision_id, "decision_outcome", idempotency_key)`; generated outcome ID,
+recording time, and evidence capture times are excluded from semantic
+equivalence. Equivalent replay returns the existing outcome and conflicting
+reuse fails without a write. No related record is mutated or created.
+
+`DecisionOutcomeSummary` is an immutable application-layer read model. It
+reports count, deterministic latest result/time, distinct linked-action count,
+counts by result, and success/failure presence. It is derived on demand, is not
+persisted or cached, and validates outcome-to-acceptance/action relations rather
+than ignoring corruption. Latest selection uses `(validated_at, outcome.id)`.
+
+`DecisionOutcomeRepository` remains persistence-focused with only `save()`,
+`load_all()`, and `get_by_id()`. `JsonDecisionOutcomeRepository` stores one
+deterministic JSON file per outcome under `NeuralPaths.DECISION_OUTCOMES`.
+The CLI exposes `decision outcome add`, `outcome-history`, `outcome-show`, and
+`outcome-summary`; it parses repeated evidence, metric, action, and tag options
+without reading evidence locators.
 
 ## Non-Goals
 
 This foundation does not implement:
 
-* DecisionOutcome or DecisionReview,
+* DecisionReview,
 * file ingestion, git integration, or command execution,
 * automatic Observation, Experience, Knowledge, or Playbook creation,
 * automatic decision acceptance, execution, review, or evolution,
@@ -206,14 +237,14 @@ Decision
 -> DecisionReview
 ```
 
-These should be separate records rather than one aggregate that accumulates
-context, mutable status, actions, validation, review, and learning. Each future
-repository should remain persistence-focused, and application services should
-own cross-record validation and relation navigation.
+These are separate records rather than one aggregate that accumulates context,
+mutable status, actions, validation, review, and learning. Implemented and
+future repositories remain persistence-focused, while application services own
+cross-record validation and relation navigation.
 
 ### Decision
 
-Recommended conceptual fields:
+Implemented fields:
 
 ```text
 id
@@ -241,7 +272,7 @@ linked through `supersedes_decision_id`; the older record remains unchanged.
 
 ### DecisionAcceptance
 
-Recommended conceptual fields:
+Implemented fields:
 
 ```text
 id
@@ -261,7 +292,7 @@ should not be introduced until a real workflow requires them.
 
 ### DecisionAction
 
-Recommended conceptual fields:
+Implemented fields:
 
 ```text
 id
@@ -285,18 +316,22 @@ but it is not required for ad hoc development work.
 
 ### DecisionOutcome
 
-Recommended conceptual fields:
+Implemented fields:
 
 ```text
 id
 recorded_at
 decision_id
+acceptance_id
 action_ids
-summary
 result
-validation_summary
+summary
+validated_by
+validated_at
 evidence_references
+metrics
 idempotency_key
+tags
 ```
 
 The outcome records facts: what completed, what failed, and what validation
@@ -349,10 +384,10 @@ later use case.
 
 ## Lifecycle And State Derivation
 
-The currently implemented lifecycle projection is monotonic:
+The currently implemented lifecycle projection is append-derived:
 
 ```text
-proposed -> accepted -> in_progress
+proposed -> accepted -> in_progress -> succeeded | failed | partial | outcome_unknown
 ```
 
 The canonical `DecisionLifecycleService` derives state as follows:
@@ -360,10 +395,14 @@ The canonical `DecisionLifecycleService` derives state as follows:
 * `proposed`: the Decision exists and no DecisionAcceptance exists,
 * `accepted`: a valid DecisionAcceptance exists and no DecisionAction exists,
 * `in_progress`: a valid DecisionAcceptance and at least one valid
-  DecisionAction exist.
+  DecisionAction exist, but no outcome exists,
+* `succeeded`, `failed`, or `partial`: the latest valid outcome has that result,
+* `outcome_unknown`: the latest valid outcome result is `unknown`.
 
-No `executed`, `completed`, `succeeded`, `failed`, or `reviewed` state is
-available. Those require future DecisionOutcome or DecisionReview records.
+The service validates outcome-to-Decision, outcome-to-acceptance, and
+outcome-to-action relations. Missing or mismatched relations fail visibly.
+Latest outcome selection uses `validated_at` and then outcome UUID as a stable
+tie-breaker; repository order never defines latest. No `reviewed` state exists.
 
 The first model should not replay a generic status-event stream. Acceptance,
 action, outcome, and review records already provide the authoritative events;
@@ -592,7 +631,6 @@ are optional.
 The following commands remain future-only and do not exist:
 
 ```bash
-neural decision outcome add DECISION_UUID
 neural decision review add DECISION_UUID
 
 neural project ingest-review REVIEW_PATH
@@ -600,8 +638,8 @@ neural project ingest-commit COMMIT_HASH
 ```
 
 The implemented handlers resolve application services from the container,
-translate input, and render output. Outcome, review, and project ingestion
-belong to later slices.
+translate input, and render output. Review and project ingestion belong to
+later slices.
 
 ## First Implementation Milestone
 
@@ -626,9 +664,11 @@ least two meaningful alternatives, one proposed option that matches an
 alternative, non-blank rationale, explicit provenance, and an idempotency key.
 It does not automatically create Observations or downstream learning records.
 
-The DecisionAcceptance and DecisionAction foundations are also complete. The
-next recommended controlled slice is DecisionOutcome foundation only. It must
-remain separate from DecisionReview.
+The DecisionAcceptance, DecisionAction, and DecisionOutcome foundations are
+complete. The next recommended controlled slice is exactly the DecisionReview
+foundation. Candidate lessons may be recorded there, but Experience, Knowledge,
+Playbook, PlaybookEvaluation, and EvolutionProposal creation must remain
+explicit and separate.
 
 ## Risks And Rejected Alternatives
 

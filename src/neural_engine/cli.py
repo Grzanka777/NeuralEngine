@@ -1,4 +1,6 @@
+import re
 from datetime import datetime
+from math import isfinite
 from typing import Annotated, cast
 from uuid import UUID
 
@@ -26,8 +28,10 @@ from neural_engine.application.decision_action_service import (
 from neural_engine.application.decision_lifecycle_service import (
     DecisionLifecycleActionAcceptanceMismatchError,
     DecisionLifecycleDecisionNotFoundError,
+    DecisionLifecycleError,
     DecisionLifecycleMultipleAcceptancesError,
 )
+from neural_engine.application.decision_outcome_service import DecisionOutcomeError
 from neural_engine.application.decision_service import (
     DecisionIdempotencyConflictError,
     DecisionNotFoundError,
@@ -92,6 +96,8 @@ from neural_engine.core.brain import Brain
 from neural_engine.domain import (
     Decision,
     DecisionAction,
+    DecisionOutcome,
+    DecisionOutcomeResult,
     EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
@@ -108,6 +114,7 @@ from neural_engine.domain import (
     PlaybookRevisionActivationDecision,
     PlaybookRun,
 )
+from neural_engine.domain.decision_outcome import DecisionOutcomeMetricValue
 
 app = typer.Typer(
     add_completion=False,
@@ -118,6 +125,9 @@ decision_app = typer.Typer(
 )
 decision_action_app = typer.Typer(
     help="Record Decision actions.",
+)
+decision_outcome_app = typer.Typer(
+    help="Record factual Decision outcomes.",
 )
 experience_app = typer.Typer(
     help="Manage experiences.",
@@ -145,6 +155,7 @@ run_app = typer.Typer(
 )
 app.add_typer(decision_app, name="decision")
 decision_app.add_typer(decision_action_app, name="action")
+decision_app.add_typer(decision_outcome_app, name="outcome")
 app.add_typer(experience_app, name="experience")
 app.add_typer(evaluation_app, name="evaluation")
 app.add_typer(knowledge_app, name="knowledge")
@@ -531,6 +542,121 @@ def show_decision_action(action_id: UUID) -> None:
     _print_decision_action(action)
 
 
+@decision_outcome_app.command("add")
+def add_decision_outcome(
+    decision_id: UUID,
+    acceptance_id: Annotated[UUID, typer.Option("--acceptance-id")],
+    action_ids: Annotated[list[UUID], typer.Option("--action-id")],
+    result: Annotated[DecisionOutcomeResult, typer.Option("--result")],
+    summary: Annotated[str, typer.Option("--summary")],
+    validated_by: Annotated[str, typer.Option("--validated-by")],
+    validated_at_value: Annotated[str, typer.Option("--validated-at")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    evidence_values: Annotated[list[str] | None, typer.Option("--evidence")] = None,
+    metric_values: Annotated[list[str] | None, typer.Option("--metric")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record a factual result for one or more Decision actions."""
+
+    try:
+        validated_at = _parse_iso_datetime(validated_at_value, "--validated-at")
+        evidence_references = [
+            EvidenceReference.model_validate_json(value) for value in evidence_values or []
+        ]
+        metrics = _parse_metrics(metric_values or [])
+        outcome = container.decision_outcome_service().add(
+            decision_id=decision_id,
+            acceptance_id=acceptance_id,
+            action_ids=action_ids,
+            result=result,
+            summary=summary,
+            validated_by=validated_by,
+            validated_at=validated_at,
+            idempotency_key=idempotency_key,
+            evidence_references=evidence_references,
+            metrics=metrics,
+            tags=tags,
+        )
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+    except (ValueError, DecisionOutcomeError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    console.print(f"[green]Decision outcome stored.[/green] ID: [cyan]{outcome.id}[/cyan]")
+
+
+@decision_app.command("outcome-history")
+def decision_outcome_history(decision_id: UUID) -> None:
+    """Show recorded outcomes for one Decision."""
+
+    try:
+        outcomes = container.decision_outcome_service().list_for_decision(decision_id)
+    except DecisionOutcomeError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not outcomes:
+        console.print(f"[yellow]No outcome history found for Decision: {decision_id}[/yellow]")
+        return
+
+    table = Table()
+    table.add_column("ID")
+    table.add_column("Validated")
+    table.add_column("Result")
+    table.add_column("Actions")
+    table.add_column("Validated by")
+    table.add_column("Summary")
+    for outcome in outcomes:
+        table.add_row(
+            str(outcome.id),
+            outcome.validated_at.isoformat(),
+            outcome.result.value,
+            ", ".join(str(action_id) for action_id in outcome.action_ids),
+            outcome.validated_by,
+            outcome.summary,
+        )
+    console.print(table)
+
+
+@decision_app.command("outcome-show")
+def show_decision_outcome(outcome_id: UUID) -> None:
+    """Show one recorded Decision outcome."""
+
+    try:
+        outcome = container.decision_outcome_service().show(outcome_id)
+    except DecisionOutcomeError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    _print_decision_outcome(outcome)
+
+
+@decision_app.command("outcome-summary")
+def show_decision_outcome_summary(decision_id: UUID) -> None:
+    """Show the non-persisted outcome summary for one Decision."""
+
+    try:
+        summary = container.decision_outcome_service().summary_for_decision(decision_id)
+    except DecisionOutcomeError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    console.print(f"Outcome count: {summary.outcome_count}")
+    console.print(f"Latest result: {summary.latest_result.value if summary.latest_result else '-'}")
+    console.print(
+        "Latest validated: "
+        f"{summary.latest_validated_at.isoformat() if summary.latest_validated_at else '-'}"
+    )
+    console.print(f"Linked action count: {summary.linked_action_count}")
+    console.print(
+        "Results by type: "
+        + ", ".join(f"{key}={value}" for key, value in summary.results_by_type.items())
+    )
+    console.print(f"Has success: {summary.has_success}")
+    console.print(f"Has failure: {summary.has_failure}")
+
+
 @decision_app.command("state")
 def show_decision_state(decision_id: UUID) -> None:
     """Show the canonical minimal lifecycle state for one Decision."""
@@ -553,6 +679,9 @@ def show_decision_state(decision_id: UUID) -> None:
             f"[red]Decision action {error.action_id} references acceptance "
             f"{error.actual_acceptance_id}, expected {expected}.[/red]"
         )
+        raise typer.Exit(code=1) from error
+    except DecisionLifecycleError as error:
+        console.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
 
     console.print(state.value)
@@ -1654,6 +1783,32 @@ def _print_decision_action(action: DecisionAction) -> None:
     console.print(f"Tags: {', '.join(action.tags) if action.tags else '-'}")
 
 
+def _print_decision_outcome(outcome: DecisionOutcome) -> None:
+    console.print(f"ID: {outcome.id}")
+    console.print(f"Recorded: {outcome.recorded_at}")
+    console.print(f"Decision ID: {outcome.decision_id}")
+    console.print(f"Acceptance ID: {outcome.acceptance_id}")
+    _print_repeated_field("Action IDs", [str(action_id) for action_id in outcome.action_ids])
+    console.print(f"Result: {outcome.result.value}")
+    console.print(f"Summary: {outcome.summary}")
+    console.print(f"Validated by: {outcome.validated_by}")
+    console.print(f"Validated at: {outcome.validated_at}")
+    _print_repeated_field(
+        "Evidence references",
+        [_format_evidence_reference(evidence) for evidence in outcome.evidence_references],
+    )
+    console.print(
+        "Metrics: "
+        + (
+            ", ".join(f"{key}={value!r}" for key, value in outcome.metrics.items())
+            if outcome.metrics
+            else "-"
+        )
+    )
+    console.print(f"Idempotency key: {outcome.idempotency_key}")
+    console.print(f"Tags: {', '.join(outcome.tags) if outcome.tags else '-'}")
+
+
 def _format_evidence_reference(evidence: EvidenceReference) -> str:
     return (
         f"kind={evidence.kind}; locator={evidence.locator}; "
@@ -1668,6 +1823,43 @@ def _parse_iso_datetime(value: str, option_name: str) -> datetime:
         return datetime.fromisoformat(value)
     except ValueError as error:
         raise ValueError(f"Invalid ISO-8601 value for {option_name}: {value!r}.") from error
+
+
+def _parse_metrics(values: list[str]) -> dict[str, DecisionOutcomeMetricValue]:
+    metrics: dict[str, DecisionOutcomeMetricValue] = {}
+    semantic_keys: set[str] = set()
+    for entry in values:
+        if "=" not in entry:
+            raise ValueError(f"Invalid metric {entry!r}; expected KEY=VALUE.")
+        key, raw_value = entry.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid metric {entry!r}; key must not be blank.")
+        semantic_key = key.casefold()
+        if semantic_key in semantic_keys:
+            raise ValueError(f"Duplicate metric key: {key}")
+        semantic_keys.add(semantic_key)
+        metrics[key] = _parse_metric_value(raw_value.strip())
+    return metrics
+
+
+def _parse_metric_value(value: str) -> DecisionOutcomeMetricValue:
+    lowered = value.casefold()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if re.fullmatch(r"[+-]?\d+", value):
+        return int(value)
+    if "." in value or "e" in lowered:
+        try:
+            number = float(value)
+        except ValueError:
+            pass
+        else:
+            if isfinite(number):
+                return number
+    return value
 
 
 def _print_experience_summary(experience: Experience) -> None:
