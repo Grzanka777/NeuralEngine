@@ -113,6 +113,7 @@ class Container:
         return ExperienceService(
             JsonExperienceRepository(),
             JsonObservationRepository(),
+            self.decision_review_service(),
         )
 
     def knowledge_service(self) -> KnowledgeService:

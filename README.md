@@ -48,7 +48,8 @@ neural decision state DECISION_UUID
 Review assessment is exactly `sound`, `flawed`, `mixed`, or `inconclusive`;
 confidence is `low`, `medium`, or `high`. Findings and candidate lessons are
 interpretive statements only. They do not constitute Experience, Knowledge,
-Playbook, evaluation, revision, or proposal creation.
+Playbook, evaluation, revision, or proposal creation until a separate explicit
+use case succeeds.
 
 Experience capture is exposed through a nested CLI group:
 
@@ -66,6 +67,28 @@ neural experience list
 neural experience show 11111111-1111-1111-1111-111111111111
 neural experience knowledge 11111111-1111-1111-1111-111111111111
 ```
+
+Explicitly promote ordered Review statements with 1-based CLI ordinals:
+
+```bash
+neural experience from-review REVIEW_UUID \
+  --source finding:1 \
+  --source candidate_lesson:2 \
+  --promoted-by learning-owner \
+  --promotion-reason "The reviewed statements are operationally reusable" \
+  --idempotency-key review-experience-1 \
+  --title "Preserve explicit learning authority" \
+  --context "Decision review follow-up" \
+  --action "Promoted selected reviewed statements" \
+  --outcome "Experience stored with immutable Review provenance" \
+  --result mixed \
+  --tag decision-learning
+```
+
+The command copies statement text from the immutable Review; callers do not
+retype it. Reviewer and promoter are separate authorities. A promoted
+Experience is still not Knowledge, changes no Decision lifecycle state, and
+triggers no later learning artifact.
 
 Create an experience directly from one existing observation:
 

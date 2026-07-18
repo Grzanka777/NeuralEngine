@@ -6,7 +6,7 @@ from neural_engine.application.experience_service import (
     ExperienceService,
     ObservationNotFoundError,
 )
-from neural_engine.domain import Experience, ExperienceResult, Observation
+from neural_engine.domain import DecisionReview, Experience, ExperienceResult, Observation
 from neural_engine.ports.experience_repository import ExperienceRepository
 from neural_engine.ports.observation_repository import ObservationRepository
 
@@ -52,10 +52,15 @@ class FakeObservationRepository(ObservationRepository):
         return None
 
 
+class UnusedDecisionReviewReader:
+    def show(self, review_id: UUID) -> DecisionReview:
+        raise AssertionError(f"DecisionReview lookup was not expected: {review_id}")
+
+
 def test_add_experience() -> None:
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository()
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     experience = service.add(
         title="Implement feature",
@@ -78,7 +83,7 @@ def test_add_experience_with_valid_observation_ids() -> None:
     observation = Observation(content="Existing observation")
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository([observation])
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     experience = service.add(
         title="Link observation",
@@ -97,7 +102,7 @@ def test_add_experience_raises_when_observation_id_is_missing() -> None:
     missing_id = UUID("11111111-1111-1111-1111-111111111111")
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository()
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     with pytest.raises(ObservationNotFoundError) as error:
         service.add(
@@ -120,7 +125,7 @@ def test_add_experience_stops_validation_without_saving_when_any_observation_id_
     missing_id = UUID("22222222-2222-2222-2222-222222222222")
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository([existing_observation])
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     with pytest.raises(ObservationNotFoundError) as error:
         service.add(
@@ -140,7 +145,7 @@ def test_add_from_observation_creates_experience_from_existing_observation() -> 
     observation = Observation(content="Exact observation content")
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository([observation])
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     experience = service.add_from_observation(
         observation_id=observation.id,
@@ -166,7 +171,7 @@ def test_add_from_observation_raises_when_observation_is_missing_without_saving(
     missing_id = UUID("33333333-3333-3333-3333-333333333333")
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository()
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     with pytest.raises(ObservationNotFoundError) as error:
         service.add_from_observation(
@@ -185,7 +190,7 @@ def test_add_from_observation_raises_when_observation_is_missing_without_saving(
 def test_list_experiences_returns_repository_items() -> None:
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository()
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
     experience = service.add(
         title="Capture result",
         context="Manual validation",
@@ -210,7 +215,7 @@ def test_list_for_observation_returns_one_linked_experience() -> None:
     experience_repo = FakeExperienceRepository()
     experience_repo.saved.append(linked)
     observation_repo = FakeObservationRepository([observation])
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     assert service.list_for_observation(observation.id) == [linked]
     assert experience_repo.load_all_calls == 1
@@ -237,7 +242,7 @@ def test_list_for_observation_returns_multiple_linked_experiences() -> None:
     experience_repo = FakeExperienceRepository()
     experience_repo.saved.extend([first, second])
     observation_repo = FakeObservationRepository([observation])
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     assert service.list_for_observation(observation.id) == [first, second]
 
@@ -264,7 +269,7 @@ def test_list_for_observation_excludes_unrelated_experiences() -> None:
     experience_repo = FakeExperienceRepository()
     experience_repo.saved.extend([linked, unrelated])
     observation_repo = FakeObservationRepository([observation, other_observation])
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     assert service.list_for_observation(observation.id) == [linked]
 
@@ -281,7 +286,7 @@ def test_list_for_observation_returns_empty_list_when_no_experiences_are_linked(
     experience_repo = FakeExperienceRepository()
     experience_repo.saved.append(unrelated)
     observation_repo = FakeObservationRepository([observation])
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     assert service.list_for_observation(observation.id) == []
 
@@ -292,7 +297,7 @@ def test_list_for_observation_raises_when_observation_is_missing_without_loading
     missing_id = UUID("44444444-4444-4444-4444-444444444444")
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository()
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     with pytest.raises(ObservationNotFoundError) as error:
         service.list_for_observation(missing_id)
@@ -304,7 +309,7 @@ def test_list_for_observation_raises_when_observation_is_missing_without_loading
 def test_get_by_id_returns_matching_experience() -> None:
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository()
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
     expected = service.add(
         title="Find this",
         context="Lookup",
@@ -319,6 +324,6 @@ def test_get_by_id_returns_matching_experience() -> None:
 def test_get_by_id_returns_none_when_missing() -> None:
     experience_repo = FakeExperienceRepository()
     observation_repo = FakeObservationRepository()
-    service = ExperienceService(experience_repo, observation_repo)
+    service = ExperienceService(experience_repo, observation_repo, UnusedDecisionReviewReader())
 
     assert service.get_by_id(UUID("00000000-0000-0000-0000-000000000000")) is None

@@ -8,7 +8,13 @@ from .decision_review import (
     DecisionReviewConfidence,
 )
 from .evolution_proposal import EvolutionProposal, EvolutionProposalStatus
-from .experience import Experience, ExperienceResult
+from .experience import (
+    DecisionReviewPromotion,
+    DecisionReviewPromotionSourceKind,
+    DecisionReviewPromotionSourceStatement,
+    Experience,
+    ExperienceResult,
+)
 from .knowledge import Knowledge, KnowledgeConfidence
 from .observation import Observation
 from .playbook import Playbook
@@ -30,6 +36,9 @@ __all__ = [
     "DecisionReview",
     "DecisionReviewAssessment",
     "DecisionReviewConfidence",
+    "DecisionReviewPromotion",
+    "DecisionReviewPromotionSourceKind",
+    "DecisionReviewPromotionSourceStatement",
     "EvidenceReference",
     "Experience",
     "ExperienceResult",

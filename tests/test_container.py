@@ -5,6 +5,7 @@ from neural_engine.application.decision_lifecycle_service import DecisionLifecyc
 from neural_engine.application.decision_outcome_service import DecisionOutcomeService
 from neural_engine.application.decision_review_service import DecisionReviewService
 from neural_engine.application.decision_service import DecisionService
+from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationService,
 )
@@ -30,6 +31,7 @@ from neural_engine.infrastructure.json_decision_review_repository import (
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
     JsonEvolutionProposalRepository,
 )
+from neural_engine.infrastructure.json_experience_repository import JsonExperienceRepository
 from neural_engine.infrastructure.json_knowledge_repository import JsonKnowledgeRepository
 from neural_engine.infrastructure.json_observation_repository import JsonObservationRepository
 from neural_engine.infrastructure.json_playbook_repository import JsonPlaybookRepository
@@ -135,6 +137,15 @@ def test_container_wires_decision_review_repository_and_service() -> None:
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
     assert isinstance(service._outcome_repository, JsonDecisionOutcomeRepository)
+
+
+def test_container_wires_experience_service_with_review_validation_boundary() -> None:
+    service = Container().experience_service()
+
+    assert isinstance(service, ExperienceService)
+    assert isinstance(service._experience_repository, JsonExperienceRepository)
+    assert isinstance(service._observation_repository, JsonObservationRepository)
+    assert isinstance(service._decision_review_service, DecisionReviewService)
 
 
 def test_container_wires_playbook_service_without_playbook_revision_repository() -> None:

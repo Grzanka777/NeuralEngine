@@ -222,6 +222,50 @@ Decision, outcome, or ordered outcome set. No earlier review is mutated,
 replaced, deleted, superseded, or marked current. Review creates no downstream
 learning artifact and does not change the canonical lifecycle projection.
 
+## Implemented DecisionReview-to-Experience Promotion Foundation
+
+Review findings and candidate lessons are not Experience until
+`ExperienceService.add_from_decision_review()` succeeds under explicit
+promotion authority. The use case creates exactly one existing `Experience`
+from exactly one validated `DecisionReview` and one or more caller-ordered
+selectors. It requires the ordinary Experience payload rather than deriving
+title, context, action, outcome, or `ExperienceResult` from Review assessment,
+confidence, selected text, or factual DecisionOutcome result.
+
+`Experience.decision_review_promotion` is optional, so old JSON and ordinary
+direct or Observation-derived creation remain valid with `None`. When present,
+the immutable nested value contains exactly `decision_review_id`, ordered
+`source_statements`, `promoted_by`, `promotion_reason`, and `idempotency_key`.
+Each immutable source statement contains exactly `kind`, zero-based `index`,
+and copied normalized `text`; kind is exactly `finding` or
+`candidate_lesson`. The schema does not copy Decision, acceptance, outcome,
+action, reviewer, assessment, confidence, or upstream evidence fields.
+
+The service calls `DecisionReviewService.show()` to retain one owner for
+persisted Review relation validation, resolves every selector against the
+immutable Review, validates optional Observations, builds one Experience, then
+scans `ExperienceRepository.load_all()` for the scope
+`(decision_review_id, "review_experience_promotion", idempotency_key)`. Zero
+matches saves; one equivalent match returns the original Experience; one
+conflicting match raises a dedicated conflict; multiple matches raise a
+dedicated ambiguity independent of repository order. Semantic equivalence
+excludes only generated Experience ID and timestamp and includes ordered copied
+sources and every caller-supplied field. Failed validation, conflict, and
+ambiguity never save.
+
+Creation, replay, show/get, complete list, and Observation-relation list paths
+fail closed if the Review or its upstream relations are invalid, an index is
+out of range, or persisted copied text differs from the selected Review item.
+One Review may produce multiple Experiences and the same statement may be
+promoted again under a different key. Corrections append; no record is mutated,
+replaced, ranked, or marked current. Reviewer and promoter are separate
+authorities and may differ.
+
+Promotion writes no Decision lifecycle state and creates no Knowledge,
+Playbook, evaluation, proposal, revision, evidence execution, or Consigliere
+artifact. A promoted Experience is still not Knowledge; the next downstream
+learning step remains a separate explicit decision.
+
 ## Non-Goals
 
 This foundation does not implement:
@@ -500,10 +544,10 @@ supporting provenance for a PlaybookRevision. It does not bypass the existing
 PlaybookRun, PlaybookEvaluation, and EvolutionProposal requirements for
 improving an existing Playbook.
 
-A future Experience provenance extension may reference DecisionOutcome IDs.
-That schema change must be designed and reviewed separately. Until then, shared
-Observation IDs and EvidenceReferences can preserve traceability without
-claiming a direct implemented relation.
+The implemented Experience provenance extension references exactly one
+DecisionReview and selected Review statements. Decision, acceptance, outcome,
+and action lineage remains authoritative upstream and reachable transitively;
+it is not copied into Experience.
 
 ## Self-Observation Dogfooding Workflow
 
@@ -713,11 +757,11 @@ least two meaningful alternatives, one proposed option that matches an
 alternative, non-blank rationale, explicit provenance, and an idempotency key.
 It does not automatically create Observations or downstream learning records.
 
-The DecisionAcceptance, DecisionAction, DecisionOutcome, and DecisionReview
-foundations are complete. The next recommended controlled slice is separate,
-explicit Experience creation from review findings or candidate lessons.
-Experience, Knowledge, Playbook, PlaybookEvaluation, PlaybookRevision, and
-EvolutionProposal creation remains explicit and is not part of DecisionReview.
+The DecisionAcceptance, DecisionAction, DecisionOutcome, DecisionReview, and
+explicit Review-to-Experience promotion foundations are complete. The next
+downstream learning step remains a separate explicit decision. Knowledge,
+Playbook, PlaybookEvaluation, PlaybookRevision, and EvolutionProposal creation
+remains explicit and is not part of Review promotion.
 
 ## Risks And Rejected Alternatives
 

@@ -111,6 +111,26 @@ through the `ObservationRepository` port, copies `Observation.content` exactly
 into the experience context, links the new experience to that observation ID,
 and persists it through the `ExperienceRepository` port.
 
+`neural experience from-review REVIEW_UUID` delegates to
+`ExperienceService.add_from_decision_review()`. Ordered `--source
+finding:ORDINAL` and `--source candidate_lesson:ORDINAL` values use explicit
+1-based CLI ordinals and become durable zero-based indexes. The service loads
+the Review through `DecisionReviewService.show()`, so existing persisted
+Decision/acceptance/outcome relation validation remains canonical. It copies
+the exact normalized Review text and stores one Experience with optional
+embedded `DecisionReviewPromotion` provenance. No link aggregate, repository,
+Brain directory, or second write exists.
+
+Promotion idempotency is scoped by `(decision_review_id,
+"review_experience_promotion", idempotency_key)`. Scanning remains in the
+application layer: zero matches writes, one equivalent match replays, one
+different match conflicts, and multiple matches fail as ambiguity without
+repository-order selection. Equivalence excludes only generated Experience ID
+and timestamp. Promoted Experience reads revalidate the Review and copied
+source text; malformed relations, invalid indexes, or changed text fail closed.
+Plain and Observation-derived Experiences remain compatible, including old
+JSON without the optional field.
+
 `neural experience knowledge EXPERIENCE_UUID` delegates to
 `KnowledgeService.list_for_experience()`. The service verifies the experience
 exists through the `ExperienceRepository` port, loads knowledge through the
@@ -673,5 +693,9 @@ No review automatically creates Experience, Knowledge, Playbook,
 PlaybookEvaluation, PlaybookRevision, EvolutionProposal, or any other learning
 artifact. Execution, lifecycle reversal, ingestion, Consigliere integration,
 automatic learning/evolution, and Handbook synchronization remain
-unimplemented. The next controlled milestone is separate explicit Experience
-creation from review findings or candidate lessons.
+unimplemented. Explicit Review-to-Experience promotion is a separate use case:
+Review statements are not Experience until it succeeds, and the resulting
+Experience is still not Knowledge. One Review may produce multiple Experiences
+under distinct promotion keys. Reviewer and promoter are separate authorities;
+promotion changes no Decision lifecycle state. The next downstream learning
+step remains a separate explicit decision.

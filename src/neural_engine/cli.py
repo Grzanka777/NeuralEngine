@@ -52,7 +52,11 @@ from neural_engine.application.evolution_proposal_service import (
 from neural_engine.application.evolution_proposal_service import (
     PlaybookNotFoundError as ProposalPlaybookNotFoundError,
 )
-from neural_engine.application.experience_service import ObservationNotFoundError
+from neural_engine.application.experience_service import (
+    DecisionReviewPromotionError,
+    DecisionReviewPromotionSelector,
+    ObservationNotFoundError,
+)
 from neural_engine.application.knowledge_service import (
     ExperienceNotFoundError,
     KnowledgeEvidenceRequiredError,
@@ -102,6 +106,7 @@ from neural_engine.domain import (
     DecisionReview,
     DecisionReviewAssessment,
     DecisionReviewConfidence,
+    DecisionReviewPromotionSourceKind,
     EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
@@ -918,12 +923,73 @@ def add_experience_from_observation(
     )
 
 
+@experience_app.command("from-review")
+def add_experience_from_review(
+    review_id: UUID,
+    sources: Annotated[
+        list[str],
+        typer.Option(
+            "--source",
+            help=(
+                "Ordered KIND:ORDINAL selector; KIND is finding or candidate_lesson and "
+                "ORDINAL is 1-based."
+            ),
+        ),
+    ],
+    promoted_by: Annotated[str, typer.Option("--promoted-by")],
+    promotion_reason: Annotated[str, typer.Option("--promotion-reason")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    title: Annotated[str, typer.Option("--title")],
+    context: Annotated[str, typer.Option("--context")],
+    action: Annotated[str, typer.Option("--action")],
+    outcome: Annotated[str, typer.Option("--outcome")],
+    result: Annotated[ExperienceResult, typer.Option("--result")],
+    observation_ids: Annotated[list[UUID] | None, typer.Option("--observation-id")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Explicitly promote ordered DecisionReview statements into one Experience."""
+
+    try:
+        selectors = [_parse_review_promotion_selector(value) for value in sources]
+        experience = container.experience_service().add_from_decision_review(
+            decision_review_id=review_id,
+            source_selectors=selectors,
+            promoted_by=promoted_by,
+            promotion_reason=promotion_reason,
+            idempotency_key=idempotency_key,
+            title=title,
+            context=context,
+            action=action,
+            outcome=outcome,
+            result=result,
+            observation_ids=observation_ids,
+            tags=tags,
+        )
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+    except (ValueError, DecisionReviewError, DecisionReviewPromotionError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    except ObservationNotFoundError as error:
+        _exit_observation_not_found(error)
+
+    console.print(
+        f"[green]Experience stored from Decision review.[/green] ID: [cyan]{experience.id}[/cyan]"
+    )
+    _print_experience(experience)
+
+
 @experience_app.command("list")
 def list_experiences() -> None:
     """List all experiences."""
 
     service = container.experience_service()
-    experiences = service.list_experiences()
+    try:
+        experiences = service.list_experiences()
+    except (DecisionReviewError, DecisionReviewPromotionError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     if not experiences:
         console.print("[yellow]No experiences found.[/yellow]")
@@ -943,6 +1009,9 @@ def list_observation_experiences(observation_id: UUID) -> None:
         experiences = service.list_for_observation(observation_id)
     except ObservationNotFoundError as error:
         _exit_observation_not_found(error)
+    except (DecisionReviewError, DecisionReviewPromotionError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     if not experiences:
         console.print(f"[yellow]No experiences linked to observation: {observation_id}[/yellow]")
@@ -977,7 +1046,11 @@ def show_experience(experience_id: UUID) -> None:
     """Show one experience."""
 
     service = container.experience_service()
-    experience = service.get_by_id(experience_id)
+    try:
+        experience = service.get_by_id(experience_id)
+    except (DecisionReviewError, DecisionReviewPromotionError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     if experience is None:
         console.print(f"[red]Experience not found: {experience_id}[/red]")
@@ -1837,6 +1910,7 @@ def _print_experience(experience: Experience) -> None:
         )
     )
     console.print(f"Tags: {', '.join(experience.tags) if experience.tags else '-'}")
+    _print_decision_review_promotion(experience)
 
 
 def _print_decision(decision: Decision) -> None:
@@ -1950,6 +2024,31 @@ def _parse_iso_datetime(value: str, option_name: str) -> datetime:
         raise ValueError(f"Invalid ISO-8601 value for {option_name}: {value!r}.") from error
 
 
+def _parse_review_promotion_selector(value: str) -> DecisionReviewPromotionSelector:
+    kind_value, separator, ordinal_value = value.partition(":")
+    if not separator:
+        raise ValueError(
+            f"Invalid source selector {value!r}; expected KIND:ORDINAL with a 1-based ordinal."
+        )
+    try:
+        kind = DecisionReviewPromotionSourceKind(kind_value)
+    except ValueError as error:
+        raise ValueError(
+            f"Invalid source selector kind {kind_value!r}; expected finding or candidate_lesson."
+        ) from error
+    try:
+        ordinal = int(ordinal_value)
+    except ValueError as error:
+        raise ValueError(
+            f"Invalid source selector ordinal {ordinal_value!r}; expected a positive integer."
+        ) from error
+    if ordinal < 1:
+        raise ValueError(
+            "Decision review source selector ordinals are 1-based and must be positive."
+        )
+    return DecisionReviewPromotionSelector(kind=kind, index=ordinal - 1)
+
+
 def _parse_metrics(values: list[str]) -> dict[str, DecisionOutcomeMetricValue]:
     metrics: dict[str, DecisionOutcomeMetricValue] = {}
     semantic_keys: set[str] = set()
@@ -1992,6 +2091,28 @@ def _print_experience_summary(experience: Experience) -> None:
     console.print(f"Timestamp: {experience.timestamp}")
     console.print(f"Title: {experience.title}")
     console.print(f"Result: {experience.result.value}")
+    promotion = experience.decision_review_promotion
+    if promotion is not None:
+        console.print(f"Decision review promotion: {promotion.decision_review_id}")
+
+
+def _print_decision_review_promotion(experience: Experience) -> None:
+    promotion = experience.decision_review_promotion
+    if promotion is None:
+        console.print("Decision review promotion: -")
+        return
+    console.print(f"Decision review promotion: {promotion.decision_review_id}")
+    console.print(f"Promoted by: {promotion.promoted_by}")
+    console.print(f"Promotion reason: {promotion.promotion_reason}")
+    console.print(f"Promotion idempotency key: {promotion.idempotency_key}")
+    _print_repeated_field(
+        "Promotion source statements",
+        [
+            f"{statement.kind.value}:{statement.index + 1} (stored index {statement.index}) "
+            f"{statement.text}"
+            for statement in promotion.source_statements
+        ],
+    )
 
 
 def _print_knowledge(knowledge: Knowledge) -> None:

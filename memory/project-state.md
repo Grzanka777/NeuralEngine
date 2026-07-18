@@ -40,6 +40,29 @@ observation IDs through the `ObservationRepository` port before saving.
 existing observation by copying `Observation.content` exactly into the
 experience context.
 
+Experience also supports explicit DecisionReview statement promotion:
+
+* optional immutable `DecisionReviewPromotion` provenance embedded in one
+  Experience, with no link aggregate or second write;
+* ordered immutable source statements with exact `finding | candidate_lesson`
+  kind, zero-based Review-list index, and service-copied text;
+* `ExperienceService.add_from_decision_review()` using
+  `DecisionReviewService.show()` as the canonical persisted relation boundary;
+* idempotency scoped by `(decision_review_id,
+  "review_experience_promotion", idempotency_key)` with equivalent replay,
+  dedicated conflict, and fail-closed duplicate ambiguity;
+* read-path validation of Review relations, selector bounds, and copied text;
+* `neural experience from-review REVIEW_UUID` with ordered 1-based
+  `--source KIND:ORDINAL` values.
+
+Old Experience JSON without promotion provenance remains valid, and ordinary
+direct or Observation-derived creation keeps its existing inputs. Review
+statements are not Experience until explicit promotion succeeds; promoted
+Experience remains distinct from Knowledge. Reviewer and promoter are separate
+authorities. One Review may create multiple Experiences under distinct keys.
+Promotion changes no Decision lifecycle state and triggers no downstream
+learning artifact.
+
 Neural Engine now has a minimal Knowledge vertical slice:
 
 * Domain model: `neural_engine.domain.Knowledge`
@@ -524,6 +547,8 @@ evidence in `.agent-work/reviews/review-decision-review-foundation.md`.
 
 ## Notes for next work
 
-The next recommended controlled milestone is separate explicit Experience
-creation from DecisionReview findings or candidate lessons. It is not part of
-the DecisionReview foundation.
+The Review-to-Experience promotion foundation is implemented. The next
+downstream learning step remains a separate explicit decision; this milestone
+does not add Experience-to-Knowledge promotion, automatic learning, Playbook or
+revision changes, lifecycle changes, evidence execution, or Consigliere
+integration.
