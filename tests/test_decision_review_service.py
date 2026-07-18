@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -31,6 +31,17 @@ from neural_engine.ports.decision_acceptance_repository import DecisionAcceptanc
 from neural_engine.ports.decision_outcome_repository import DecisionOutcomeRepository
 from neural_engine.ports.decision_repository import DecisionRepository
 from neural_engine.ports.decision_review_repository import DecisionReviewRepository
+
+# Fixed UTC timeline for deterministic test fixtures.
+# Invariants preserved:
+#   outcome.validated_at <= outcome.recorded_at (auto-generated via default factory)
+#   max(outcome.validated_at) <= review.reviewed_at
+#   review.reviewed_at <= review.recorded_at (auto-generated via default factory)
+_T_OUTCOME_VALIDATED = datetime(2026, 7, 18, 11, 0, tzinfo=UTC)
+_T_OUTCOME_VALIDATED_LATER = datetime(2026, 7, 18, 11, 30, tzinfo=UTC)
+_T_OUTCOME_VALIDATED_TOO_LATE = datetime(2026, 7, 18, 12, 30, tzinfo=UTC)
+_T_REVIEW_REVIEWED = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
+_T_REVIEW_RECORDED = datetime(2026, 7, 18, 14, 0, tzinfo=UTC)
 
 
 class DecisionRepo(DecisionRepository):
@@ -126,7 +137,7 @@ def make_outcome(decision_id: UUID, acceptance_id: UUID, **updates: object) -> D
         "result": DecisionOutcomeResult.SUCCEEDED,
         "summary": "Validation passed.",
         "validated_by": "pytest",
-        "validated_at": datetime.now(UTC) - timedelta(hours=2),
+        "validated_at": _T_OUTCOME_VALIDATED,
         "idempotency_key": "outcome-review",
     }
     values.update(updates)
@@ -141,7 +152,7 @@ def add_values(
         "acceptance_id": acceptance.id,
         "outcome_ids": [outcome.id for outcome in outcomes],
         "reviewed_by": "architecture-owner",
-        "reviewed_at": datetime.now(UTC) - timedelta(hours=1),
+        "reviewed_at": _T_REVIEW_REVIEWED,
         "assessment": DecisionReviewAssessment.SOUND,
         "summary": "The decision remains defensible.",
         "findings": ["The implementation preserved boundaries."],
@@ -184,7 +195,7 @@ def test_add_validates_relations_then_saves_complete_review() -> None:
         decision.id,
         acceptance.id,
         idempotency_key="outcome-2",
-        validated_at=datetime.now(UTC) - timedelta(hours=1, minutes=30),
+        validated_at=_T_OUTCOME_VALIDATED_LATER,
     )
     service, repository = make_service([decision], [acceptance], [*outcomes, second])
 
@@ -258,7 +269,7 @@ def test_review_time_must_follow_every_linked_outcome() -> None:
         decision.id,
         acceptance.id,
         idempotency_key="later",
-        validated_at=datetime.now(UTC) - timedelta(minutes=30),
+        validated_at=_T_OUTCOME_VALIDATED_TOO_LATE,
     )
     service, repository = make_service([decision], [acceptance], [*outcomes, later])
     with pytest.raises(DecisionReviewBeforeOutcomeError):
@@ -356,12 +367,19 @@ def test_persisted_relation_corruption_fails_closed(operation: str) -> None:
 def test_duplicate_idempotency_key_raises_ambiguity_error() -> None:
     decision, acceptance, outcomes = valid_graph()
     values = add_values(decision, acceptance, outcomes)
-    recorded = datetime.now(UTC) - timedelta(hours=1)
     first = DecisionReview.model_validate(
-        {**values, "id": UUID("00000000-0000-0000-0000-0000000000a1"), "recorded_at": recorded}
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000a1"),
+            "recorded_at": _T_REVIEW_RECORDED,
+        }
     )
     second = DecisionReview.model_validate(
-        {**values, "id": UUID("00000000-0000-0000-0000-0000000000a2"), "recorded_at": recorded}
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000a2"),
+            "recorded_at": _T_REVIEW_RECORDED,
+        }
     )
     service, repository = make_service([decision], [acceptance], outcomes, [first, second])
 
@@ -376,12 +394,19 @@ def test_duplicate_idempotency_key_raises_ambiguity_error() -> None:
 def test_ambiguity_never_calls_save() -> None:
     decision, acceptance, outcomes = valid_graph()
     values = add_values(decision, acceptance, outcomes)
-    recorded = datetime.now(UTC) - timedelta(hours=1)
     first = DecisionReview.model_validate(
-        {**values, "id": UUID("00000000-0000-0000-0000-0000000000b1"), "recorded_at": recorded}
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000b1"),
+            "recorded_at": _T_REVIEW_RECORDED,
+        }
     )
     second = DecisionReview.model_validate(
-        {**values, "id": UUID("00000000-0000-0000-0000-0000000000b2"), "recorded_at": recorded}
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000b2"),
+            "recorded_at": _T_REVIEW_RECORDED,
+        }
     )
     service, repository = make_service([decision], [acceptance], outcomes, [first, second])
 
@@ -394,12 +419,19 @@ def test_ambiguity_never_calls_save() -> None:
 def test_ambiguity_is_order_independent() -> None:
     decision, acceptance, outcomes = valid_graph()
     values = add_values(decision, acceptance, outcomes)
-    recorded = datetime.now(UTC) - timedelta(hours=1)
     review_a = DecisionReview.model_validate(
-        {**values, "id": UUID("00000000-0000-0000-0000-0000000000c1"), "recorded_at": recorded}
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000c1"),
+            "recorded_at": _T_REVIEW_RECORDED,
+        }
     )
     review_b = DecisionReview.model_validate(
-        {**values, "id": UUID("00000000-0000-0000-0000-0000000000c2"), "recorded_at": recorded}
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000c2"),
+            "recorded_at": _T_REVIEW_RECORDED,
+        }
     )
 
     forward_service, _ = make_service([decision], [acceptance], outcomes, [review_a, review_b])
@@ -420,12 +452,19 @@ def test_ambiguity_is_order_independent() -> None:
 def test_semantically_equivalent_duplicates_also_ambiguous() -> None:
     decision, acceptance, outcomes = valid_graph()
     values = add_values(decision, acceptance, outcomes)
-    recorded = datetime.now(UTC) - timedelta(hours=1)
     first = DecisionReview.model_validate(
-        {**values, "id": UUID("00000000-0000-0000-0000-0000000000d1"), "recorded_at": recorded}
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000d1"),
+            "recorded_at": _T_REVIEW_RECORDED,
+        }
     )
     second = DecisionReview.model_validate(
-        {**values, "id": UUID("00000000-0000-0000-0000-0000000000d2"), "recorded_at": recorded}
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000d2"),
+            "recorded_at": _T_REVIEW_RECORDED,
+        }
     )
     service, repository = make_service([decision], [acceptance], outcomes, [first, second])
 
