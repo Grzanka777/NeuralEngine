@@ -118,6 +118,17 @@ class DecisionOutcomeIdempotencyConflictError(DecisionOutcomeError):
         )
 
 
+class DecisionOutcomeIdempotencyAmbiguityError(DecisionOutcomeError):
+    def __init__(self, decision_id: UUID, idempotency_key: str, match_count: int) -> None:
+        self.decision_id = decision_id
+        self.idempotency_key = idempotency_key
+        self.match_count = match_count
+        super().__init__(
+            f"Decision outcome idempotency key {idempotency_key!r} is ambiguous for "
+            f"Decision {decision_id}: {match_count} persisted outcomes share the same key."
+        )
+
+
 class DecisionOutcomeSummary(BaseModel):
     """Immutable, non-persisted projection of outcomes for one Decision."""
 
@@ -306,15 +317,17 @@ class DecisionOutcomeService:
     def _find_by_idempotency_key(
         outcomes: list[DecisionOutcome], candidate: DecisionOutcome
     ) -> DecisionOutcome | None:
-        return next(
-            (
-                outcome
-                for outcome in outcomes
-                if outcome.decision_id == candidate.decision_id
-                and outcome.idempotency_key == candidate.idempotency_key
-            ),
-            None,
-        )
+        matches = [
+            outcome
+            for outcome in outcomes
+            if outcome.decision_id == candidate.decision_id
+            and outcome.idempotency_key == candidate.idempotency_key
+        ]
+        if len(matches) > 1:
+            raise DecisionOutcomeIdempotencyAmbiguityError(
+                candidate.decision_id, candidate.idempotency_key, len(matches)
+            )
+        return matches[0] if matches else None
 
     @staticmethod
     def _semantic_payload(outcome: DecisionOutcome) -> dict[str, object]:

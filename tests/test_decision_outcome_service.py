@@ -11,6 +11,7 @@ from neural_engine.application.decision_outcome_service import (
     DecisionOutcomeActionNotFoundError,
     DecisionOutcomeDecisionNotFoundError,
     DecisionOutcomeDuplicateActionError,
+    DecisionOutcomeIdempotencyAmbiguityError,
     DecisionOutcomeIdempotencyConflictError,
     DecisionOutcomeNotFoundError,
     DecisionOutcomeService,
@@ -358,3 +359,111 @@ def test_summary_detects_corrupt_missing_action_relation() -> None:
 
     with pytest.raises(DecisionOutcomeActionNotFoundError):
         corrupt_service.summary_for_decision(decision.id)
+
+
+def test_duplicate_idempotency_key_raises_ambiguity_error() -> None:
+    decision, acceptance, actions = valid_graph()
+    values = add_values(decision, acceptance, actions)
+    recorded = datetime(2026, 7, 18, 14, 0, tzinfo=UTC)
+    first = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000a1"), "recorded_at": recorded}
+    )
+    second = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000a2"), "recorded_at": recorded}
+    )
+    service, repository = make_service([decision], [acceptance], actions, [first, second])
+
+    with pytest.raises(DecisionOutcomeIdempotencyAmbiguityError) as exc:
+        service.add(**add_values(decision, acceptance, actions))  # type: ignore[arg-type]
+
+    assert exc.value.decision_id == decision.id
+    assert exc.value.idempotency_key == "outcome-1"
+    assert exc.value.match_count == 2
+
+
+def test_ambiguity_never_calls_save() -> None:
+    decision, acceptance, actions = valid_graph()
+    values = add_values(decision, acceptance, actions)
+    recorded = datetime(2026, 7, 18, 14, 0, tzinfo=UTC)
+    first = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000b1"), "recorded_at": recorded}
+    )
+    second = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000b2"), "recorded_at": recorded}
+    )
+    service, repository = make_service([decision], [acceptance], actions, [first, second])
+
+    with pytest.raises(DecisionOutcomeIdempotencyAmbiguityError):
+        service.add(**add_values(decision, acceptance, actions))  # type: ignore[arg-type]
+
+    assert repository.save_calls == []
+
+
+def test_ambiguity_is_order_independent() -> None:
+    decision, acceptance, actions = valid_graph()
+    values = add_values(decision, acceptance, actions)
+    recorded = datetime(2026, 7, 18, 14, 0, tzinfo=UTC)
+    outcome_a = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000c1"), "recorded_at": recorded}
+    )
+    outcome_b = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000c2"), "recorded_at": recorded}
+    )
+
+    forward_service, _ = make_service([decision], [acceptance], actions, [outcome_a, outcome_b])
+    reversed_service, _ = make_service([decision], [acceptance], actions, [outcome_b, outcome_a])
+
+    with pytest.raises(DecisionOutcomeIdempotencyAmbiguityError) as exc_forward:
+        forward_service.add(**add_values(decision, acceptance, actions))  # type: ignore[arg-type]
+
+    with pytest.raises(DecisionOutcomeIdempotencyAmbiguityError) as exc_reversed:
+        reversed_service.add(**add_values(decision, acceptance, actions))  # type: ignore[arg-type]
+
+    assert exc_reversed.value.decision_id == exc_forward.value.decision_id
+    assert exc_reversed.value.idempotency_key == exc_forward.value.idempotency_key
+    assert exc_reversed.value.match_count == exc_forward.value.match_count
+    assert str(exc_reversed.value) == str(exc_forward.value)
+
+
+def test_semantically_equivalent_duplicates_also_ambiguous() -> None:
+    decision, acceptance, actions = valid_graph()
+    values = add_values(decision, acceptance, actions)
+    recorded = datetime(2026, 7, 18, 14, 0, tzinfo=UTC)
+    first = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000d1"), "recorded_at": recorded}
+    )
+    second = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000d2"), "recorded_at": recorded}
+    )
+    service, repository = make_service([decision], [acceptance], actions, [first, second])
+
+    with pytest.raises(DecisionOutcomeIdempotencyAmbiguityError) as exc:
+        service.add(**add_values(decision, acceptance, actions))  # type: ignore[arg-type]
+
+    assert exc.value.match_count == 2
+    assert repository.save_calls == []
+
+
+def test_different_payload_duplicates_also_ambiguous_rather_than_conflict() -> None:
+    decision, acceptance, actions = valid_graph()
+    values = add_values(decision, acceptance, actions)
+    recorded = datetime(2026, 7, 18, 14, 0, tzinfo=UTC)
+    first = DecisionOutcome.model_validate(
+        {**values, "id": UUID("00000000-0000-0000-0000-0000000000e1"), "recorded_at": recorded}
+    )
+    # Second outcome with same key but different semantic payload
+    second = DecisionOutcome.model_validate(
+        {
+            **values,
+            "id": UUID("00000000-0000-0000-0000-0000000000e2"),
+            "recorded_at": recorded,
+            "summary": "A different outcome.",
+        }
+    )
+    service, repository = make_service([decision], [acceptance], actions, [first, second])
+
+    with pytest.raises(DecisionOutcomeIdempotencyAmbiguityError) as exc:
+        service.add(**add_values(decision, acceptance, actions))  # type: ignore[arg-type]
+
+    assert exc.value.match_count == 2
+    assert repository.save_calls == []
