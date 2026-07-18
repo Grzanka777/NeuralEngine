@@ -32,6 +32,7 @@ from neural_engine.application.decision_lifecycle_service import (
     DecisionLifecycleMultipleAcceptancesError,
 )
 from neural_engine.application.decision_outcome_service import DecisionOutcomeError
+from neural_engine.application.decision_review_service import DecisionReviewError
 from neural_engine.application.decision_service import (
     DecisionIdempotencyConflictError,
     DecisionNotFoundError,
@@ -98,6 +99,9 @@ from neural_engine.domain import (
     DecisionAction,
     DecisionOutcome,
     DecisionOutcomeResult,
+    DecisionReview,
+    DecisionReviewAssessment,
+    DecisionReviewConfidence,
     EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
@@ -129,6 +133,9 @@ decision_action_app = typer.Typer(
 decision_outcome_app = typer.Typer(
     help="Record factual Decision outcomes.",
 )
+decision_review_app = typer.Typer(
+    help="Record authorized interpretations of Decision outcomes.",
+)
 experience_app = typer.Typer(
     help="Manage experiences.",
 )
@@ -156,6 +163,7 @@ run_app = typer.Typer(
 app.add_typer(decision_app, name="decision")
 decision_app.add_typer(decision_action_app, name="action")
 decision_app.add_typer(decision_outcome_app, name="outcome")
+decision_app.add_typer(decision_review_app, name="review")
 app.add_typer(experience_app, name="experience")
 app.add_typer(evaluation_app, name="evaluation")
 app.add_typer(knowledge_app, name="knowledge")
@@ -685,6 +693,102 @@ def show_decision_state(decision_id: UUID) -> None:
         raise typer.Exit(code=1) from error
 
     console.print(state.value)
+
+
+@decision_review_app.command("add")
+def add_decision_review(
+    decision_id: UUID,
+    acceptance_id: Annotated[UUID, typer.Option("--acceptance-id")],
+    outcome_ids: Annotated[list[UUID], typer.Option("--outcome-id")],
+    reviewed_by: Annotated[str, typer.Option("--reviewed-by")],
+    reviewed_at_value: Annotated[str, typer.Option("--reviewed-at")],
+    assessment: Annotated[DecisionReviewAssessment, typer.Option("--assessment")],
+    summary: Annotated[str, typer.Option("--summary")],
+    findings: Annotated[list[str], typer.Option("--finding")],
+    confidence: Annotated[DecisionReviewConfidence, typer.Option("--confidence")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    candidate_lessons: Annotated[list[str] | None, typer.Option("--candidate-lesson")] = None,
+    evidence_values: Annotated[list[str] | None, typer.Option("--evidence")] = None,
+    tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+) -> None:
+    """Record an authorized interpretation of explicit Decision outcomes."""
+
+    try:
+        reviewed_at = _parse_iso_datetime(reviewed_at_value, "--reviewed-at")
+        evidence_references = [
+            EvidenceReference.model_validate_json(value) for value in evidence_values or []
+        ]
+        review = container.decision_review_service().add(
+            decision_id=decision_id,
+            acceptance_id=acceptance_id,
+            outcome_ids=outcome_ids,
+            reviewed_by=reviewed_by,
+            reviewed_at=reviewed_at,
+            assessment=assessment,
+            summary=summary,
+            findings=findings,
+            confidence=confidence,
+            idempotency_key=idempotency_key,
+            candidate_lessons=candidate_lessons,
+            evidence_references=evidence_references,
+            tags=tags,
+        )
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+    except (ValueError, DecisionReviewError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    console.print(f"[green]Decision review stored.[/green] ID: [cyan]{review.id}[/cyan]")
+    _print_decision_review(review)
+
+
+@decision_review_app.command("history")
+def decision_review_history(decision_id: UUID) -> None:
+    """Show authorized review history for one Decision."""
+
+    try:
+        reviews = container.decision_review_service().list_for_decision(decision_id)
+    except DecisionReviewError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    if not reviews:
+        console.print(f"[yellow]No review history found for Decision: {decision_id}[/yellow]")
+        return
+
+    table = Table()
+    table.add_column("ID")
+    table.add_column("Reviewed")
+    table.add_column("Reviewed by")
+    table.add_column("Assessment")
+    table.add_column("Confidence")
+    table.add_column("Outcome IDs")
+    table.add_column("Summary")
+    for review in reviews:
+        table.add_row(
+            str(review.id),
+            review.reviewed_at.isoformat(),
+            review.reviewed_by,
+            review.assessment.value,
+            review.confidence.value,
+            ", ".join(str(outcome_id) for outcome_id in review.outcome_ids),
+            review.summary,
+        )
+    console.print(table)
+
+
+@decision_review_app.command("show")
+def show_decision_review(review_id: UUID) -> None:
+    """Show one authorized Decision review."""
+
+    try:
+        review = container.decision_review_service().show(review_id)
+    except DecisionReviewError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    _print_decision_review(review)
 
 
 @app.command()
@@ -1807,6 +1911,27 @@ def _print_decision_outcome(outcome: DecisionOutcome) -> None:
     )
     console.print(f"Idempotency key: {outcome.idempotency_key}")
     console.print(f"Tags: {', '.join(outcome.tags) if outcome.tags else '-'}")
+
+
+def _print_decision_review(review: DecisionReview) -> None:
+    console.print(f"ID: {review.id}")
+    console.print(f"Recorded: {review.recorded_at}")
+    console.print(f"Decision ID: {review.decision_id}")
+    console.print(f"Acceptance ID: {review.acceptance_id}")
+    _print_repeated_field("Outcome IDs", [str(outcome_id) for outcome_id in review.outcome_ids])
+    console.print(f"Reviewed by: {review.reviewed_by}")
+    console.print(f"Reviewed at: {review.reviewed_at}")
+    console.print(f"Assessment: {review.assessment.value}")
+    console.print(f"Summary: {review.summary}")
+    _print_repeated_field("Findings", list(review.findings))
+    _print_repeated_field("Candidate lessons", list(review.candidate_lessons))
+    _print_repeated_field(
+        "Evidence references",
+        [_format_evidence_reference(evidence) for evidence in review.evidence_references],
+    )
+    console.print(f"Confidence: {review.confidence.value}")
+    console.print(f"Idempotency key: {review.idempotency_key}")
+    console.print(f"Tags: {', '.join(review.tags) if review.tags else '-'}")
 
 
 def _format_evidence_reference(evidence: EvidenceReference) -> str:

@@ -106,3 +106,10 @@ def test_evidence_and_metrics_round_trip() -> None:
 
     assert restored == outcome
     assert dict(restored.metrics) == dict(outcome.metrics)
+
+
+def test_inconclusive_remains_invalid_as_decision_outcome_result() -> None:
+    values = outcome_values()
+    values["result"] = "inconclusive"
+    with pytest.raises(ValidationError):
+        DecisionOutcome.model_validate(values)

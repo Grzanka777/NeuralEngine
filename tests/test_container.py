@@ -3,6 +3,7 @@ from neural_engine.application.decision_acceptance_service import DecisionAccept
 from neural_engine.application.decision_action_service import DecisionActionService
 from neural_engine.application.decision_lifecycle_service import DecisionLifecycleService
 from neural_engine.application.decision_outcome_service import DecisionOutcomeService
+from neural_engine.application.decision_review_service import DecisionReviewService
 from neural_engine.application.decision_service import DecisionService
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationService,
@@ -23,6 +24,9 @@ from neural_engine.infrastructure.json_decision_outcome_repository import (
     JsonDecisionOutcomeRepository,
 )
 from neural_engine.infrastructure.json_decision_repository import JsonDecisionRepository
+from neural_engine.infrastructure.json_decision_review_repository import (
+    JsonDecisionReviewRepository,
+)
 from neural_engine.infrastructure.json_evolution_proposal_repository import (
     JsonEvolutionProposalRepository,
 )
@@ -116,6 +120,20 @@ def test_container_wires_canonical_decision_lifecycle_service() -> None:
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
     assert isinstance(service._action_repository, JsonDecisionActionRepository)
+    assert isinstance(service._outcome_repository, JsonDecisionOutcomeRepository)
+    assert not hasattr(service, "_review_repository")
+
+
+def test_container_wires_decision_review_repository_and_service() -> None:
+    repository = Container().decision_review_repository()
+    service = Container().decision_review_service()
+
+    assert isinstance(repository, JsonDecisionReviewRepository)
+    assert repository._directory == NeuralPaths.DECISION_REVIEWS
+    assert isinstance(service, DecisionReviewService)
+    assert isinstance(service._review_repository, JsonDecisionReviewRepository)
+    assert isinstance(service._decision_repository, JsonDecisionRepository)
+    assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
     assert isinstance(service._outcome_repository, JsonDecisionOutcomeRepository)
 
 

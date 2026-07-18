@@ -20,6 +20,36 @@ neural search pytest
 `neural observe` always stores the new observation. If exact duplicate content
 already exists, it prints a warning with the existing observation IDs.
 
+Decision learning is an explicit immutable chain from proposal through factual
+outcome and authorized interpretation. Review does not change the factual
+lifecycle state and does not create learning artifacts automatically:
+
+```bash
+neural decision add [OPTIONS]
+neural decision accept DECISION_UUID [OPTIONS]
+neural decision action add DECISION_UUID [OPTIONS]
+neural decision outcome add DECISION_UUID [OPTIONS]
+neural decision review add DECISION_UUID \
+  --acceptance-id ACCEPTANCE_UUID \
+  --outcome-id OUTCOME_UUID \
+  --reviewed-by OWNER \
+  --reviewed-at 2026-07-18T12:00:00+00:00 \
+  --assessment sound \
+  --summary "The decision remains defensible" \
+  --finding "The implementation preserved its boundaries" \
+  --confidence high \
+  --idempotency-key review-1
+
+neural decision review history DECISION_UUID
+neural decision review show REVIEW_UUID
+neural decision state DECISION_UUID
+```
+
+Review assessment is exactly `sound`, `flawed`, `mixed`, or `inconclusive`;
+confidence is `low`, `medium`, or `high`. Findings and candidate lessons are
+interpretive statements only. They do not constitute Experience, Knowledge,
+Playbook, evaluation, revision, or proposal creation.
+
 Experience capture is exposed through a nested CLI group:
 
 ```bash

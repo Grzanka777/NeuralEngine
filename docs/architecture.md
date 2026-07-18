@@ -6,7 +6,8 @@ Neural Engine follows Clean Architecture.
 
 Domain:
 
-* Owns core concepts such as `Decision`, `DecisionAcceptance`, `Observation`,
+* Owns core concepts such as `Decision`, `DecisionAcceptance`, `DecisionAction`,
+  `DecisionOutcome`, `DecisionReview`, `Observation`,
   `Experience`, `Knowledge`, `Playbook`, `PlaybookRun`, `PlaybookEvaluation`,
   `EvolutionProposal`, and `PlaybookRevision`.
 * Owns the domain foundation for `PlaybookRevisionActivation`, which represents
@@ -19,7 +20,8 @@ Domain:
 Application:
 
 * Coordinates use cases such as adding, listing, and showing Decisions,
-  explicitly accepting Decisions and inspecting acceptance history, adding,
+  explicitly accepting Decisions, recording actions, factual outcomes, and
+  authorized reviews, inspecting their history, adding,
   listing, and searching observations,
   adding, listing, and retrieving experiences, and adding, listing, and
   retrieving knowledge, playbooks, playbook runs, playbook evaluations, and
@@ -37,6 +39,9 @@ Infrastructure:
 * The current Decision repository stores one JSON file per Decision.
 * The current Decision acceptance repository stores one JSON file per
   DecisionAcceptance.
+* The current Decision action repository stores one JSON file per DecisionAction.
+* The current Decision outcome repository stores one JSON file per DecisionOutcome.
+* The current Decision review repository stores one JSON file per DecisionReview.
 * Implements ports using concrete storage mechanisms.
 * The current observation repository stores one JSON file per observation.
 * The current experience repository stores one JSON file per experience.
@@ -638,9 +643,35 @@ The CLI additionally exposes `neural decision outcome add`, `outcome-history`,
 parsed as unambiguous bool/int/float values or retained as strings. The CLI
 executes no commands and reads no evidence locators.
 
-DecisionReview and a `reviewed` state remain future-only. Outcome creation does
-not mean review or learning and creates no Experience, Knowledge, Playbook,
-PlaybookEvaluation, or EvolutionProposal. Execution, lifecycle reversal, file
-or git ingestion, Consigliere integration, automatic learning/evolution, and
-Handbook synchronization remain unimplemented. The next recommended controlled
-slice is exactly the DecisionReview foundation.
+The DecisionReview foundation adds a separate immutable authorized
+interpretation record over one Decision, its acceptance, and one or more
+explicit ordered DecisionOutcome records. Action lineage remains transitive
+through outcomes. `DecisionReviewRepository` exposes only `save()`,
+`load_all()`, and `get_by_id()`, and `JsonDecisionReviewRepository` stores one
+deterministic JSON file per review under `NeuralPaths.DECISION_REVIEWS`.
+
+`DecisionReviewService.add()` validates every relation and requires
+`reviewed_at` to be at or after the latest referenced `validated_at` before
+writing. Idempotency is scoped by
+`(decision_id, "decision_review", idempotency_key)`, ignores generated review
+identity/time and evidence capture times, returns equivalent replay, and rejects
+conflicts. Different keys append reviews; earlier reviews are never mutated or
+replaced. History validates persisted relations and sorts by
+`(reviewed_at, review.id)`, independent of repository order.
+
+Review assessment is exactly `sound`, `flawed`, `mixed`, or `inconclusive`;
+confidence is exactly `low`, `medium`, or `high`. Findings and candidate lessons
+remain interpretive statements and do not constitute learning. The CLI exposes
+`neural decision review add`, `review history`, and `review show` without
+opening evidence locators.
+
+`DecisionLifecycleService` remains unchanged and does not depend on reviews.
+There is no `reviewed` or composite lifecycle state: `neural decision state`
+continues to return `proposed`, `accepted`, `in_progress`, `succeeded`,
+`failed`, `partial`, or `outcome_unknown` from acceptance/action/outcome facts.
+No review automatically creates Experience, Knowledge, Playbook,
+PlaybookEvaluation, PlaybookRevision, EvolutionProposal, or any other learning
+artifact. Execution, lifecycle reversal, ingestion, Consigliere integration,
+automatic learning/evolution, and Handbook synchronization remain
+unimplemented. The next controlled milestone is separate explicit Experience
+creation from review findings or candidate lessons.

@@ -16,6 +16,7 @@ development event
 -> selected Decision
 -> DecisionAction
 -> DecisionOutcome
+-> DecisionReview
 -> Experience
 -> Knowledge
 -> Playbook improvement
@@ -37,13 +38,14 @@ boundaries for:
 * sketching future CLI and implementation milestones.
 
 `NeuralPaths.DECISIONS`, `NeuralPaths.DECISION_ACCEPTANCES`,
-`NeuralPaths.DECISION_ACTIONS`, and `NeuralPaths.DECISION_OUTCOMES` provide
-separate persistence directories. The Decision, DecisionAcceptance,
-DecisionAction, and DecisionOutcome foundations now
+`NeuralPaths.DECISION_ACTIONS`, `NeuralPaths.DECISION_OUTCOMES`, and
+`NeuralPaths.DECISION_REVIEWS` provide separate persistence directories. The
+Decision, DecisionAcceptance, DecisionAction, DecisionOutcome, and
+DecisionReview foundations now
 implement immutable domain records, persistence-focused ports, JSON adapters,
-application services, container wiring, proposal/acceptance/action/outcome
-commands, relation history, summary projection, and the canonical lifecycle
-projection. DecisionReview remains unimplemented.
+application services, container wiring, proposal/acceptance/action/outcome/review
+commands, relation history, outcome summary projection, and the canonical
+lifecycle projection.
 
 ## Implemented Decision Foundation
 
@@ -120,7 +122,8 @@ Decision without acceptance -> proposed
 Decision with one valid acceptance -> accepted
 ```
 
-Execution and reviewed states remain unavailable until later foundations exist.
+Execution and reviewed lifecycle states remain unavailable. Actions and reviews
+are separate immutable records, not lifecycle-state values.
 
 ## Implemented DecisionAction Foundation
 
@@ -181,14 +184,51 @@ The CLI exposes `decision outcome add`, `outcome-history`, `outcome-show`, and
 `outcome-summary`; it parses repeated evidence, metric, action, and tag options
 without reading evidence locators.
 
+## Implemented DecisionReview Foundation
+
+`DecisionReview` is an immutable, append-only authorized interpretation of one
+Decision based on one or more explicit DecisionOutcome records. It stores the
+Decision and acceptance IDs, ordered unique outcome IDs, reviewer and review
+time, assessment, summary, required ordered findings, optional ordered candidate
+lessons, evidence references, confidence, idempotency key, and tags. Action
+lineage remains transitive through the referenced outcomes; reviews do not copy
+action IDs.
+
+Assessment is exactly `sound`, `flawed`, `mixed`, or `inconclusive`. Confidence
+is exactly `low`, `medium`, or `high`. Reviewer text is limited to 255
+characters. Summary, each finding, and each candidate lesson are limited to
+1000 characters; findings and candidate lessons are each limited to 100 items.
+Ordered findings and candidate lessons reject case-insensitive duplicates.
+Candidate lessons are plain review statements, not Experience or Knowledge.
+
+`DecisionReviewService.add()` validates the Decision, its acceptance, every
+explicit outcome relation, and that review time is not earlier than the latest
+referenced outcome validation. Idempotency is scoped by
+`(decision_id, "decision_review", idempotency_key)` and excludes generated
+review identity/time and evidence capture times. Equivalent replay returns the
+existing review; conflicting reuse fails without a write. A different key may
+append another review over the same ordered outcome set.
+
+`list_for_decision()` validates persisted relations and sorts ascending by
+`(reviewed_at, review.id)`. `show()` also fails closed on invalid persisted
+relations. `DecisionReviewRepository` remains persistence-focused with only
+`save()`, `load_all()`, and `get_by_id()`, while
+`JsonDecisionReviewRepository` stores deterministic one-file-per-record JSON.
+The CLI exposes `neural decision review add`, `review history`, and `review
+show`; evidence locators are never opened or ingested.
+
+Review is orthogonal interpretive history. Multiple reviews are allowed for a
+Decision, outcome, or ordered outcome set. No earlier review is mutated,
+replaced, deleted, superseded, or marked current. Review creates no downstream
+learning artifact and does not change the canonical lifecycle projection.
+
 ## Non-Goals
 
 This foundation does not implement:
 
-* DecisionReview,
 * file ingestion, git integration, or command execution,
 * automatic Observation, Experience, Knowledge, or Playbook creation,
-* automatic decision acceptance, execution, review, or evolution,
+* automatic decision acceptance, execution, review creation, or evolution,
 * Playbook mutation or PlaybookRevision materialization,
 * Consigliere integration,
 * Handbook generation or synchronization, or
@@ -214,9 +254,10 @@ Decision. More than one action may belong to one Decision.
 **DecisionOutcome** is an immutable factual account of what happened after one
 or more DecisionActions, including validation results and evidence references.
 
-**DecisionReview** is an immutable assessment of one or more outcomes. It
-records whether the decision was effective, review findings, and candidate
-lessons. It does not itself create Experience, Knowledge, or Playbook changes.
+**DecisionReview** is an immutable authorized interpretation of one or more
+explicit outcomes for the same Decision and acceptance. It records assessment,
+review findings, and candidate lessons. It does not itself create Experience,
+Knowledge, or Playbook changes.
 
 **EvidenceReference** is a small immutable value embedded in a record. It points
 to evidence and identifies it without copying the evidence body into
@@ -340,26 +381,29 @@ learning records.
 
 ### DecisionReview
 
-Recommended conceptual fields:
+Implemented fields:
 
 ```text
 id
-reviewed_at
+recorded_at
 decision_id
+acceptance_id
 outcome_ids
-effectiveness
-findings
-corrective_decision_ids
-lesson_candidates
 reviewed_by
+reviewed_at
+assessment
+summary
+findings
+candidate_lessons
 evidence_references
+confidence
 idempotency_key
+tags
 ```
 
-Corrective work should be represented by a new Decision linked from the review,
-not by rewriting the original Decision or Outcome. `lesson_candidates` are
-review input only; promotion to Experience or Knowledge requires an explicit
-later use case.
+Each review targets an explicit ordered, unique, non-empty outcome set belonging
+to the same Decision and acceptance. `candidate_lessons` are review input only;
+promotion to Experience or Knowledge requires an explicit later use case.
 
 ## Invariants
 
@@ -369,7 +413,7 @@ later use case.
    external system.
 4. Actions require an accepted Decision.
 5. Outcomes reference existing actions for the same Decision.
-6. Reviews reference existing outcomes for the same Decision.
+6. Reviews reference existing outcomes for the same Decision and acceptance.
 7. Validation completes before any record is persisted.
 8. Corrections append records; they do not rewrite history.
 9. Evidence references identify provenance but do not imply that referenced
@@ -586,7 +630,7 @@ idempotency-specific repository query is justified initially.
 
 ## CLI And Future Sketch
 
-The proposal, acceptance, action, and state commands are implemented:
+The proposal, acceptance, action, outcome, review, and state commands are implemented:
 
 ```bash
 neural decision add
@@ -597,6 +641,13 @@ neural decision acceptance-history DECISION_UUID
 neural decision action add DECISION_UUID
 neural decision action-history DECISION_UUID
 neural decision action-show ACTION_UUID
+neural decision outcome add DECISION_UUID
+neural decision outcome-history DECISION_UUID
+neural decision outcome-show OUTCOME_UUID
+neural decision outcome-summary DECISION_UUID
+neural decision review add DECISION_UUID
+neural decision review history DECISION_UUID
+neural decision review show REVIEW_UUID
 neural decision state DECISION_UUID
 ```
 
@@ -628,18 +679,15 @@ Action add requires acceptance ID, action type, summary, performer, ISO-8601
 start time, and idempotency key. Completion time, PlaybookRun, evidence, and tags
 are optional.
 
-The following commands remain future-only and do not exist:
+The following ingestion commands remain future-only and do not exist:
 
 ```bash
-neural decision review add DECISION_UUID
-
 neural project ingest-review REVIEW_PATH
 neural project ingest-commit COMMIT_HASH
 ```
 
 The implemented handlers resolve application services from the container,
-translate input, and render output. Review and project ingestion belong to
-later slices.
+translate input, and render output. Project ingestion belongs to a later slice.
 
 ## First Implementation Milestone
 
@@ -656,19 +704,20 @@ Decision foundation
 
 This remains smaller than implementing the full decision workflow. It is
 immediately useful for recording real NeuralEngine architecture decisions,
-establishes provenance and idempotency conventions, and leaves acceptance, actions,
-outcomes, reviews, ingestion, and learning for separately reviewed slices.
+establishes provenance and idempotency conventions. Acceptance, action,
+outcome, and review foundations are now separately implemented; ingestion and
+learning remain separate future slices.
 
 The milestone keeps Decision immutable, requires one bounded objective, at
 least two meaningful alternatives, one proposed option that matches an
 alternative, non-blank rationale, explicit provenance, and an idempotency key.
 It does not automatically create Observations or downstream learning records.
 
-The DecisionAcceptance, DecisionAction, and DecisionOutcome foundations are
-complete. The next recommended controlled slice is exactly the DecisionReview
-foundation. Candidate lessons may be recorded there, but Experience, Knowledge,
-Playbook, PlaybookEvaluation, and EvolutionProposal creation must remain
-explicit and separate.
+The DecisionAcceptance, DecisionAction, DecisionOutcome, and DecisionReview
+foundations are complete. The next recommended controlled slice is separate,
+explicit Experience creation from review findings or candidate lessons.
+Experience, Knowledge, Playbook, PlaybookEvaluation, PlaybookRevision, and
+EvolutionProposal creation remains explicit and is not part of DecisionReview.
 
 ## Risks And Rejected Alternatives
 

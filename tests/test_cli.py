@@ -6558,7 +6558,7 @@ def decision_add_args() -> list[str]:
     ]
 
 
-def test_decision_help_exposes_outcome_slice_but_no_review_commands() -> None:
+def test_decision_help_exposes_outcome_and_review_slices() -> None:
     runner = CliRunner()
 
     result = runner.invoke(cli.app, ["decision", "--help"])
@@ -6574,7 +6574,7 @@ def test_decision_help_exposes_outcome_slice_but_no_review_commands() -> None:
     assert "action-show" in result.output
     assert "state" in result.output
     assert "outcome" in result.output
-    assert "review" not in result.output
+    assert "review" in result.output
 
 
 def test_decision_add_delegates_all_inputs_and_displays_id(
@@ -7381,7 +7381,7 @@ def outcome_add_args() -> list[str]:
     ]
 
 
-def test_decision_help_exposes_outcomes_but_no_review_commands() -> None:
+def test_decision_help_exposes_outcome_and_review_command_groups() -> None:
     runner = CliRunner()
     decision_help = runner.invoke(cli.app, ["decision", "--help"])
     outcome_help = runner.invoke(cli.app, ["decision", "outcome", "--help"])
@@ -7392,7 +7392,7 @@ def test_decision_help_exposes_outcomes_but_no_review_commands() -> None:
     assert "outcome-show" in decision_help.output
     assert "outcome-summary" in decision_help.output
     assert "add" in outcome_help.output
-    assert "review" not in decision_help.output.casefold()
+    assert "review" in decision_help.output.casefold()
 
 
 def test_decision_outcome_add_parses_repeated_values_and_metrics(

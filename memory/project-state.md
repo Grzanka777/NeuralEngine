@@ -479,10 +479,36 @@ records.
 exactly `proposed`, `accepted`, `in_progress`, `succeeded`, `failed`, `partial`,
 or `outcome_unknown`. It persists no status and derives no review or learning.
 
-This slice adds no DecisionReview, command execution, reversal, ingestion,
-automatic Observation, Experience, Knowledge, Playbook, PlaybookEvaluation, or
-EvolutionProposal creation, automatic evolution, Consigliere integration,
-dependencies, or generated Handbook changes.
+NeuralEngine now also has a DecisionReview vertical slice:
+
+* immutable `DecisionReview` with one Decision, its acceptance, and ordered
+  unique outcome relations;
+* exact assessment values `sound`, `flawed`, `mixed`, and `inconclusive`;
+* exact confidence values `low`, `medium`, and `high`;
+* persistence-focused `DecisionReviewRepository` and deterministic
+  `JsonDecisionReviewRepository` under `NeuralPaths.DECISION_REVIEWS`;
+* `DecisionReviewService` with `add()`, `list_for_decision()`, and `show()`;
+* container and Brain directory wiring;
+* `neural decision review add`, `review history`, and `review show`.
+
+DecisionReview is authorized interpretation, not factual outcome or learning.
+It references actions only transitively through its explicit outcomes. The
+service validates Decision, acceptance, outcome ownership, and review time
+before writing. Idempotency is scoped by
+`(decision_id, "decision_review", idempotency_key)` and ignores generated review
+identity/time and evidence capture times. Multiple append-only reviews are
+allowed, while history sorts by `(reviewed_at, review.id)` and fails closed on
+invalid persisted relations.
+
+Findings are required ordered interpretive statements. Candidate lessons are
+optional statements only; neither creates Experience, Knowledge, Playbook,
+PlaybookEvaluation, PlaybookRevision, EvolutionProposal, or another learning
+artifact. Evidence locators are not opened. There is no Consigliere integration.
+
+`DecisionLifecycleService` remains unchanged and derives only `proposed`,
+`accepted`, `in_progress`, `succeeded`, `failed`, `partial`, or
+`outcome_unknown`. Review does not create a `reviewed` or composite state, and
+`neural decision state` remains outcome-derived after any number of reviews.
 
 ## Validation
 
@@ -493,10 +519,11 @@ Latest validation passed:
 * `uv run mypy src tests`
 * `uv run pytest`
 
-Pytest collected 731 tests.
+The final test count for the DecisionReview slice is recorded by the validation
+evidence in `.agent-work/reviews/review-decision-review-foundation.md`.
 
 ## Notes for next work
 
-The next recommended controlled milestone is exactly DecisionReview foundation.
-It may record candidate lessons but must not automatically create Experience,
-Knowledge, Playbook, PlaybookEvaluation, or EvolutionProposal records.
+The next recommended controlled milestone is separate explicit Experience
+creation from DecisionReview findings or candidate lessons. It is not part of
+the DecisionReview foundation.
