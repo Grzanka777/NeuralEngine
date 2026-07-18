@@ -133,9 +133,12 @@ JSON without the optional field.
 
 `neural experience knowledge EXPERIENCE_UUID` delegates to
 `KnowledgeService.list_for_experience()`. The service verifies the experience
-exists through the `ExperienceRepository` port, loads knowledge through the
-`KnowledgeRepository` port, and returns only knowledge linked to that experience
-ID.
+through the validated `ExperienceService` read boundary, loads knowledge through
+the `KnowledgeRepository` port, and returns only knowledge linked to that
+experience ID. Before returning, it validates every Experience relation of each
+matching Knowledge item. Unrelated Knowledge records are not relation-validated
+by this scoped query. This command is read-only navigation and does not create
+Knowledge.
 
 ## Knowledge Flow
 
@@ -144,21 +147,47 @@ ID.
 statement, rationale, confidence, experience IDs, and optional tags. The CLI does
 not generate, infer, summarize, or modify knowledge. The service rejects an empty
 evidence list, then verifies each referenced experience through the
-`ExperienceRepository` port before it creates or saves a domain `Knowledge`
-item. Validation stops on the first missing experience and does not persist
-knowledge when validation fails.
+application-facing `ExperienceReader` protocol implemented by
+`ExperienceService.get_by_id()` before it creates or saves a domain `Knowledge`
+item. This retains one owner for DecisionReview promotion provenance validation.
+Validation follows caller order, preserves duplicate IDs, stops on the first
+missing or corrupt Experience, and does not persist Knowledge when validation
+fails.
 
 `neural knowledge list` retrieves all knowledge through the same service and
-repository stack.
+repository stack, then validates every linked Experience of every record before
+returning the list. It fails closed rather than skipping, repairing, filtering,
+or partially returning invalid records.
 
 `neural knowledge from-experience EXPERIENCE_UUID` delegates to
 `KnowledgeService.add_from_experience()`. The service loads the source
-experience through the `ExperienceRepository` port once, rejects a missing
-experience, and creates knowledge linked to that single experience ID using only
-the statement, rationale, confidence, and tags supplied by the caller.
+experience through the validated Experience read boundary once, rejects a
+missing or corrupt source, and creates knowledge linked to that single
+experience ID using only the statement, rationale, confidence, and tags supplied
+by the caller.
 
 `neural knowledge show UUID` retrieves a single knowledge item through
-`KnowledgeService.get_by_id()` and displays all knowledge fields.
+`KnowledgeService.get_by_id()`, validates every linked Experience when the item
+exists, and displays all knowledge fields. A missing Knowledge item still
+returns no record without an Experience read.
+
+`KnowledgeService` propagates the existing `DecisionReviewError` and
+`DecisionReviewPromotionError` families from their canonical owners. It does
+not inspect promotion fields or duplicate Review validation. Missing Experience
+relations retain the Knowledge-layer `ExperienceNotFoundError`. The container
+injects `ExperienceService` rather than a raw Experience repository, preserving
+the acyclic dependency graph `KnowledgeService -> ExperienceService ->
+ExperienceRepository + ObservationRepository + DecisionReviewService`.
+The guarantee is exactly the existing `ExperienceService.get_by_id()` contract;
+it does not add recursive validation of Observation or DecisionAction relations.
+
+This hardening adds no Knowledge or Experience field, repository method, JSON
+format, authority field, idempotency behavior, creation command, or automatic
+learning. Knowledge may still mix ordinary and promoted Experiences, combine
+different Reviews, and contain repeated Experience IDs. Persisting a
+generalization is not evidence that applying it improved a later decision; that
+requires durable operational use and feedback in a separate learning-loop use
+case.
 
 `neural knowledge playbooks UUID` delegates to
 `PlaybookService.list_for_knowledge()`. The service verifies the knowledge item

@@ -6,6 +6,7 @@ from neural_engine.application.decision_outcome_service import DecisionOutcomeSe
 from neural_engine.application.decision_review_service import DecisionReviewService
 from neural_engine.application.decision_service import DecisionService
 from neural_engine.application.experience_service import ExperienceService
+from neural_engine.application.knowledge_service import KnowledgeService
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationService,
 )
@@ -146,6 +147,15 @@ def test_container_wires_experience_service_with_review_validation_boundary() ->
     assert isinstance(service._experience_repository, JsonExperienceRepository)
     assert isinstance(service._observation_repository, JsonObservationRepository)
     assert isinstance(service._decision_review_service, DecisionReviewService)
+
+
+def test_container_wires_knowledge_service_to_validated_experience_service() -> None:
+    service = Container().knowledge_service()
+
+    assert isinstance(service, KnowledgeService)
+    assert isinstance(service._knowledge_repository, JsonKnowledgeRepository)
+    assert isinstance(service._experience_reader, ExperienceService)
+    assert not isinstance(service._experience_reader, JsonExperienceRepository)
 
 
 def test_container_wires_playbook_service_without_playbook_revision_repository() -> None:

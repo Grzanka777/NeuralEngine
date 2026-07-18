@@ -129,6 +129,13 @@ neural knowledge revisions 11111111-1111-1111-1111-111111111111
 
 Every referenced experience must already exist. The CLI stores only the
 statement, rationale, confidence, experience IDs, and tags provided by the user.
+Knowledge creation and reads validate every linked Experience through
+`ExperienceService`, so corrupt DecisionReview-derived promotion provenance
+fails closed with its canonical error. `neural experience knowledge UUID` is
+read-only navigation; explicit creation uses the existing generic `neural
+knowledge add` or `neural knowledge from-experience` command. No Knowledge
+schema, authority, idempotency, or automatic creation behavior is implied, and
+storing Knowledge does not prove that it improved a later decision.
 
 Playbook capture is exposed through a nested CLI group and stores explicit
 operational procedures:

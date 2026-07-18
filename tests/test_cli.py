@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 from typer.testing import CliRunner
 
-from neural_engine import cli
+import neural_engine.cli as cli
 from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
     DecisionAcceptanceIdempotencyConflictError,
@@ -28,6 +28,7 @@ from neural_engine.application.decision_outcome_service import (
     DecisionOutcomeNotFoundError,
     DecisionOutcomeSummary,
 )
+from neural_engine.application.decision_review_service import DecisionReviewNotFoundError
 from neural_engine.application.decision_service import (
     DecisionIdempotencyConflictError,
     DecisionNotFoundError,
@@ -44,7 +45,10 @@ from neural_engine.application.evolution_proposal_service import (
 from neural_engine.application.evolution_proposal_service import (
     PlaybookNotFoundError as ProposalPlaybookNotFoundError,
 )
-from neural_engine.application.experience_service import ObservationNotFoundError
+from neural_engine.application.experience_service import (
+    DecisionReviewPromotionSourceIndexError,
+    ObservationNotFoundError,
+)
 from neural_engine.application.knowledge_service import (
     ExperienceNotFoundError,
     KnowledgeEvidenceRequiredError,
@@ -92,6 +96,7 @@ from neural_engine.domain import (
     DecisionAction,
     DecisionOutcome,
     DecisionOutcomeResult,
+    DecisionReviewPromotionSourceKind,
     EvidenceReference,
     EvolutionProposal,
     EvolutionProposalStatus,
@@ -488,9 +493,11 @@ class FakeKnowledgeService:
         self,
         knowledge_items: list[Knowledge],
         missing_experience_id: UUID | None = None,
+        integrity_error: Exception | None = None,
     ) -> None:
         self.knowledge_items = knowledge_items
         self.missing_experience_id = missing_experience_id
+        self.integrity_error = integrity_error
         self.add_calls: list[
             tuple[str, str, KnowledgeConfidence, list[UUID], list[str] | None]
         ] = []
@@ -515,6 +522,8 @@ class FakeKnowledgeService:
 
         if self.missing_experience_id is not None:
             raise ExperienceNotFoundError(self.missing_experience_id)
+        if self.integrity_error is not None:
+            raise self.integrity_error
 
         knowledge = Knowledge(
             statement=statement,
@@ -541,6 +550,8 @@ class FakeKnowledgeService:
 
         if self.missing_experience_id is not None:
             raise ExperienceNotFoundError(self.missing_experience_id)
+        if self.integrity_error is not None:
+            raise self.integrity_error
 
         knowledge = Knowledge(
             statement=statement,
@@ -554,6 +565,8 @@ class FakeKnowledgeService:
         return knowledge
 
     def list_knowledge(self) -> list[Knowledge]:
+        if self.integrity_error is not None:
+            raise self.integrity_error
         return self.knowledge_items
 
     def list_for_experience(self, experience_id: UUID) -> list[Knowledge]:
@@ -561,6 +574,8 @@ class FakeKnowledgeService:
 
         if self.missing_experience_id is not None:
             raise ExperienceNotFoundError(self.missing_experience_id)
+        if self.integrity_error is not None:
+            raise self.integrity_error
 
         return [
             knowledge
@@ -570,6 +585,9 @@ class FakeKnowledgeService:
 
     def get_by_id(self, knowledge_id: UUID) -> Knowledge | None:
         self.requested_ids.append(knowledge_id)
+
+        if self.integrity_error is not None:
+            raise self.integrity_error
 
         for knowledge in self.knowledge_items:
             if knowledge.id == knowledge_id:
@@ -2248,6 +2266,72 @@ def test_knowledge_show_handles_missing_knowledge(monkeypatch: pytest.MonkeyPatc
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
     assert f"Knowledge not found: {missing_id}" in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        [
+            "knowledge",
+            "add",
+            "--statement",
+            "Rejected knowledge",
+            "--rationale",
+            "Promoted ancestry is corrupt.",
+            "--confidence",
+            "high",
+            "--experience-id",
+            "11111111-1111-1111-1111-111111111111",
+        ],
+        [
+            "knowledge",
+            "from-experience",
+            "11111111-1111-1111-1111-111111111111",
+            "--statement",
+            "Rejected knowledge",
+            "--rationale",
+            "Promoted ancestry is corrupt.",
+            "--confidence",
+            "high",
+        ],
+        ["knowledge", "list"],
+        ["knowledge", "show", "22222222-2222-2222-2222-222222222222"],
+        ["experience", "knowledge", "11111111-1111-1111-1111-111111111111"],
+    ],
+    ids=[
+        "knowledge-add",
+        "knowledge-from-experience",
+        "knowledge-list",
+        "knowledge-show",
+        "experience-knowledge",
+    ],
+)
+@pytest.mark.parametrize(
+    "integrity_error",
+    [
+        DecisionReviewNotFoundError(UUID("33333333-3333-3333-3333-333333333333")),
+        DecisionReviewPromotionSourceIndexError(
+            UUID("33333333-3333-3333-3333-333333333333"),
+            DecisionReviewPromotionSourceKind.FINDING,
+            4,
+        ),
+    ],
+    ids=["review-relation", "promotion-source"],
+)
+def test_knowledge_surfaces_render_controlled_ancestry_integrity_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+    integrity_error: Exception,
+) -> None:
+    service = FakeKnowledgeService([], integrity_error=integrity_error)
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, command)
+
+    assert result.exit_code == 1
+    assert " ".join(str(integrity_error).split()) in " ".join(result.output.split())
+    assert "Traceback" not in result.output
 
 
 def test_playbook_add_delegates_with_parsed_repeatable_values_and_prints_id(

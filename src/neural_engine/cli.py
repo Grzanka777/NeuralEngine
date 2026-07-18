@@ -1031,6 +1031,8 @@ def list_experience_knowledge(experience_id: UUID) -> None:
         knowledge_items = service.list_for_experience(experience_id)
     except ExperienceNotFoundError as error:
         _exit_experience_not_found(error)
+    except (DecisionReviewError, DecisionReviewPromotionError) as error:
+        _exit_decision_review_integrity_error(error)
 
     if not knowledge_items:
         console.print(f"[yellow]No knowledge linked to experience: {experience_id}[/yellow]")
@@ -1083,6 +1085,8 @@ def add_knowledge(
         raise typer.Exit(code=1) from error
     except ExperienceNotFoundError as error:
         _exit_experience_not_found(error)
+    except (DecisionReviewError, DecisionReviewPromotionError) as error:
+        _exit_decision_review_integrity_error(error)
 
     console.print(f"[green]Knowledge stored.[/green] ID: [cyan]{knowledge.id}[/cyan]")
 
@@ -1108,6 +1112,8 @@ def add_knowledge_from_experience(
         )
     except ExperienceNotFoundError as error:
         _exit_experience_not_found(error)
+    except (DecisionReviewError, DecisionReviewPromotionError) as error:
+        _exit_decision_review_integrity_error(error)
 
     console.print(
         f"[green]Knowledge stored from experience.[/green] ID: [cyan]{knowledge.id}[/cyan]"
@@ -1119,7 +1125,12 @@ def list_knowledge() -> None:
     """List all knowledge."""
 
     service = container.knowledge_service()
-    knowledge_items = service.list_knowledge()
+    try:
+        knowledge_items = service.list_knowledge()
+    except ExperienceNotFoundError as error:
+        _exit_experience_not_found(error)
+    except (DecisionReviewError, DecisionReviewPromotionError) as error:
+        _exit_decision_review_integrity_error(error)
 
     if not knowledge_items:
         console.print("[yellow]No knowledge found.[/yellow]")
@@ -1174,7 +1185,12 @@ def show_knowledge(knowledge_id: UUID) -> None:
     """Show one knowledge item."""
 
     service = container.knowledge_service()
-    knowledge = service.get_by_id(knowledge_id)
+    try:
+        knowledge = service.get_by_id(knowledge_id)
+    except ExperienceNotFoundError as error:
+        _exit_experience_not_found(error)
+    except (DecisionReviewError, DecisionReviewPromotionError) as error:
+        _exit_decision_review_integrity_error(error)
 
     if knowledge is None:
         console.print(f"[red]Knowledge not found: {knowledge_id}[/red]")
@@ -2374,6 +2390,13 @@ def _exit_experience_not_found(error: ExperienceNotFoundError) -> None:
 
 def _exit_knowledge_not_found(error: KnowledgeNotFoundError) -> None:
     console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _exit_decision_review_integrity_error(
+    error: DecisionReviewError | DecisionReviewPromotionError,
+) -> None:
+    console.print(f"[red]{error}[/red]")
     raise typer.Exit(code=1) from error
 
 

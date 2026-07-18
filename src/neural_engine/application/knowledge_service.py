@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from typing import Protocol
 from uuid import UUID
 
-from neural_engine.domain import Knowledge, KnowledgeConfidence
-from neural_engine.ports.experience_repository import ExperienceRepository
+from neural_engine.domain import Experience, Knowledge, KnowledgeConfidence
 from neural_engine.ports.knowledge_repository import KnowledgeRepository
+
+
+class ExperienceReader(Protocol):
+    """Validated application read boundary for Experience evidence."""
+
+    def get_by_id(self, experience_id: UUID) -> Experience | None: ...
 
 
 class ExperienceNotFoundError(Exception):
@@ -28,10 +34,10 @@ class KnowledgeService:
     def __init__(
         self,
         knowledge_repository: KnowledgeRepository,
-        experience_repository: ExperienceRepository,
+        experience_reader: ExperienceReader,
     ) -> None:
         self._knowledge_repository = knowledge_repository
-        self._experience_repository = experience_repository
+        self._experience_reader = experience_reader
 
     def add(
         self,
@@ -63,10 +69,7 @@ class KnowledgeService:
         confidence: KnowledgeConfidence,
         tags: list[str] | None = None,
     ) -> Knowledge:
-        experience = self._experience_repository.get_by_id(experience_id)
-
-        if experience is None:
-            raise ExperienceNotFoundError(experience_id)
+        experience = self._require_experience(experience_id)
 
         knowledge = Knowledge(
             statement=statement,
@@ -81,25 +84,41 @@ class KnowledgeService:
         return knowledge
 
     def list_knowledge(self) -> list[Knowledge]:
-        return self._knowledge_repository.load_all()
+        knowledge_items = self._knowledge_repository.load_all()
+        for knowledge in knowledge_items:
+            self._validate_knowledge_relations(knowledge)
+        return knowledge_items
 
     def list_for_experience(self, experience_id: UUID) -> list[Knowledge]:
-        if self._experience_repository.get_by_id(experience_id) is None:
-            raise ExperienceNotFoundError(experience_id)
+        self._require_experience(experience_id)
 
         knowledge_items = self._knowledge_repository.load_all()
-
-        return [
+        linked_items = [
             knowledge for knowledge in knowledge_items if experience_id in knowledge.experience_ids
         ]
+        for knowledge in linked_items:
+            self._validate_knowledge_relations(knowledge)
+        return linked_items
 
     def get_by_id(self, knowledge_id: UUID) -> Knowledge | None:
-        return self._knowledge_repository.get_by_id(knowledge_id)
+        knowledge = self._knowledge_repository.get_by_id(knowledge_id)
+        if knowledge is not None:
+            self._validate_knowledge_relations(knowledge)
+        return knowledge
 
     def _validate_experience_ids(self, experience_ids: list[UUID]) -> None:
         if not experience_ids:
             raise KnowledgeEvidenceRequiredError()
 
         for experience_id in experience_ids:
-            if self._experience_repository.get_by_id(experience_id) is None:
-                raise ExperienceNotFoundError(experience_id)
+            self._require_experience(experience_id)
+
+    def _require_experience(self, experience_id: UUID) -> Experience:
+        experience = self._experience_reader.get_by_id(experience_id)
+        if experience is None:
+            raise ExperienceNotFoundError(experience_id)
+        return experience
+
+    def _validate_knowledge_relations(self, knowledge: Knowledge) -> None:
+        for experience_id in knowledge.experience_ids:
+            self._require_experience(experience_id)

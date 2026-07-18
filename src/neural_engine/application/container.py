@@ -119,7 +119,7 @@ class Container:
     def knowledge_service(self) -> KnowledgeService:
         return KnowledgeService(
             JsonKnowledgeRepository(),
-            JsonExperienceRepository(),
+            self.experience_service(),
         )
 
     def playbook_service(self) -> PlaybookService:

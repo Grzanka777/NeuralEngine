@@ -264,7 +264,34 @@ authorities and may differ.
 Promotion writes no Decision lifecycle state and creates no Knowledge,
 Playbook, evaluation, proposal, revision, evidence execution, or Consigliere
 artifact. A promoted Experience is still not Knowledge; the next downstream
-learning step remains a separate explicit decision.
+learning step remains a separate explicit decision through the existing generic
+`KnowledgeService.add()` or `add_from_experience()` path.
+
+## Knowledge-to-Experience Integrity Boundary
+
+Explicit Knowledge creation already accepts ordinary, Observation-derived, and
+DecisionReview-promoted Experiences. `neural knowledge from-experience` creates
+one Knowledge item from one existing Experience; `neural experience knowledge`
+only lists linked Knowledge and never creates it.
+
+Every Knowledge creation or returned Knowledge relation now reads Experience
+through `ExperienceService.get_by_id()`. This makes the existing Experience
+service the single owner of DecisionReview relation, promotion selector, and
+copied-source-text validation. Missing Experiences retain
+`ExperienceNotFoundError`; canonical DecisionReview and promotion-integrity
+errors propagate fail closed. Complete Knowledge lists validate every relation.
+Single-item reads validate relations only for a present item. The scoped
+Experience navigation validates the requested Experience and every relation of
+matching Knowledge items, but deliberately does not validate unrelated
+Knowledge records.
+
+This is application-boundary hardening, not a new promotion feature. It changes
+no Knowledge or Experience schema, repository, JSON format, cardinality,
+authority, duplicate-ID behavior, or lack of Knowledge idempotency. It does not
+copy Review provenance into Knowledge or create Knowledge automatically.
+Persisted Knowledge records an explicit generalization; it does not demonstrate
+that later operational use improved a decision. The remaining learning-loop gap
+is durable use and feedback, not another Knowledge-promotion aggregate.
 
 ## Non-Goals
 
@@ -759,9 +786,10 @@ It does not automatically create Observations or downstream learning records.
 
 The DecisionAcceptance, DecisionAction, DecisionOutcome, DecisionReview, and
 explicit Review-to-Experience promotion foundations are complete. The next
-downstream learning step remains a separate explicit decision. Knowledge,
-Playbook, PlaybookEvaluation, PlaybookRevision, and EvolutionProposal creation
-remains explicit and is not part of Review promotion.
+downstream generalization may use the existing explicit generic Knowledge path;
+it is not part of Review promotion. Knowledge, Playbook, PlaybookEvaluation,
+PlaybookRevision, and EvolutionProposal creation remains explicit. Durable
+operational Knowledge use and feedback remains a separate future slice.
 
 ## Risks And Rejected Alternatives
 

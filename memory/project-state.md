@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-07-17
+Last updated: 2026-07-18
 
 ## Current implementation
 
@@ -77,18 +77,29 @@ Neural Engine now has a minimal Knowledge vertical slice:
 
 Knowledge is a durable rule, lesson, or conclusion derived from one or more
 experiences. `KnowledgeService.add()` requires at least one experience ID and
-validates every referenced experience through the `ExperienceRepository` port
-before creating or saving knowledge. Missing evidence raises
+validates every referenced experience through the narrow `ExperienceReader`
+boundary implemented by `ExperienceService.get_by_id()` before creating or
+saving knowledge. Missing evidence raises
 `KnowledgeEvidenceRequiredError`; a missing experience raises
 `ExperienceNotFoundError` with the missing experience UUID. Knowledge is stored
 as one JSON file per knowledge item under `NeuralPaths.KNOWLEDGE`.
 The Knowledge CLI only records explicit user-supplied statements, rationale,
 confidence, experience IDs, and tags; it does not generate or infer knowledge.
 `KnowledgeService.add_from_experience()` creates knowledge linked to one
-existing experience after loading that experience through the
-`ExperienceRepository` port.
-`KnowledgeService.list_for_experience()` verifies one existing experience and
-returns knowledge items linked to it.
+existing experience after loading it through the validated service boundary.
+`KnowledgeService.list_knowledge()` and `get_by_id()` validate every Experience
+relation before returning present Knowledge records.
+`KnowledgeService.list_for_experience()` validates the requested Experience and
+every Experience relation of matching Knowledge records while leaving unrelated
+records outside this scoped query untouched. Corrupt DecisionReview-derived
+promotion ancestry propagates the existing canonical DecisionReview or
+promotion error and no failed creation saves Knowledge. The container injects
+`ExperienceService`, not a raw Experience repository. This hardening changes no
+schema, repository, JSON format, authority, cardinality, duplicate-ID behavior,
+or lack of Knowledge idempotency. `neural experience knowledge` remains
+read-only navigation; Knowledge creation remains explicit and storing Knowledge
+does not prove improved later decisions. Durable operational use and feedback
+is the next learning-loop gap.
 `neural knowledge revisions UUID` delegates to
 `PlaybookRevisionService.list_for_knowledge()` to verify the Knowledge item
 exists and list PlaybookRevision records that reference it. The service verifies
