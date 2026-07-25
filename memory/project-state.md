@@ -98,8 +98,26 @@ promotion error and no failed creation saves Knowledge. The container injects
 schema, repository, JSON format, authority, cardinality, duplicate-ID behavior,
 or lack of Knowledge idempotency. `neural experience knowledge` remains
 read-only navigation; Knowledge creation remains explicit and storing Knowledge
-does not prove improved later decisions. Durable operational use and feedback
-is the next learning-loop gap.
+alone does not prove operational use or improved later decisions. Durable
+Playbook-scoped Knowledge use and Run feedback already exist: a caller selects
+exact Knowledge UUIDs into `Playbook.knowledge_ids`, explicitly records manual
+or external application through `PlaybookRun.playbook_id`, evaluates that exact
+Run through `PlaybookEvaluation.run_id`, and may support an
+`EvolutionProposal` with exact `playbook_id` and `evaluation_ids` relations.
+The proposal service verifies that every referenced Evaluation's Run belongs to
+the target Playbook.
+
+This feedback applies to the Playbook and its declared Knowledge set. It does
+not attribute an outcome to one Knowledge item or prove causal or comparative
+improvement. A `DecisionAction` may optionally reference the exact
+PlaybookRun, and a `DecisionOutcome` references exact DecisionAction IDs, so the
+optional decision provenance path is
+`DecisionOutcome.action_ids -> DecisionAction.playbook_run_id? ->
+PlaybookRun.playbook_id -> Playbook.knowledge_ids`. The implementation does not
+record durable retrieval or recommendation events, identify a
+PlaybookRevision on a Run, infer use from metadata or record order, or perform
+automatic learning. `PlaybookRevisionApplication` remains application
+intent/audit with `content_changed=False`, not execution.
 `neural knowledge revisions UUID` delegates to
 `PlaybookRevisionService.list_for_knowledge()` to verify the Knowledge item
 exists and list PlaybookRevision records that reference it. The service verifies

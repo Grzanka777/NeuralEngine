@@ -290,8 +290,10 @@ no Knowledge or Experience schema, repository, JSON format, cardinality,
 authority, duplicate-ID behavior, or lack of Knowledge idempotency. It does not
 copy Review provenance into Knowledge or create Knowledge automatically.
 Persisted Knowledge records an explicit generalization; it does not demonstrate
-that later operational use improved a decision. The remaining learning-loop gap
-is durable use and feedback, not another Knowledge-promotion aggregate.
+that later operational use improved a decision. Durable Playbook-scoped
+Knowledge use and Run feedback already exist; Knowledge-specific causal
+attribution, revision-specific execution provenance, durable
+retrieval/recommendation events, and demonstrated improvement do not.
 
 ## Non-Goals
 
@@ -555,21 +557,41 @@ DecisionOutcome
 -> Experience
 -> Knowledge
 
-Knowledge -> new explicitly created Playbook
+Knowledge
+-> Playbook.knowledge_ids
+-> PlaybookRun.playbook_id
+-> PlaybookEvaluation.run_id
+-> EvolutionProposal(playbook_id, evaluation_ids)
 
-DecisionAction
--> referenced PlaybookRun
--> PlaybookEvaluation
--> EvolutionProposal
--> PlaybookRevision
--> PlaybookRevisionActivation
--> PlaybookRevisionApplication
+DecisionOutcome.action_ids
+-> DecisionAction.playbook_run_id?
+-> PlaybookRun.playbook_id
+-> Playbook.knowledge_ids
 ```
 
-Knowledge created from reviewed outcomes may later be selected explicitly as
-supporting provenance for a PlaybookRevision. It does not bypass the existing
-PlaybookRun, PlaybookEvaluation, and EvolutionProposal requirements for
-improving an existing Playbook.
+A caller explicitly selects Knowledge into a Playbook, declares that Playbook's
+manual or external application as a Run, and records an Evaluation of that
+exact Run. An EvolutionProposal stores the target Playbook and exact supporting
+Evaluation IDs; the proposal service verifies each Evaluation's Run belongs to
+that Playbook. This is durable feedback at Playbook and declared Knowledge-set
+scope. It does not show which Knowledge item contributed to the result or prove
+causal or comparative improvement.
+
+The DecisionOutcome path is optional because
+`DecisionAction.playbook_run_id` is optional. When present, the action service
+validates the exact Run and the Outcome preserves provenance through exact
+DecisionAction IDs. When absent, no Playbook or Knowledge-use relation may be
+inferred from co-existence, timestamps, tags, text similarity, or repository
+order.
+
+Knowledge created from reviewed outcomes may later be selected explicitly into
+a new Playbook or as supporting provenance for a PlaybookRevision. It does not
+bypass the existing PlaybookRun, PlaybookEvaluation, and EvolutionProposal
+requirements for improving an existing Playbook. There is no durable Knowledge
+retrieval history or recommendation event. A PlaybookRun does not identify a
+specific PlaybookRevision, and `PlaybookRevisionApplication` records
+application intent/audit rather than execution. No stage creates or mutates the
+next learning artifact automatically.
 
 The implemented Experience provenance extension references exactly one
 DecisionReview and selected Review statements. Decision, acceptance, outcome,
@@ -789,7 +811,10 @@ explicit Review-to-Experience promotion foundations are complete. The next
 downstream generalization may use the existing explicit generic Knowledge path;
 it is not part of Review promotion. Knowledge, Playbook, PlaybookEvaluation,
 PlaybookRevision, and EvolutionProposal creation remains explicit. Durable
-operational Knowledge use and feedback remains a separate future slice.
+Playbook-scoped Knowledge use and Run feedback are already implemented.
+Knowledge-specific causal attribution, revision-specific Run provenance,
+durable retrieval/recommendation events, and demonstrated improvement remain
+unsupported.
 
 ## Risks And Rejected Alternatives
 

@@ -295,6 +295,54 @@ and playbook revisions are stored locally as JSON files under their brain
 directories. The CLI delegates behavior to application services and does not own
 business logic.
 
+## Durable operational Knowledge use and feedback
+
+Neural Engine distinguishes durable Knowledge from its later operational use:
+
+```text
+Knowledge exists
+-> Knowledge was selected into Playbook.knowledge_ids
+-> the Playbook was manually or externally applied as a PlaybookRun
+-> the Run was evaluated through PlaybookEvaluation.run_id
+-> the Evaluation supported an EvolutionProposal
+```
+
+The exact persisted feedback path is:
+
+```text
+PlaybookEvaluation.run_id
+-> PlaybookRun.playbook_id
+-> Playbook.knowledge_ids
+-> Knowledge.id
+```
+
+An EvolutionProposal stores the target `playbook_id` and exact
+`evaluation_ids`; the application service verifies that every Evaluation's Run
+belongs to that Playbook. A DecisionAction may also point to the exact Run. A
+DecisionOutcome points to exact DecisionActions, so the optional decision path
+is:
+
+```text
+DecisionOutcome.action_ids
+-> DecisionAction.playbook_run_id?
+-> PlaybookRun.playbook_id
+-> Playbook.knowledge_ids
+```
+
+The second path is optional because `playbook_run_id` is optional. These
+relations provide durable feedback at Playbook and declared Knowledge-set
+scope. They do not prove that one Knowledge item caused an outcome, attribute
+individual contributions in a multi-Knowledge Playbook, or demonstrate causal
+or comparative improvement. Neural Engine does not record durable Knowledge
+retrieval history or recommendation events and never infers use from
+co-existence, timestamps, tags, text similarity, or repository order.
+
+`PlaybookRun` identifies a Playbook, not a specific PlaybookRevision.
+`PlaybookRevisionApplication` records application intent/audit with unchanged
+content; it is not execution. Knowledge selection, Run recording, Evaluation,
+Proposal creation, and decision linkage are explicit caller actions and do not
+trigger automatic learning or mutation.
+
 ## Validation
 
 Run the full validation suite before considering a change complete:

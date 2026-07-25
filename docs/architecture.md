@@ -185,9 +185,10 @@ This hardening adds no Knowledge or Experience field, repository method, JSON
 format, authority field, idempotency behavior, creation command, or automatic
 learning. Knowledge may still mix ordinary and promoted Experiences, combine
 different Reviews, and contain repeated Experience IDs. Persisting a
-generalization is not evidence that applying it improved a later decision; that
-requires durable operational use and feedback in a separate learning-loop use
-case.
+generalization alone is not evidence of later operational use or improved
+decisions. The existing Playbook, Run, Evaluation, and Proposal records provide
+durable Playbook-scoped use and feedback; they do not provide
+Knowledge-specific causal attribution or demonstrated improvement.
 
 `neural knowledge playbooks UUID` delegates to
 `PlaybookService.list_for_knowledge()`. The service verifies the knowledge item
@@ -362,6 +363,61 @@ benefits, optional risks, status, optional notes, and optional tags. Neural
 Engine does not modify playbooks, apply proposals, approve or reject proposals
 automatically, infer proposal status, rank proposals, or perform automatic
 evolution.
+
+## Durable Operational Knowledge Use And Feedback
+
+Knowledge persistence, operational selection, application, evaluation, and
+proposal provenance are distinct declarations:
+
+1. `Knowledge` records an explicit generalization from Experience.
+2. A caller selects one or more exact Knowledge UUIDs into
+   `Playbook.knowledge_ids`.
+3. A caller records that the Playbook was manually or externally applied
+   through the exact `PlaybookRun.playbook_id` relation.
+4. A human or external system evaluates that exact Run through
+   `PlaybookEvaluation.run_id`.
+5. A caller may use one or more exact Evaluation UUIDs to support an
+   `EvolutionProposal` for one exact Playbook.
+
+The persisted feedback provenance is:
+
+```text
+PlaybookEvaluation.run_id
+-> PlaybookRun.playbook_id
+-> Playbook.knowledge_ids
+-> Knowledge.id
+```
+
+`EvolutionProposal` stores both `playbook_id` and `evaluation_ids`.
+`EvolutionProposalService` loads every referenced Evaluation and its Run and
+rejects the proposal if any Run belongs to a different Playbook. Feedback is
+therefore attached to the Playbook and its declared Knowledge set, not inferred
+from co-existence, timestamps, tags, text similarity, or repository order.
+
+The decision-learning chain has a separate optional bridge:
+
+```text
+DecisionOutcome.action_ids
+-> DecisionAction.playbook_run_id?
+-> PlaybookRun.playbook_id
+-> Playbook.knowledge_ids
+```
+
+`DecisionOutcome.action_ids` contains exact DecisionAction UUIDs.
+`DecisionAction.playbook_run_id` is optional, so this provenance exists only
+for actions that explicitly reference a validated PlaybookRun. An Outcome
+without such an Action link has no Playbook or Knowledge-use provenance.
+
+These contracts provide durable Playbook-scoped Knowledge use and Run
+feedback. They do not record durable Knowledge retrieval history or
+recommendation events, prove that one Knowledge item caused an outcome,
+attribute contributions inside a multi-Knowledge Playbook, or demonstrate
+causal or comparative improvement. `PlaybookRun` has no
+`playbook_revision_id`, so it cannot identify which PlaybookRevision was
+executed. `PlaybookRevisionApplication` records application intent/audit with
+`content_changed=False`; it is not execution. All creation and feedback remain
+explicit caller actions: Neural Engine neither infers use nor mutates learning
+records automatically.
 
 ## Playbook Revision Flow
 
