@@ -118,7 +118,7 @@ a milestone snapshot, not a timeless guarantee.
 
 ## Decision Learning boundary
 
-Source commit `1b45beb9b595b650a48ad00ba3ea38f7eebd02b6` preserves the separate immutable
+Source commit `ebab369f24385494da5906f523368d81eb08d639` preserves the separate immutable
 `Decision`, `DecisionAcceptance`, `DecisionAction`, `DecisionOutcome`, and `DecisionReview`
 records, persistence-focused ports and JSON adapters, application services, container wiring,
 thin proposal/acceptance/action/outcome/review CLI commands, and the canonical
@@ -161,8 +161,56 @@ There is no execution engine, lifecycle reversal, ingestion, automatic learning 
 generic event replay, or
 Consigliere integration. The authoritative implemented contract and future boundary are defined
 in `handbook/architecture/decision-learning.md`. Generic Knowledge creation is already explicit;
-`neural experience knowledge` is read-only navigation. Durable operational Knowledge use and
-feedback remain a separate future gap, and storing Knowledge does not prove later improvement.
+`neural experience knowledge` is read-only navigation. Storing Knowledge alone does not prove
+later use or improvement.
+
+## Durable operational Knowledge use and feedback
+
+Durable Playbook-scoped Knowledge use and Run feedback already exist:
+
+```text
+Knowledge
+→ Playbook.knowledge_ids
+→ PlaybookRun.playbook_id
+→ PlaybookEvaluation.run_id
+→ EvolutionProposal(playbook_id, evaluation_ids)
+```
+
+The caller explicitly selects exact Knowledge UUIDs into a Playbook, declares that the Playbook
+was manually or externally applied by recording a Run, evaluates that exact Run, and may create an
+EvolutionProposal from exact Evaluation IDs. `EvolutionProposalService` verifies that every
+referenced Evaluation's Run belongs to the target Playbook.
+
+The exact persisted feedback path is:
+
+```text
+PlaybookEvaluation.run_id
+→ PlaybookRun.playbook_id
+→ Playbook.knowledge_ids
+→ Knowledge.id
+```
+
+Decision learning provides an optional persisted bridge:
+
+```text
+DecisionOutcome.action_ids
+→ DecisionAction.playbook_run_id?
+→ PlaybookRun.playbook_id
+→ Playbook.knowledge_ids
+```
+
+The bridge is optional because `DecisionAction.playbook_run_id` is optional. A DecisionOutcome
+references exact DecisionAction IDs, but an action without a Run relation supplies no Playbook or
+Knowledge-use provenance.
+
+These relations provide feedback at Playbook and declared Knowledge-set scope. They do not record
+durable retrieval history or recommendation events, prove that one Knowledge item caused an
+outcome, attribute contributions within a multi-Knowledge Playbook, or demonstrate causal or
+comparative improvement. A Run identifies a Playbook, not a PlaybookRevision.
+`PlaybookRevisionApplication` is application intent and audit with `content_changed=False`, not
+execution. Use is never inferred from co-existence, timestamps, tags, text similarity, or
+repository order. Selection, Run recording, Evaluation, Proposal creation, and decision linkage
+remain explicit caller actions; none triggers automatic learning, mutation, or evolution.
 
 ## Decision Learning architecture
 
@@ -1420,9 +1468,45 @@ Observation
 DecisionAction may optionally reference an existing PlaybookRun, with existence-only validation
 because PlaybookRun and Playbook expose no project key. `DecisionOutcome` remains distinct from
 Experience. The promotion use case copies selected Review text into optional immutable Experience
-provenance and never mutates a Playbook. Any connection from an action to
-PlaybookEvaluation, EvolutionProposal, or the revision lifecycle requires a separate reviewed use
-case.
+provenance and never mutates a Playbook.
+
+At source commit `ebab369f24385494da5906f523368d81eb08d639`, the implemented operational path is:
+
+```text
+Knowledge
+→ Playbook.knowledge_ids
+→ PlaybookRun.playbook_id
+→ PlaybookEvaluation.run_id
+→ EvolutionProposal(playbook_id, evaluation_ids)
+```
+
+Knowledge exists before use. A caller explicitly selects exact Knowledge UUIDs into a Playbook,
+explicitly declares manual or external Playbook application by recording a Run, evaluates that
+exact Run, and may create a Proposal from exact Evaluation IDs.
+`EvolutionProposalService` verifies every referenced Evaluation's Run belongs to the target
+Playbook.
+
+Exact persisted feedback provenance is:
+
+```text
+PlaybookEvaluation.run_id
+→ PlaybookRun.playbook_id
+→ Playbook.knowledge_ids
+→ Knowledge.id
+```
+
+The optional decision-learning bridge is:
+
+```text
+DecisionOutcome.action_ids
+→ DecisionAction.playbook_run_id?
+→ PlaybookRun.playbook_id
+→ Playbook.knowledge_ids
+```
+
+It is optional because `playbook_run_id` is optional. `DecisionOutcome` preserves provenance
+through exact DecisionAction IDs, but an action without the Run relation provides no Playbook or
+Knowledge-use provenance.
 
 ## Self-observation and Consigliere boundaries
 
@@ -1467,8 +1551,11 @@ automatic Observation creation
 automatic Experience creation
 automatic Knowledge creation
 special DecisionReview-to-Knowledge promotion
-durable Knowledge use in a later Decision
-Knowledge effectiveness feedback
+durable Knowledge retrieval history
+durable recommendation events
+per-Knowledge contribution attribution
+causal or comparative proof of improvement
+Run-to-PlaybookRevision execution provenance
 automatic Playbook creation or mutation
 automatic evolution
 Consigliere integration
@@ -1479,18 +1566,19 @@ Decisions, materialize Playbook revisions, or infer outcomes from `completed_at`
 requests are required to create Decision, DecisionAcceptance, DecisionAction, DecisionOutcome, or
 DecisionReview records and to promote Review statements into Experience.
 
-## Remaining learning-loop gap
+## Remaining learning-loop limits
 
-The remaining controlled learning-loop gap is:
+Durable Playbook-scoped Knowledge use and Run feedback already exist. The remaining limits are
+Knowledge-specific causal attribution, per-Knowledge contribution attribution within a
+multi-Knowledge Playbook, revision-specific execution provenance, durable retrieval or
+recommendation events, and demonstrated causal or comparative improvement.
 
-```text
-durable operational Knowledge use and feedback
-```
-
-Explicit generic Knowledge creation is already implemented. The future slice must distinguish
-retrieval from durable use, record evidence rather than infer improvement from storage, preserve
-explicit authority, and remain separate from automatic Knowledge, Playbook, PlaybookEvaluation,
-EvolutionProposal, lifecycle, or Consigliere behavior.
+`PlaybookRun` references a Playbook, not a PlaybookRevision.
+`PlaybookRevisionApplication` records application intent and audit with
+`content_changed=False`; it is not execution. The implementation never infers use from
+co-existence, timestamps, tags, text similarity, or repository order. All selection, Run,
+Evaluation, Proposal, and decision-link writes require explicit caller action and trigger no
+automatic learning, mutation, or evolution.
 
 ## Handbook synchronization policy
 
