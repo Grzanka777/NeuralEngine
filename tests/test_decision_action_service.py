@@ -183,7 +183,8 @@ def add_action(
 def test_add_validates_relations_and_persists_action_without_mutation() -> None:
     decision = make_decision()
     acceptance = make_acceptance(decision.id)
-    run = make_run()
+    revision_id = UUID("34343434-3434-3434-3434-343434343434")
+    run = make_run().model_copy(update={"revision_id": revision_id})
     decision_before = decision.model_dump()
     acceptance_before = acceptance.model_dump()
     service, repository = make_service([decision], [acceptance], runs=[run])
@@ -201,6 +202,7 @@ def test_add_validates_relations_and_persists_action_without_mutation() -> None:
 
     assert repository.save_calls == [action]
     assert action.playbook_run_id == run.id
+    assert run.revision_id == revision_id
     assert decision.model_dump() == decision_before
     assert acceptance.model_dump() == acceptance_before
 

@@ -490,6 +490,19 @@ applications for one Playbook or one PlaybookRevision should first be composed
 in `PlaybookRevisionApplicationService` by loading and filtering records in the
 application layer.
 
+### Run execution provenance
+
+`PlaybookRun` separately owns the caller's factual declaration about manual or
+external execution. A Run may reference zero or one exact PlaybookRevision.
+`PlaybookRunService` validates that a supplied revision exists and belongs to
+the Run's Playbook, and reverse navigation loads and filters Runs in repository
+order.
+
+The relation is never derived from current activation state or from
+`PlaybookRevisionApplication`. A revision need not be active or have an
+application-intent record for the caller to record the factual content used.
+Old Runs without the relation remain valid and make no revision-specific claim.
+
 ### Application Service Boundary
 
 The service is:

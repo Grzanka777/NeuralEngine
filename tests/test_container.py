@@ -5,8 +5,10 @@ from neural_engine.application.decision_lifecycle_service import DecisionLifecyc
 from neural_engine.application.decision_outcome_service import DecisionOutcomeService
 from neural_engine.application.decision_review_service import DecisionReviewService
 from neural_engine.application.decision_service import DecisionService
+from neural_engine.application.evolution_proposal_service import EvolutionProposalService
 from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.knowledge_service import KnowledgeService
+from neural_engine.application.playbook_evaluation_service import PlaybookEvaluationService
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationService,
 )
@@ -14,6 +16,7 @@ from neural_engine.application.playbook_revision_application_service import (
     PlaybookRevisionApplicationService,
 )
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
+from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
@@ -45,6 +48,7 @@ from neural_engine.infrastructure.json_playbook_revision_application_repository 
 from neural_engine.infrastructure.json_playbook_revision_repository import (
     JsonPlaybookRevisionRepository,
 )
+from neural_engine.infrastructure.json_playbook_run_repository import JsonPlaybookRunRepository
 
 
 def test_container_wires_playbook_revision_service_with_json_repositories() -> None:
@@ -55,6 +59,27 @@ def test_container_wires_playbook_revision_service_with_json_repositories() -> N
     assert isinstance(service._playbook_repository, JsonPlaybookRepository)
     assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)
     assert isinstance(service._knowledge_repository, JsonKnowledgeRepository)
+
+
+def test_container_wires_playbook_run_service_without_lifecycle_dependencies() -> None:
+    service = Container().playbook_run_service()
+
+    assert isinstance(service, PlaybookRunService)
+    assert isinstance(service._run_repository, JsonPlaybookRunRepository)
+    assert isinstance(service._playbook_repository, JsonPlaybookRepository)
+    assert isinstance(service._revision_repository, JsonPlaybookRevisionRepository)
+    assert not hasattr(service, "_activation_service")
+    assert not hasattr(service, "_application_repository")
+
+
+def test_container_wires_downstream_run_consumers_to_validated_boundary() -> None:
+    evaluation_service = Container().playbook_evaluation_service()
+    proposal_service = Container().evolution_proposal_service()
+
+    assert isinstance(evaluation_service, PlaybookEvaluationService)
+    assert isinstance(evaluation_service._run_repository, PlaybookRunService)
+    assert isinstance(proposal_service, EvolutionProposalService)
+    assert isinstance(proposal_service._run_repository, PlaybookRunService)
 
 
 def test_container_wires_decision_repository() -> None:
@@ -101,6 +126,7 @@ def test_container_wires_decision_action_service_with_json_repositories() -> Non
     assert isinstance(service._action_repository, JsonDecisionActionRepository)
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
+    assert isinstance(service._playbook_run_repository, PlaybookRunService)
 
 
 def test_container_wires_decision_outcome_repository_and_service() -> None:

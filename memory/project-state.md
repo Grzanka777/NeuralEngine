@@ -114,10 +114,11 @@ PlaybookRun, and a `DecisionOutcome` references exact DecisionAction IDs, so the
 optional decision provenance path is
 `DecisionOutcome.action_ids -> DecisionAction.playbook_run_id? ->
 PlaybookRun.playbook_id -> Playbook.knowledge_ids`. The implementation does not
-record durable retrieval or recommendation events, identify a
-PlaybookRevision on a Run, infer use from metadata or record order, or perform
-automatic learning. `PlaybookRevisionApplication` remains application
-intent/audit with `content_changed=False`, not execution.
+record durable retrieval or recommendation events, infer revision use from
+metadata or record order, or perform automatic learning. A Run may explicitly
+identify one exact PlaybookRevision; omission makes no revision-specific claim.
+`PlaybookRevisionApplication` remains application intent/audit with
+`content_changed=False`, not execution.
 `neural knowledge revisions UUID` delegates to
 `PlaybookRevisionService.list_for_knowledge()` to verify the Knowledge item
 exists and list PlaybookRevision records that reference it. The service verifies
@@ -170,18 +171,23 @@ Neural Engine now has a minimal PlaybookRun vertical slice:
 * Port: `PlaybookRunRepository`
 * Infrastructure implementation: `JsonPlaybookRunRepository`
 * Dependency wiring: `application/container.py`
-* CLI commands: `neural run add`, `neural run list`, and
-  `neural run show UUID`, and `neural run evaluations UUID`
+* CLI commands: `neural run add`, `neural run list`,
+  `neural run show UUID`, `neural run evaluations UUID`, and
+  `neural revision runs UUID`
 
 A PlaybookRun is an explicit record of manually or externally applying one
 existing Playbook to a concrete situation. `PlaybookRunService.add()` requires
-at least one action taken, validates the referenced Playbook through the
-`PlaybookRepository` port before saving, and stores runs as one JSON file per
-run under `NeuralPaths.PLAYBOOK_RUNS`. PlaybookRun records outcomes; Neural
-Engine does not execute Playbooks or evaluate runs automatically. `neural run
-add` records an already performed manual or external application.
+at least one action taken, validates the referenced Playbook, and optionally
+validates one caller-supplied PlaybookRevision exists and belongs to that
+Playbook before saving. It never consults active revision or application state.
+Old JSON and new Runs without the relation remain valid and make no
+revision-specific claim. Runs are stored as one JSON file each under
+`NeuralPaths.PLAYBOOK_RUNS`.
 `PlaybookRunService.list_for_playbook()` verifies one existing Playbook and
 returns only runs whose `playbook_id` matches it.
+Revision-linked Run reads validate the relation and fail closed on missing or
+cross-Playbook provenance. `neural revision runs UUID` validates the revision
+and returns explicit matches in repository order.
 `neural run evaluations UUID` delegates to
 `PlaybookEvaluationService.list_for_run()` to list manual or external
 PlaybookEvaluation records linked to one existing PlaybookRun.

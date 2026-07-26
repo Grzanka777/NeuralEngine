@@ -69,7 +69,8 @@ def make_run() -> PlaybookRun:
 
 
 def test_add_playbook_evaluation_for_existing_run() -> None:
-    run = make_run()
+    revision_id = UUID("22222222-2222-2222-2222-222222222222")
+    run = make_run().model_copy(update={"revision_id": revision_id})
     run_repo = FakePlaybookRunRepository([run])
     evaluation_repo = FakePlaybookEvaluationRepository(run_repo)
     service = PlaybookEvaluationService(evaluation_repo, run_repo)
@@ -82,6 +83,9 @@ def test_add_playbook_evaluation_for_existing_run() -> None:
 
     assert evaluation_repo.saved == [evaluation]
     assert evaluation.run_id == run.id
+    stored_run = run_repo.get_by_id(run.id)
+    assert stored_run is not None
+    assert stored_run.revision_id == revision_id
 
 
 def test_add_playbook_evaluation_preserves_all_fields() -> None:

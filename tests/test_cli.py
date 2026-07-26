@@ -83,7 +83,9 @@ from neural_engine.application.playbook_revision_service import (
 )
 from neural_engine.application.playbook_run_service import (
     PlaybookNotFoundError,
+    PlaybookRevisionNotFoundError,
     PlaybookRunActionsRequiredError,
+    PlaybookRunRevisionPlaybookMismatchError,
 )
 from neural_engine.application.playbook_service import (
     KnowledgeNotFoundError,
@@ -692,9 +694,15 @@ class FakePlaybookRunService:
         self,
         runs: list[PlaybookRun],
         missing_playbook_id: UUID | None = None,
+        missing_revision_id: UUID | None = None,
+        read_error: PlaybookRevisionNotFoundError
+        | PlaybookRunRevisionPlaybookMismatchError
+        | None = None,
     ) -> None:
         self.runs = runs
         self.missing_playbook_id = missing_playbook_id
+        self.missing_revision_id = missing_revision_id
+        self.read_error = read_error
         self.add_calls: list[
             tuple[
                 UUID,
@@ -705,6 +713,7 @@ class FakePlaybookRunService:
                 list[str] | None,
                 str | None,
                 list[str] | None,
+                UUID | None,
             ]
         ] = []
         self.list_for_playbook_calls: list[UUID] = []
@@ -720,6 +729,7 @@ class FakePlaybookRunService:
         evidence: list[str] | None = None,
         notes: str | None = None,
         tags: list[str] | None = None,
+        revision_id: UUID | None = None,
     ) -> PlaybookRun:
         self.add_calls.append(
             (
@@ -731,6 +741,7 @@ class FakePlaybookRunService:
                 evidence,
                 notes,
                 tags,
+                revision_id,
             )
         )
 
@@ -740,8 +751,12 @@ class FakePlaybookRunService:
         if self.missing_playbook_id is not None:
             raise PlaybookNotFoundError(self.missing_playbook_id)
 
+        if self.missing_revision_id is not None:
+            raise PlaybookRevisionNotFoundError(self.missing_revision_id)
+
         run = PlaybookRun(
             playbook_id=playbook_id,
+            revision_id=revision_id,
             situation=situation,
             actions_taken=actions_taken,
             outcome=outcome,
@@ -755,6 +770,8 @@ class FakePlaybookRunService:
         return run
 
     def list_runs(self) -> list[PlaybookRun]:
+        if self.read_error is not None:
+            raise self.read_error
         return self.runs
 
     def list_for_playbook(self, playbook_id: UUID) -> list[PlaybookRun]:
@@ -765,8 +782,15 @@ class FakePlaybookRunService:
 
         return [run for run in self.runs if run.playbook_id == playbook_id]
 
+    def list_for_revision(self, revision_id: UUID) -> list[PlaybookRun]:
+        if self.missing_revision_id is not None:
+            raise PlaybookRevisionNotFoundError(self.missing_revision_id)
+        return [run for run in self.runs if run.revision_id == revision_id]
+
     def get_by_id(self, run_id: UUID) -> PlaybookRun | None:
         self.requested_ids.append(run_id)
+        if self.read_error is not None:
+            raise self.read_error
 
         for run in self.runs:
             if run.id == run_id:
@@ -3415,6 +3439,7 @@ def test_run_add_delegates_with_parsed_values_and_prints_id(
             ["Incident log", "Recovery metric"],
             "Manual run recorded after incident",
             ["ops", "manual"],
+            None,
         )
     ]
     assert "Playbook run stored." in result.output
@@ -3449,6 +3474,49 @@ def test_run_add_parses_success_false(monkeypatch: pytest.MonkeyPatch) -> None:
     assert service.add_calls[0][4] is False
 
 
+def test_run_add_passes_explicit_revision_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    playbook_id = UUID("11111111-2222-3333-4444-555555555555")
+    revision_id = UUID("66666666-7777-8888-9999-aaaaaaaaaaaa")
+    service = FakePlaybookRunService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "run",
+            "add",
+            "--playbook-id",
+            str(playbook_id),
+            "--revision-id",
+            str(revision_id),
+            "--situation",
+            "Explicit revision",
+            "--action",
+            "Applied revision",
+            "--outcome",
+            "Recorded",
+            "--success",
+            "true",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert service.add_calls[0][-1] == revision_id
+    assert service.runs[0].revision_id == revision_id
+
+
+def test_run_and_revision_help_expose_revision_provenance_surfaces() -> None:
+    runner = CliRunner()
+
+    run_add_help = runner.invoke(cli.app, ["run", "add", "--help"])
+    revision_help = runner.invoke(cli.app, ["revision", "--help"])
+
+    assert run_add_help.exit_code == 0
+    assert "--revision-id" in run_add_help.output
+    assert revision_help.exit_code == 0
+    assert "runs" in revision_help.output
+
+
 def test_run_add_handles_empty_actions_without_storing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3481,6 +3549,7 @@ def test_run_add_handles_empty_actions_without_storing(
             [],
             "Run rejected",
             False,
+            None,
             None,
             None,
             None,
@@ -3541,6 +3610,7 @@ def test_run_list_displays_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     assert f"ID: {run.id}" in result.output
     assert f"Timestamp: {run.timestamp}" in result.output
     assert f"Playbook ID: {playbook_id}" in result.output
+    assert "Revision ID: -" in result.output
     assert "Situation: Listed run" in result.output
     assert "Success: true" in result.output
 
@@ -3560,8 +3630,10 @@ def test_run_show_delegates_and_displays_all_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     playbook_id = UUID("90909090-9090-9090-9090-909090909090")
+    revision_id = UUID("91919191-9191-9191-9191-919191919191")
     run = PlaybookRun(
         playbook_id=playbook_id,
+        revision_id=revision_id,
         situation="Shown run",
         actions_taken=["Applied first step", "Recorded result"],
         outcome="The procedure worked",
@@ -3581,6 +3653,7 @@ def test_run_show_delegates_and_displays_all_fields(
     assert f"ID: {run.id}" in result.output
     assert f"Timestamp: {run.timestamp}" in result.output
     assert f"Playbook ID: {playbook_id}" in result.output
+    assert f"Revision ID: {revision_id}" in result.output
     assert "Situation: Shown run" in result.output
     assert "Actions taken:" in result.output
     assert "- Applied first step" in result.output
@@ -3628,6 +3701,70 @@ def test_run_show_handles_missing_run(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 1
     assert service.requested_ids == [missing_id]
     assert f"Playbook run not found: {missing_id}" in result.output
+
+
+def test_run_show_handles_corrupt_revision_relation_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision_id = UUID("90909090-aaaa-bbbb-cccc-909090909090")
+    error = PlaybookRunRevisionPlaybookMismatchError(
+        revision_id=revision_id,
+        expected_playbook_id=UUID("11111111-aaaa-bbbb-cccc-111111111111"),
+        actual_playbook_id=UUID("22222222-aaaa-bbbb-cccc-222222222222"),
+    )
+    service = FakePlaybookRunService([], read_error=error)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["run", "show", "33333333-aaaa-bbbb-cccc-333333333333"],
+    )
+
+    assert result.exit_code == 1
+    assert str(revision_id) in result.output
+    assert str(error.actual_playbook_id) in result.output
+    assert str(error.expected_playbook_id) in result.output
+    assert "Traceback" not in result.output
+
+
+def test_revision_runs_lists_only_explicit_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    playbook_id = UUID("12121212-1212-1212-1212-121212121212")
+    revision_id = UUID("34343434-3434-3434-3434-343434343434")
+    linked = PlaybookRun(
+        playbook_id=playbook_id,
+        revision_id=revision_id,
+        situation="Linked",
+        actions_taken=["Applied revision"],
+        outcome="Recorded",
+        success=True,
+    )
+    legacy = linked.model_copy(
+        update={
+            "id": UUID("78787878-7878-7878-7878-787878787878"),
+            "revision_id": None,
+        }
+    )
+    service = FakePlaybookRunService([legacy, linked])
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+
+    result = CliRunner().invoke(cli.app, ["revision", "runs", str(revision_id)])
+
+    assert result.exit_code == 0
+    assert str(linked.id) in result.output
+    assert str(legacy.id) not in result.output
+    assert f"Revision ID: {revision_id}" in result.output
+
+
+def test_revision_runs_missing_revision_is_controlled(monkeypatch: pytest.MonkeyPatch) -> None:
+    missing_id = UUID("56565656-5656-5656-5656-565656565656")
+    service = FakePlaybookRunService([], missing_revision_id=missing_id)
+    monkeypatch.setattr(cli, "container", FakeContainer(playbook_run_service=service))
+
+    result = CliRunner().invoke(cli.app, ["revision", "runs", str(missing_id)])
+
+    assert result.exit_code == 1
+    assert f"Playbook revision not found: {missing_id}" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_run_evaluations_delegates_positional_uuid_and_displays_linked_evaluations(

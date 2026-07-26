@@ -170,12 +170,16 @@ not create activation decisions, mutate Playbooks or revisions, change proposal
 status, apply proposals, or perform automatic evolution.
 
 Playbook runs record manual or external application of one existing Playbook to
-a concrete situation. They store the actions taken, outcome, success flag,
-evidence, notes, and tags; Neural Engine does not execute Playbooks.
+a concrete situation. A caller may optionally declare the exact immutable
+PlaybookRevision whose content was used. Omission makes no revision-specific
+claim and remains compatible with base and legacy Runs. The service validates
+revision existence and same-Playbook ownership but never infers from active
+revision or application-intent state.
 
 ```bash
 neural run add \
   --playbook-id 11111111-1111-1111-1111-111111111111 \
+  --revision-id 22222222-2222-2222-2222-222222222222 \
   --situation "A test failed intermittently in CI" \
   --action "Applied the flaky-test playbook manually" \
   --outcome "The unstable dependency was isolated" \
@@ -186,6 +190,7 @@ neural run add \
 
 neural run list
 neural run show 11111111-1111-1111-1111-111111111111
+neural revision runs 22222222-2222-2222-2222-222222222222
 ```
 
 Playbook evaluations are explicit human or external-system assessments of one
@@ -337,11 +342,12 @@ or comparative improvement. Neural Engine does not record durable Knowledge
 retrieval history or recommendation events and never infers use from
 co-existence, timestamps, tags, text similarity, or repository order.
 
-`PlaybookRun` identifies a Playbook, not a specific PlaybookRevision.
-`PlaybookRevisionApplication` records application intent/audit with unchanged
-content; it is not execution. Knowledge selection, Run recording, Evaluation,
-Proposal creation, and decision linkage are explicit caller actions and do not
-trigger automatic learning or mutation.
+`PlaybookRun` may identify one exact PlaybookRevision explicitly; otherwise it
+makes no revision-specific claim. `PlaybookRevisionApplication` still records
+application intent/audit with unchanged content and is not execution. Revision
+provenance is never inferred from lifecycle or application records. Knowledge
+selection, Run recording, Evaluation, Proposal creation, and decision linkage
+remain explicit caller actions and do not trigger automatic learning or mutation.
 
 ## Validation
 

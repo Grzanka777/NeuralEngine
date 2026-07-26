@@ -13,6 +13,8 @@ class PlaybookRun(BaseModel):
 
     playbook_id: UUID
 
+    revision_id: UUID | None = None
+
     situation: str
 
     actions_taken: list[str]

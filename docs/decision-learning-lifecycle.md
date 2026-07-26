@@ -588,10 +588,13 @@ Knowledge created from reviewed outcomes may later be selected explicitly into
 a new Playbook or as supporting provenance for a PlaybookRevision. It does not
 bypass the existing PlaybookRun, PlaybookEvaluation, and EvolutionProposal
 requirements for improving an existing Playbook. There is no durable Knowledge
-retrieval history or recommendation event. A PlaybookRun does not identify a
-specific PlaybookRevision, and `PlaybookRevisionApplication` records
-application intent/audit rather than execution. No stage creates or mutates the
-next learning artifact automatically.
+retrieval history or recommendation event. A PlaybookRun may explicitly
+identify zero or one exact PlaybookRevision; omission makes no revision-specific
+claim. The Run caller supplies this provenance, and the service never derives it
+from active-revision state or `PlaybookRevisionApplication`, which remains
+application intent/audit rather than execution. Evaluation, Proposal, and
+DecisionAction preserve the relation transitively through their exact Run IDs.
+No stage creates or mutates the next learning artifact automatically.
 
 The implemented Experience provenance extension references exactly one
 DecisionReview and selected Review statements. Decision, acceptance, outcome,

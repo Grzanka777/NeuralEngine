@@ -1,10 +1,10 @@
 from uuid import UUID
 
+from neural_engine.application.playbook_run_service import PlaybookRunReader
 from neural_engine.domain import PlaybookEffectiveness, PlaybookEvaluation
 from neural_engine.ports.playbook_evaluation_repository import (
     PlaybookEvaluationRepository,
 )
-from neural_engine.ports.playbook_run_repository import PlaybookRunRepository
 
 
 class PlaybookEvaluationFindingsRequiredError(Exception):
@@ -28,7 +28,7 @@ class PlaybookEvaluationService:
     def __init__(
         self,
         evaluation_repository: PlaybookEvaluationRepository,
-        run_repository: PlaybookRunRepository,
+        run_repository: PlaybookRunReader,
     ) -> None:
         self._evaluation_repository = evaluation_repository
         self._run_repository = run_repository

@@ -1,5 +1,9 @@
+import json
 from pathlib import Path
 from uuid import UUID
+
+import pytest
+from pydantic import ValidationError
 
 from neural_engine.domain import PlaybookRun
 from neural_engine.infrastructure.json_playbook_run_repository import (
@@ -58,3 +62,38 @@ def test_get_by_id_returns_none_when_file_is_missing(tmp_path: Path) -> None:
     run = make_run("Missing")
 
     assert repository.get_by_id(run.id) is None
+
+
+def test_revision_relation_round_trips(tmp_path: Path) -> None:
+    repository = JsonPlaybookRunRepository(tmp_path)
+    run = make_run().model_copy(
+        update={"revision_id": UUID("22222222-2222-2222-2222-222222222222")}
+    )
+
+    repository.save(run)
+
+    assert repository.get_by_id(run.id) == run
+
+
+def test_old_json_without_revision_relation_loads_as_absent(tmp_path: Path) -> None:
+    repository = JsonPlaybookRunRepository(tmp_path)
+    run = make_run()
+    payload = run.model_dump(mode="json")
+    payload.pop("revision_id")
+    (tmp_path / f"{run.id}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = repository.get_by_id(run.id)
+
+    assert loaded is not None
+    assert loaded.revision_id is None
+
+
+def test_malformed_revision_relation_is_rejected(tmp_path: Path) -> None:
+    repository = JsonPlaybookRunRepository(tmp_path)
+    run = make_run()
+    payload = run.model_dump(mode="json")
+    payload["revision_id"] = "not-a-uuid"
+    (tmp_path / f"{run.id}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        repository.get_by_id(run.id)

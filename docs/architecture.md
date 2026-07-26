@@ -258,15 +258,20 @@ steps, orchestrate workflows, or generate playbooks automatically.
 `PlaybookRunService`, and records explicit user-supplied or external-system data
 about an already performed application of one existing playbook to a concrete
 situation. The service rejects an empty action list, verifies the referenced
-playbook through the `PlaybookRepository` port, then creates and saves a domain
-`PlaybookRun`. Validation stops before construction or persistence when actions
-are missing or the playbook does not exist.
+playbook through the `PlaybookRepository` port, then validates an optional
+caller-supplied PlaybookRevision exists and belongs to that Playbook before it
+creates and saves a domain `PlaybookRun`. It does not inspect activation or
+application records.
 
 `neural run list` retrieves all playbook runs through the same service and
 repository stack.
 
 `neural run show UUID` retrieves a single playbook run through
-`PlaybookRunService.get_by_id()` and displays all run fields.
+`PlaybookRunService.get_by_id()` and displays all run fields, including explicit
+revision provenance or `-` when no revision-specific claim exists. Complete,
+Playbook-scoped, and single reads fail closed on missing or cross-Playbook
+revision provenance. `neural revision runs UUID` validates one revision and
+lists only Runs that explicitly reference it in repository order.
 
 `neural run evaluations UUID` delegates to
 `PlaybookEvaluationService.list_for_run()`. The service verifies the playbook
@@ -275,9 +280,12 @@ the `PlaybookEvaluationRepository` port, and returns only evaluations linked to
 that run ID.
 
 Playbook runs record manual or external application and do not duplicate
-playbook data. They store the playbook ID, situation, actions taken, outcome,
-success flag, optional evidence, optional notes, and optional tags. Neural
-Engine does not execute playbooks or evaluate runs automatically.
+playbook data. They store the playbook ID, optional exact revision ID,
+situation, actions taken, outcome, success flag, optional evidence, optional
+notes, and optional tags. Old JSON without the revision relation remains valid.
+The relation is caller authority, zero-or-one, and never inferred from active
+revision or `PlaybookRevisionApplication`. Neural Engine does not execute
+playbooks or evaluate runs automatically.
 
 ## Playbook Evaluation Flow
 

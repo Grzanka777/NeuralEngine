@@ -73,7 +73,7 @@ class Container:
             JsonDecisionActionRepository(),
             JsonDecisionRepository(),
             JsonDecisionAcceptanceRepository(),
-            JsonPlaybookRunRepository(),
+            self.playbook_run_service(),
         )
 
     def decision_lifecycle_service(self) -> DecisionLifecycleService:
@@ -132,12 +132,13 @@ class Container:
         return PlaybookRunService(
             JsonPlaybookRunRepository(),
             JsonPlaybookRepository(),
+            JsonPlaybookRevisionRepository(),
         )
 
     def playbook_evaluation_service(self) -> PlaybookEvaluationService:
         return PlaybookEvaluationService(
             JsonPlaybookEvaluationRepository(),
-            JsonPlaybookRunRepository(),
+            self.playbook_run_service(),
         )
 
     def evolution_proposal_service(self) -> EvolutionProposalService:
@@ -145,7 +146,7 @@ class Container:
             JsonEvolutionProposalRepository(),
             JsonPlaybookRepository(),
             JsonPlaybookEvaluationRepository(),
-            JsonPlaybookRunRepository(),
+            self.playbook_run_service(),
         )
 
     def playbook_revision_service(self) -> PlaybookRevisionService:

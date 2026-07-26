@@ -1,13 +1,13 @@
 from datetime import datetime
 from uuid import UUID
 
+from neural_engine.application.playbook_run_service import PlaybookRunReader
 from neural_engine.domain import DecisionAction, EvidenceReference
 from neural_engine.ports.decision_acceptance_repository import (
     DecisionAcceptanceRepository,
 )
 from neural_engine.ports.decision_action_repository import DecisionActionRepository
 from neural_engine.ports.decision_repository import DecisionRepository
-from neural_engine.ports.playbook_run_repository import PlaybookRunRepository
 
 
 class DecisionActionError(Exception):
@@ -72,7 +72,7 @@ class DecisionActionService:
         action_repository: DecisionActionRepository,
         decision_repository: DecisionRepository,
         acceptance_repository: DecisionAcceptanceRepository,
-        playbook_run_repository: PlaybookRunRepository,
+        playbook_run_repository: PlaybookRunReader,
     ) -> None:
         self._action_repository = action_repository
         self._decision_repository = decision_repository

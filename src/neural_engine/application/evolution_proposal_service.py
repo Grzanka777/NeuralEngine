@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from neural_engine.application.playbook_run_service import PlaybookRunReader
 from neural_engine.domain import EvolutionProposal, EvolutionProposalStatus
 from neural_engine.ports.evolution_proposal_repository import (
     EvolutionProposalRepository,
@@ -8,7 +9,6 @@ from neural_engine.ports.playbook_evaluation_repository import (
     PlaybookEvaluationRepository,
 )
 from neural_engine.ports.playbook_repository import PlaybookRepository
-from neural_engine.ports.playbook_run_repository import PlaybookRunRepository
 
 
 class EvolutionProposalEvaluationsRequiredError(Exception):
@@ -87,7 +87,7 @@ class EvolutionProposalService:
         proposal_repository: EvolutionProposalRepository,
         playbook_repository: PlaybookRepository,
         evaluation_repository: PlaybookEvaluationRepository,
-        run_repository: PlaybookRunRepository,
+        run_repository: PlaybookRunReader,
     ) -> None:
         self._proposal_repository = proposal_repository
         self._playbook_repository = playbook_repository

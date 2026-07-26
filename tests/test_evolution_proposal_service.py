@@ -205,7 +205,8 @@ def make_service(
 
 def test_add_evolution_proposal_with_one_evaluation() -> None:
     playbook = make_playbook()
-    run = make_run(playbook.id)
+    revision_id = UUID("12121212-1212-1212-1212-121212121212")
+    run = make_run(playbook.id).model_copy(update={"revision_id": revision_id})
     evaluation = make_evaluation(run.id)
     service, proposal_repo, _, _, _ = make_service([playbook], [evaluation], [run])
 
@@ -221,6 +222,7 @@ def test_add_evolution_proposal_with_one_evaluation() -> None:
     assert proposal_repo.saved == [proposal]
     assert proposal.playbook_id == playbook.id
     assert proposal.evaluation_ids == [evaluation.id]
+    assert run.revision_id == revision_id
 
 
 def test_add_evolution_proposal_with_multiple_evaluations() -> None:

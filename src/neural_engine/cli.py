@@ -90,7 +90,9 @@ from neural_engine.application.playbook_revision_service import (
 )
 from neural_engine.application.playbook_run_service import (
     PlaybookNotFoundError,
+    PlaybookRevisionNotFoundError,
     PlaybookRunActionsRequiredError,
+    PlaybookRunRevisionPlaybookMismatchError,
 )
 from neural_engine.application.playbook_service import (
     KnowledgeNotFoundError,
@@ -496,6 +498,8 @@ def add_decision_action(
     except DecisionActionPlaybookRunNotFoundError as error:
         console.print(f"[red]Playbook run not found: {error.playbook_run_id}[/red]")
         raise typer.Exit(code=1) from error
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
     except DecisionActionIdempotencyConflictError as error:
         console.print(
             f"[red]Decision action idempotency key {error.idempotency_key!r} already "
@@ -1227,6 +1231,8 @@ def add_evaluation(
         raise typer.Exit(code=1) from error
     except PlaybookRunNotFoundError as error:
         _exit_playbook_run_not_found(error)
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
 
     console.print(f"[green]Playbook evaluation stored.[/green] ID: [cyan]{evaluation.id}[/cyan]")
 
@@ -1338,6 +1344,8 @@ def add_proposal(
             f"expected {error.expected_playbook_id}[/red]"
         )
         raise typer.Exit(code=1) from error
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
 
     console.print(f"[green]Evolution proposal stored.[/green] ID: [cyan]{proposal.id}[/cyan]")
 
@@ -1546,6 +1554,25 @@ def list_revision_activation_history(revision_id: UUID) -> None:
 
     for activation in activations:
         _print_playbook_revision_activation(activation)
+        console.print()
+
+
+@revision_app.command("runs")
+def list_revision_runs(revision_id: UUID) -> None:
+    """List runs that explicitly declare one playbook revision."""
+
+    service = container.playbook_run_service()
+    try:
+        runs = service.list_for_revision(revision_id)
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
+
+    if not runs:
+        console.print(f"[yellow]No playbook runs linked to revision: {revision_id}[/yellow]")
+        return
+
+    for run in runs:
+        _print_playbook_run_summary(run)
         console.print()
 
 
@@ -1836,6 +1863,7 @@ def add_run(
     evidence: Annotated[list[str] | None, typer.Option("--evidence")] = None,
     notes: Annotated[str | None, typer.Option("--notes")] = None,
     tags: Annotated[list[str] | None, typer.Option("--tag")] = None,
+    revision_id: Annotated[UUID | None, typer.Option("--revision-id")] = None,
 ) -> None:
     """Record a manually or externally applied playbook run."""
 
@@ -1850,12 +1878,15 @@ def add_run(
             evidence=evidence,
             notes=notes,
             tags=tags,
+            revision_id=revision_id,
         )
     except PlaybookRunActionsRequiredError as error:
         console.print("[red]Playbook run requires at least one action taken.[/red]")
         raise typer.Exit(code=1) from error
     except PlaybookNotFoundError as error:
         _exit_playbook_not_found(error)
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
 
     console.print(f"[green]Playbook run stored.[/green] ID: [cyan]{run.id}[/cyan]")
 
@@ -1865,7 +1896,10 @@ def list_runs() -> None:
     """List all playbook runs."""
 
     service = container.playbook_run_service()
-    runs = service.list_runs()
+    try:
+        runs = service.list_runs()
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
 
     if not runs:
         console.print("[yellow]No playbook runs found.[/yellow]")
@@ -1885,6 +1919,8 @@ def list_run_evaluations(run_id: UUID) -> None:
         evaluations = service.list_for_run(run_id)
     except PlaybookRunNotFoundError as error:
         _exit_playbook_run_not_found(error)
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
 
     if not evaluations:
         console.print(f"[yellow]No playbook evaluations linked to run: {run_id}[/yellow]")
@@ -1900,7 +1936,10 @@ def show_run(run_id: UUID) -> None:
     """Show one playbook run."""
 
     service = container.playbook_run_service()
-    run = service.get_by_id(run_id)
+    try:
+        run = service.get_by_id(run_id)
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
 
     if run is None:
         console.print(f"[red]Playbook run not found: {run_id}[/red]")
@@ -2182,6 +2221,7 @@ def _print_playbook_run(run: PlaybookRun) -> None:
     console.print(f"ID: {run.id}")
     console.print(f"Timestamp: {run.timestamp}")
     console.print(f"Playbook ID: {run.playbook_id}")
+    console.print(f"Revision ID: {run.revision_id if run.revision_id is not None else '-'}")
     console.print(f"Situation: {run.situation}")
     _print_repeated_field("Actions taken", run.actions_taken)
     console.print(f"Outcome: {run.outcome}")
@@ -2195,6 +2235,7 @@ def _print_playbook_run_summary(run: PlaybookRun) -> None:
     console.print(f"ID: {run.id}")
     console.print(f"Timestamp: {run.timestamp}")
     console.print(f"Playbook ID: {run.playbook_id}")
+    console.print(f"Revision ID: {run.revision_id if run.revision_id is not None else '-'}")
     console.print(f"Situation: {run.situation}")
     console.print(f"Success: {str(run.success).lower()}")
 
@@ -2407,6 +2448,13 @@ def _exit_playbook_not_found(error: PlaybookNotFoundError) -> None:
 
 def _exit_playbook_run_not_found(error: PlaybookRunNotFoundError) -> None:
     console.print(f"[red]Playbook run not found: {error.run_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _exit_playbook_run_revision_error(
+    error: PlaybookRevisionNotFoundError | PlaybookRunRevisionPlaybookMismatchError,
+) -> None:
+    console.print(f"[red]{error}[/red]")
     raise typer.Exit(code=1) from error
 
 
