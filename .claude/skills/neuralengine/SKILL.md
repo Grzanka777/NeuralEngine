@@ -118,7 +118,7 @@ a milestone snapshot, not a timeless guarantee.
 
 ## Decision Learning boundary
 
-Source commit `ebab369f24385494da5906f523368d81eb08d639` preserves the separate immutable
+Source commit `18788adacf75ff7f11d0dd6f28e5da8cf143081b` preserves the separate immutable
 `Decision`, `DecisionAcceptance`, `DecisionAction`, `DecisionOutcome`, and `DecisionReview`
 records, persistence-focused ports and JSON adapters, application services, container wiring,
 thin proposal/acceptance/action/outcome/review CLI commands, and the canonical
@@ -169,23 +169,37 @@ later use or improvement.
 Durable Playbook-scoped Knowledge use and Run feedback already exist:
 
 ```text
+PlaybookRun -> zero or one PlaybookRevision
+PlaybookRevision -> zero or many PlaybookRuns
+authority -> explicit Run caller
+```
+
+Run write validation requires actions, then the base Playbook, then a supplied revision, then
+same-Playbook revision ownership; only then may one Run be saved. `get_by_id()`, complete lists,
+Playbook-scoped lists, and revision-scoped lists validate linked revision existence and ownership.
+Corrupt linked provenance fails closed, while old Run JSON without `revision_id` loads as `None`
+without migration, backfill, or inference.
+
+```text
 Knowledge
 → Playbook.knowledge_ids
-→ PlaybookRun.playbook_id
+→ PlaybookRun(playbook_id, revision_id?)
 → PlaybookEvaluation.run_id
 → EvolutionProposal(playbook_id, evaluation_ids)
 ```
 
 The caller explicitly selects exact Knowledge UUIDs into a Playbook, declares that the Playbook
-was manually or externally applied by recording a Run, evaluates that exact Run, and may create an
-EvolutionProposal from exact Evaluation IDs. `EvolutionProposalService` verifies that every
-referenced Evaluation's Run belongs to the target Playbook.
+was manually or externally applied by recording a Run, and may additionally declare zero or one
+exact immutable PlaybookRevision whose content was used. The Run caller is the authority for that
+optional declaration. The caller then evaluates that exact Run and may create an EvolutionProposal
+from exact Evaluation IDs. `EvolutionProposalService` verifies that every referenced Evaluation's
+Run belongs to the target Playbook.
 
 The exact persisted feedback path is:
 
 ```text
 PlaybookEvaluation.run_id
-→ PlaybookRun.playbook_id
+→ PlaybookRun(revision_id?, playbook_id)
 → Playbook.knowledge_ids
 → Knowledge.id
 ```
@@ -195,7 +209,7 @@ Decision learning provides an optional persisted bridge:
 ```text
 DecisionOutcome.action_ids
 → DecisionAction.playbook_run_id?
-→ PlaybookRun.playbook_id
+→ PlaybookRun(revision_id?, playbook_id)
 → Playbook.knowledge_ids
 ```
 
@@ -203,14 +217,19 @@ The bridge is optional because `DecisionAction.playbook_run_id` is optional. A D
 references exact DecisionAction IDs, but an action without a Run relation supplies no Playbook or
 Knowledge-use provenance.
 
-These relations provide feedback at Playbook and declared Knowledge-set scope. They do not record
-durable retrieval history or recommendation events, prove that one Knowledge item caused an
-outcome, attribute contributions within a multi-Knowledge Playbook, or demonstrate causal or
-comparative improvement. A Run identifies a Playbook, not a PlaybookRevision.
-`PlaybookRevisionApplication` is application intent and audit with `content_changed=False`, not
-execution. Use is never inferred from co-existence, timestamps, tags, text similarity, or
-repository order. Selection, Run recording, Evaluation, Proposal creation, and decision linkage
-remain explicit caller actions; none triggers automatic learning, mutation, or evolution.
+These relations provide feedback at Playbook and declared Knowledge-set scope and preserve an
+explicit Run revision relation transitively. Evaluation, EvolutionProposal, and DecisionAction do
+not store a revision ID directly. The relations do not record durable retrieval history or
+recommendation events, prove that one Knowledge item caused an outcome, attribute contributions
+within a multi-Knowledge Playbook, or demonstrate causal or comparative improvement.
+
+Revision provenance is never inferred from current active revision, activation history,
+repository order, timestamps, `PlaybookRevisionApplication`, or application-intent records. A
+revision need not be active or applied for the caller to truthfully declare that its content was
+used. `revision_id=None` covers base Playbook execution, legacy records, and unknown revision
+provenance and makes no revision-specific claim. Selection, Run recording, Evaluation, Proposal
+creation, and decision linkage remain explicit caller actions; none triggers automatic learning,
+mutation, materialization, activation, application, or evolution.
 
 ## Decision Learning architecture
 
@@ -218,7 +237,7 @@ remain explicit caller actions; none triggers automatic learning, mutation, or e
 
 ## Status and purpose
 
-NeuralEngine source commit `1b45beb9b595b650a48ad00ba3ea38f7eebd02b6` implements the Decision,
+NeuralEngine source commit `18788adacf75ff7f11d0dd6f28e5da8cf143081b` implements the Decision,
 DecisionAcceptance, DecisionAction, DecisionOutcome, and DecisionReview foundations plus the
 canonical `DecisionLifecycleService` projection. They record an immutable proposed choice,
 explicit authorization, work performed under that authorization, factual results, and authorized
@@ -1066,7 +1085,10 @@ DecisionLifecycleService
 repositories or own validation, relation checks, persistence, eligibility, or idempotency policy.
 
 `DecisionActionService` receives `JsonDecisionActionRepository`, `JsonDecisionRepository`,
-`JsonDecisionAcceptanceRepository`, and `JsonPlaybookRunRepository`. `DecisionOutcomeService`
+`JsonDecisionAcceptanceRepository`, and `PlaybookRunService` as a validated `PlaybookRunReader`.
+`PlaybookEvaluationService` and `EvolutionProposalService` use the same validated Run boundary.
+`PlaybookRunService` receives JSON Run, Playbook, and PlaybookRevision repositories, with no
+activation or application dependency. `DecisionOutcomeService`
 receives `JsonDecisionOutcomeRepository` plus Decision, acceptance, and action repositories.
 `DecisionLifecycleService` receives the Decision, acceptance, action, and outcome repositories.
 `DecisionReviewService` receives `JsonDecisionReviewRepository` plus Decision, acceptance, and
@@ -1113,6 +1135,20 @@ neural knowledge show KNOWLEDGE_UUID
 neural observation experiences OBSERVATION_UUID
 neural decision state DECISION_UUID
 ```
+
+The current source checkpoint `18788ad` additionally exposes explicit revision execution
+provenance through:
+
+```text
+neural run add --revision-id REVISION_UUID ...
+neural run list
+neural run show RUN_UUID
+neural revision runs REVISION_UUID
+```
+
+Run list and show output render the revision ID or `-` when absent. CLI handlers delegate relation
+validation to `PlaybookRunService` and render missing or cross-Playbook provenance as controlled
+exit-code-1 errors.
 
 `neural decision add` requires these scalar options:
 
@@ -1470,19 +1506,21 @@ because PlaybookRun and Playbook expose no project key. `DecisionOutcome` remain
 Experience. The promotion use case copies selected Review text into optional immutable Experience
 provenance and never mutates a Playbook.
 
-At source commit `ebab369f24385494da5906f523368d81eb08d639`, the implemented operational path is:
+At source commit `18788adacf75ff7f11d0dd6f28e5da8cf143081b`, the implemented operational path is:
 
 ```text
 Knowledge
 → Playbook.knowledge_ids
-→ PlaybookRun.playbook_id
+→ PlaybookRun(playbook_id, revision_id?)
 → PlaybookEvaluation.run_id
 → EvolutionProposal(playbook_id, evaluation_ids)
 ```
 
 Knowledge exists before use. A caller explicitly selects exact Knowledge UUIDs into a Playbook,
 explicitly declares manual or external Playbook application by recording a Run, evaluates that
-exact Run, and may create a Proposal from exact Evaluation IDs.
+exact Run, and may create a Proposal from exact Evaluation IDs. The same Run caller may declare
+zero or one exact immutable PlaybookRevision whose content was used. Omission covers base Playbook
+execution, legacy data, or unknown provenance and makes no revision-specific claim.
 `EvolutionProposalService` verifies every referenced Evaluation's Run belongs to the target
 Playbook.
 
@@ -1490,7 +1528,7 @@ Exact persisted feedback provenance is:
 
 ```text
 PlaybookEvaluation.run_id
-→ PlaybookRun.playbook_id
+→ PlaybookRun(revision_id?, playbook_id)
 → Playbook.knowledge_ids
 → Knowledge.id
 ```
@@ -1500,7 +1538,7 @@ The optional decision-learning bridge is:
 ```text
 DecisionOutcome.action_ids
 → DecisionAction.playbook_run_id?
-→ PlaybookRun.playbook_id
+→ PlaybookRun(revision_id?, playbook_id)
 → Playbook.knowledge_ids
 ```
 
@@ -1533,7 +1571,7 @@ no recommendation can directly mutate NeuralEngine or authorize a durable record
 
 ## Current non-behavior
 
-Commit `1b45beb` does not implement:
+Commit `18788ad` does not implement:
 
 ```text
 execution engine
@@ -1555,10 +1593,17 @@ durable Knowledge retrieval history
 durable recommendation events
 per-Knowledge contribution attribution
 causal or comparative proof of improvement
-Run-to-PlaybookRevision execution provenance
 automatic Playbook creation or mutation
 automatic evolution
 Consigliere integration
+automatic active-revision selection
+Run-to-PlaybookRevisionApplication binding
+Playbook materialization
+revision content execution
+Run idempotency
+mixed or partial revision execution
+multiple revisions per Run
+automatic activation or application
 ```
 
 It also does not execute commands referenced by evidence, open locators, automatically accept
@@ -1570,15 +1615,20 @@ DecisionReview records and to promote Review statements into Experience.
 
 Durable Playbook-scoped Knowledge use and Run feedback already exist. The remaining limits are
 Knowledge-specific causal attribution, per-Knowledge contribution attribution within a
-multi-Knowledge Playbook, revision-specific execution provenance, durable retrieval or
-recommendation events, and demonstrated causal or comparative improvement.
+multi-Knowledge Playbook, durable retrieval or recommendation events, and demonstrated causal or
+comparative improvement.
 
-`PlaybookRun` references a Playbook, not a PlaybookRevision.
+`PlaybookRun` references exactly one base Playbook and may reference zero or one exact
+PlaybookRevision. A supplied relation is the Run caller's factual declaration, not a lifecycle
+projection. Reads validate revision existence and same-Playbook ownership and fail closed for
+corrupt linked provenance; old Runs without the field remain valid.
 `PlaybookRevisionApplication` records application intent and audit with
-`content_changed=False`; it is not execution. The implementation never infers use from
-co-existence, timestamps, tags, text similarity, or repository order. All selection, Run,
+`content_changed=False`; it is not execution and is not bound to a Run. The implementation never
+infers revision provenance from active-revision state, activation or application history,
+co-existence, timestamps, tags, text similarity, or repository order. A revision need not be
+active or applied for the caller to declare that its content was used. All selection, Run,
 Evaluation, Proposal, and decision-link writes require explicit caller action and trigger no
-automatic learning, mutation, or evolution.
+automatic learning, mutation, materialization, activation, application, or evolution.
 
 ## Handbook synchronization policy
 
@@ -1623,6 +1673,8 @@ Confirmed example:
   derivation through `get_active_revision_for_playbook(playbook_id)`.
 - `PlaybookRevisionApplicationService` owns application-record navigation and delegates active
   revision resolution to `PlaybookRevisionActivationService`.
+- `PlaybookRunService` owns optional explicit Run-to-Revision validation and reverse
+  `list_for_revision(UUID)` navigation without consulting activation or application state.
 - Repository interfaces remain persistence-focused.
 - `PlaybookService` should not gain unrelated persistence dependencies.
 
@@ -1728,7 +1780,9 @@ major NeuralEngine milestone
 ```
 
 Each repository change is separate and reviewable. Generated outputs are rebuilt from Handbook
-sources and are never edited manually.
+sources and are never edited manually. Publishing the generated skill back to NeuralEngine is a
+later separate repository task; a Handbook synchronization task must not perform that publication
+unless it is explicitly included in scope.
 
 ## Agent assignment
 
