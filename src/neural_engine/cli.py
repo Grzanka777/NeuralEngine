@@ -127,6 +127,9 @@ from neural_engine.domain import (
 )
 from neural_engine.domain.decision_outcome import DecisionOutcomeMetricValue
 from neural_engine.ports.knowledge_repository import KnowledgeRepositoryError
+from neural_engine.ports.playbook_revision_repository import (
+    PlaybookRevisionRepositoryError,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -501,6 +504,8 @@ def add_decision_action(
         raise typer.Exit(code=1) from error
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
     except DecisionActionIdempotencyConflictError as error:
         console.print(
             f"[red]Decision action idempotency key {error.idempotency_key!r} already "
@@ -1187,6 +1192,8 @@ def list_knowledge_revisions(knowledge_id: UUID) -> None:
         raise typer.Exit(code=1) from error
     except KnowledgeRepositoryError as error:
         _exit_knowledge_repository_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not revisions:
         console.print(f"[yellow]No playbook revisions linked to knowledge: {knowledge_id}[/yellow]")
@@ -1248,6 +1255,8 @@ def add_evaluation(
         _exit_playbook_run_not_found(error)
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     console.print(f"[green]Playbook evaluation stored.[/green] ID: [cyan]{evaluation.id}[/cyan]")
 
@@ -1361,6 +1370,8 @@ def add_proposal(
         raise typer.Exit(code=1) from error
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     console.print(f"[green]Evolution proposal stored.[/green] ID: [cyan]{proposal.id}[/cyan]")
 
@@ -1411,6 +1422,8 @@ def list_proposal_revisions(proposal_id: UUID) -> None:
     except EvolutionProposalNotFoundError as error:
         console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
         raise typer.Exit(code=1) from error
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not revisions:
         console.print(f"[yellow]No playbook revisions linked to proposal: {proposal_id}[/yellow]")
@@ -1431,6 +1444,8 @@ def list_proposal_activation_history(proposal_id: UUID) -> None:
     except PlaybookRevisionActivationProposalNotFoundError as error:
         console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
         raise typer.Exit(code=1) from error
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not activations:
         console.print(
@@ -1515,6 +1530,8 @@ def add_revision(
     except RevisionKnowledgeNotFoundError as error:
         console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
         raise typer.Exit(code=1) from error
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     console.print(f"[green]Playbook revision stored.[/green] ID: [cyan]{revision.id}[/cyan]")
 
@@ -1524,7 +1541,10 @@ def list_revisions() -> None:
     """List all playbook revisions."""
 
     service = container.playbook_revision_service()
-    revisions = service.list_revisions()
+    try:
+        revisions = service.list_revisions()
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not revisions:
         console.print("[yellow]No playbook revisions found.[/yellow]")
@@ -1540,7 +1560,10 @@ def show_revision(revision_id: UUID) -> None:
     """Show one playbook revision."""
 
     service = container.playbook_revision_service()
-    revision = service.get_by_id(revision_id)
+    try:
+        revision = service.get_by_id(revision_id)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if revision is None:
         console.print(f"[red]Playbook revision not found: {revision_id}[/red]")
@@ -1559,6 +1582,8 @@ def list_revision_activation_history(revision_id: UUID) -> None:
     except PlaybookRevisionActivationRevisionNotFoundError as error:
         console.print(f"[red]Playbook revision not found: {error.revision_id}[/red]")
         raise typer.Exit(code=1) from error
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not activations:
         console.print(
@@ -1581,6 +1606,8 @@ def list_revision_runs(revision_id: UUID) -> None:
         runs = service.list_for_revision(revision_id)
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not runs:
         console.print(f"[yellow]No playbook runs linked to revision: {revision_id}[/yellow]")
@@ -1743,6 +1770,10 @@ def list_playbook_runs(playbook_id: UUID) -> None:
         runs = service.list_for_playbook(playbook_id)
     except PlaybookNotFoundError as error:
         _exit_playbook_not_found(error)
+    except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
+        _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not runs:
         console.print(f"[yellow]No playbook runs linked to playbook: {playbook_id}[/yellow]")
@@ -1783,6 +1814,8 @@ def list_playbook_revisions(playbook_id: UUID) -> None:
     except RevisionPlaybookNotFoundError as error:
         console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
         raise typer.Exit(code=1) from error
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not revisions:
         console.print(f"[yellow]No playbook revisions linked to playbook: {playbook_id}[/yellow]")
@@ -1802,6 +1835,8 @@ def list_playbook_revision_history(playbook_id: UUID) -> None:
         activations = service.list_for_playbook(playbook_id)
     except PlaybookRevisionActivationPlaybookNotFoundError as error:
         _exit_revision_activation_playbook_not_found(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not activations:
         console.print(
@@ -1834,6 +1869,8 @@ def show_playbook_active_revision(playbook_id: UUID) -> None:
             f"expected {error.expected_playbook_id}[/red]"
         )
         raise typer.Exit(code=1) from error
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if revision is None:
         console.print(f"[yellow]No active playbook revision for playbook: {playbook_id}[/yellow]")
@@ -1902,6 +1939,8 @@ def add_run(
         _exit_playbook_not_found(error)
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     console.print(f"[green]Playbook run stored.[/green] ID: [cyan]{run.id}[/cyan]")
 
@@ -1915,6 +1954,8 @@ def list_runs() -> None:
         runs = service.list_runs()
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not runs:
         console.print("[yellow]No playbook runs found.[/yellow]")
@@ -1936,6 +1977,8 @@ def list_run_evaluations(run_id: UUID) -> None:
         _exit_playbook_run_not_found(error)
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if not evaluations:
         console.print(f"[yellow]No playbook evaluations linked to run: {run_id}[/yellow]")
@@ -1955,6 +1998,8 @@ def show_run(run_id: UUID) -> None:
         run = service.get_by_id(run_id)
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     if run is None:
         console.print(f"[red]Playbook run not found: {run_id}[/red]")
@@ -2389,6 +2434,8 @@ def _record_playbook_revision_activation(
     except ValidationError as error:
         console.print(f"[red]{error.errors()[0]['msg']}[/red]")
         raise typer.Exit(code=1) from error
+    except PlaybookRevisionRepositoryError as error:
+        _exit_playbook_revision_repository_error(error)
 
     raise AssertionError("Unreachable playbook revision activation error path")
 
@@ -2450,6 +2497,13 @@ def _exit_knowledge_not_found(error: KnowledgeNotFoundError) -> None:
 
 
 def _exit_knowledge_repository_error(error: KnowledgeRepositoryError) -> None:
+    console.print(f"[red]{error}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _exit_playbook_revision_repository_error(
+    error: PlaybookRevisionRepositoryError,
+) -> None:
     console.print(f"[red]{error}[/red]")
     raise typer.Exit(code=1) from error
 

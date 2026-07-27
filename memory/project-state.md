@@ -298,6 +298,17 @@ referenced Knowledge item in supplied order before saving. Proposal-level
 failures are detected before any Playbook or Knowledge read. PlaybookRevision
 records do not modify or replace Playbooks, do not change proposal status, do
 not infer revised content, and do not perform automatic evolution.
+Supported `PlaybookRevisionRepository` writes bind one Revision UUID to one
+complete validated payload. Initial publication cannot replace an existing
+UUID path; identical same-ID replay is a no-op that preserves bytes, while any
+different same-ID payload conflicts without replacement. Malformed or invalid
+stored data, non-UUID filenames, and filename/request-to-payload identity
+mismatches fail visibly without repair. Existing valid JSON requires no
+migration. Exact Revision UUID relations in Runs, Evaluations, Proposals,
+activation records, and application records therefore retain stable payload
+meaning going forward under supported writes. Direct filesystem mutation
+remains out-of-band, and this does not add deep collection immutability,
+snapshots, hashes, versioning, historical reconstruction, or tamper evidence.
 The Revision CLI records explicitly supplied revised content only. Accepted
 EvolutionProposal status remains a recorded decision; creating a revision is a
 separate action and still does not activate a revision, apply changes to a

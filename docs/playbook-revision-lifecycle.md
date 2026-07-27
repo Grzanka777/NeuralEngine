@@ -13,6 +13,20 @@ content and references:
 Creating a revision does not modify the Playbook, apply the proposal, activate
 the revision, or perform automatic evolution.
 
+Under supported repository writes, one Revision UUID binds to one complete
+validated `PlaybookRevision` payload. Initial publication cannot replace an
+existing UUID path. An identical same-ID replay is a no-op that preserves the
+existing bytes; any different same-ID modeled payload conflicts without a
+write. Malformed stored data, non-UUID filenames, and filename/request-to-
+payload identity mismatches fail visibly without repair. Existing valid JSON
+requires no migration.
+
+This create-once persistence contract stabilizes the payload meaning of exact
+Revision UUID relations held by Run, Evaluation, Proposal, activation, and
+application records going forward. It does not deeply freeze collection fields,
+reconstruct pre-hardening history, add snapshots, hashes, versioning, or
+tamper evidence. Direct filesystem mutation remains out-of-band corruption.
+
 Current read-only relation navigation for revisions is owned by
 `PlaybookRevisionService`:
 

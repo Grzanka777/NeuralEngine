@@ -286,6 +286,19 @@ def test_add_revision_from_accepted_proposal() -> None:
     assert revision.proposal_id == proposal.id
 
 
+def test_normal_revision_creation_remains_fresh_id_and_non_idempotent() -> None:
+    playbook = make_playbook()
+    proposal = make_proposal(playbook.id)
+    knowledge = make_knowledge()
+    service, revision_repo, _, _, _ = make_service([playbook], [proposal], [knowledge])
+
+    first = add_revision(service, playbook.id, proposal.id, [knowledge.id])
+    second = add_revision(service, playbook.id, proposal.id, [knowledge.id])
+
+    assert first.id != second.id
+    assert revision_repo.saved == [first, second]
+
+
 def test_add_revision_preserves_all_supplied_fields() -> None:
     playbook = make_playbook()
     proposal = make_proposal(playbook.id)

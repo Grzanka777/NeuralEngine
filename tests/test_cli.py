@@ -116,6 +116,12 @@ from neural_engine.domain import (
     PlaybookRun,
 )
 from neural_engine.ports.knowledge_repository import KnowledgePersistenceConflictError
+from neural_engine.ports.playbook_revision_repository import (
+    PlaybookRevisionIdentityMismatchError,
+    PlaybookRevisionPersistenceConflictError,
+    PlaybookRevisionRepositoryError,
+    PlaybookRevisionStoredDataError,
+)
 
 
 class CliResult(Protocol):
@@ -1038,6 +1044,7 @@ class FakePlaybookRevisionService:
         proposal_mismatch: tuple[UUID, UUID, UUID] | None = None,
         missing_playbook_id: UUID | None = None,
         missing_knowledge_id: UUID | None = None,
+        integrity_error: PlaybookRevisionRepositoryError | None = None,
     ) -> None:
         self.revisions = revisions
         self.missing_proposal_id = missing_proposal_id
@@ -1045,6 +1052,7 @@ class FakePlaybookRevisionService:
         self.proposal_mismatch = proposal_mismatch
         self.missing_playbook_id = missing_playbook_id
         self.missing_knowledge_id = missing_knowledge_id
+        self.integrity_error = integrity_error
         self.add_calls: list[
             tuple[
                 UUID,
@@ -1120,6 +1128,9 @@ class FakePlaybookRevisionService:
         if self.missing_knowledge_id is not None:
             raise RevisionKnowledgeNotFoundError(self.missing_knowledge_id)
 
+        if self.integrity_error is not None:
+            raise self.integrity_error
+
         revision = PlaybookRevision(
             playbook_id=playbook_id,
             proposal_id=proposal_id,
@@ -1138,10 +1149,15 @@ class FakePlaybookRevisionService:
 
     def list_revisions(self) -> list[PlaybookRevision]:
         self.list_revisions_calls += 1
+        if self.integrity_error is not None:
+            raise self.integrity_error
         return self.revisions
 
     def list_for_playbook(self, playbook_id: UUID) -> list[PlaybookRevision]:
         self.list_for_playbook_calls.append(playbook_id)
+
+        if self.integrity_error is not None:
+            raise self.integrity_error
 
         if self.missing_playbook_id is not None and self.missing_playbook_id == playbook_id:
             raise RevisionPlaybookNotFoundError(self.missing_playbook_id)
@@ -1151,6 +1167,9 @@ class FakePlaybookRevisionService:
     def list_for_proposal(self, proposal_id: UUID) -> list[PlaybookRevision]:
         self.list_for_proposal_calls.append(proposal_id)
 
+        if self.integrity_error is not None:
+            raise self.integrity_error
+
         if self.missing_proposal_id is not None and self.missing_proposal_id == proposal_id:
             raise EvolutionProposalNotFoundError(self.missing_proposal_id)
 
@@ -1159,6 +1178,9 @@ class FakePlaybookRevisionService:
     def list_for_knowledge(self, knowledge_id: UUID) -> list[PlaybookRevision]:
         self.list_for_knowledge_calls.append(knowledge_id)
 
+        if self.integrity_error is not None:
+            raise self.integrity_error
+
         if self.missing_knowledge_id is not None and self.missing_knowledge_id == knowledge_id:
             raise RevisionKnowledgeNotFoundError(self.missing_knowledge_id)
 
@@ -1166,6 +1188,9 @@ class FakePlaybookRevisionService:
 
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
         self.requested_ids.append(revision_id)
+
+        if self.integrity_error is not None:
+            raise self.integrity_error
 
         for revision in self.revisions:
             if revision.id == revision_id:
@@ -6299,6 +6324,69 @@ def test_revision_add_delegates_all_parsed_values_and_prints_id(
     ]
     assert "Playbook revision stored." in result.output
     assert str(service.revisions[0].id) in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "integrity_error"),
+    [
+        (
+            [
+                "revision",
+                "add",
+                "--playbook-id",
+                "aaaaaaaa-1111-2222-3333-444444444444",
+                "--proposal-id",
+                "bbbbbbbb-1111-2222-3333-444444444444",
+                "--title",
+                "Collision",
+                "--situation",
+                "A generated UUID already exists",
+                "--objective",
+                "Fail without replacement",
+                "--step",
+                "Persist once",
+                "--success-criterion",
+                "Existing bytes remain unchanged",
+            ],
+            PlaybookRevisionPersistenceConflictError(UUID("99999999-9999-9999-9999-999999999999")),
+        ),
+        (
+            ["revision", "list"],
+            PlaybookRevisionStoredDataError("not-a-uuid"),
+        ),
+        (
+            [
+                "revision",
+                "show",
+                "88888888-8888-8888-8888-888888888888",
+            ],
+            PlaybookRevisionIdentityMismatchError(
+                UUID("88888888-8888-8888-8888-888888888888"),
+                UUID("77777777-7777-7777-7777-777777777777"),
+            ),
+        ),
+    ],
+    ids=["add-conflict", "list-stored-data", "show-identity-mismatch"],
+)
+def test_revision_surfaces_render_controlled_repository_integrity_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+    integrity_error: PlaybookRevisionRepositoryError,
+) -> None:
+    service = FakePlaybookRevisionService([], integrity_error=integrity_error)
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(playbook_revision_service=service),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, command)
+
+    assert result.exit_code == 1
+    assert " ".join(str(integrity_error).split()) in " ".join(result.output.split())
+    assert "Traceback" not in result.output
+    assert service.revisions == []
 
 
 def test_revision_add_invalid_uuid_returns_usage_error_without_calling_service(

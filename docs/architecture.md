@@ -461,6 +461,20 @@ notes, and optional tags supplied by the caller. A revision does not replace or
 modify the original Playbook, does not change proposal status, does not infer or
 generate revised content, and does not perform automatic evolution.
 
+The JSON Revision repository enforces create-once persistence under supported
+writes: one UUID binds to one complete validated modeled payload. It publishes
+new UUID paths without replacement, treats an identical same-ID replay as a
+byte-preserving no-op, and rejects any different same-ID payload without
+modifying the stored bytes. Malformed or invalid stored data, non-UUID
+filenames, and filename/request-to-payload identity mismatches fail visibly
+without repair. Existing valid JSON remains readable without migration.
+
+This makes exact Revision UUID relations in Runs and their downstream
+Evaluations and Proposals, plus activation and application records, stable
+going forward under supported repository writes. It does not deeply freeze
+in-memory lists, reconstruct earlier history, or add snapshots, hashes,
+versioning, tamper evidence, or protection from direct filesystem mutation.
+
 The next lifecycle step for revisions is defined in
 `docs/playbook-revision-lifecycle.md`. The design recommends a future separate
 `PlaybookRevisionActivation` artifact for explicit manual or external-system
