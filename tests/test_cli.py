@@ -115,6 +115,7 @@ from neural_engine.domain import (
     PlaybookRevisionActivationDecision,
     PlaybookRun,
 )
+from neural_engine.ports.knowledge_repository import KnowledgePersistenceConflictError
 
 
 class CliResult(Protocol):
@@ -2355,6 +2356,53 @@ def test_knowledge_surfaces_render_controlled_ancestry_integrity_errors(
 
     assert result.exit_code == 1
     assert " ".join(str(integrity_error).split()) in " ".join(result.output.split())
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        [
+            "knowledge",
+            "add",
+            "--statement",
+            "Collision",
+            "--rationale",
+            "A generated UUID already has a different payload.",
+            "--confidence",
+            "high",
+            "--experience-id",
+            "11111111-1111-1111-1111-111111111111",
+        ],
+        [
+            "knowledge",
+            "from-experience",
+            "11111111-1111-1111-1111-111111111111",
+            "--statement",
+            "Collision",
+            "--rationale",
+            "A generated UUID already has a different payload.",
+            "--confidence",
+            "high",
+        ],
+    ],
+    ids=["knowledge-add", "knowledge-from-experience"],
+)
+def test_knowledge_creation_renders_controlled_persistence_conflict_without_storing(
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+) -> None:
+    knowledge_id = UUID("99999999-9999-9999-9999-999999999999")
+    conflict = KnowledgePersistenceConflictError(knowledge_id)
+    service = FakeKnowledgeService([], integrity_error=conflict)
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, command)
+
+    assert result.exit_code == 1
+    assert service.knowledge_items == []
+    assert " ".join(str(conflict).split()) in " ".join(result.output.split())
     assert "Traceback" not in result.output
 
 

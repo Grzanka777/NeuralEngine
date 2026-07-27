@@ -207,7 +207,16 @@ a Playbook, change proposal status, apply a proposal, or perform automatic
 evolution.
 
 The JSON repository is the current infrastructure implementation and stores one
-file per knowledge item under `NeuralPaths.KNOWLEDGE`.
+file per knowledge item under `NeuralPaths.KNOWLEDGE`. Under supported
+repository writes, one Knowledge UUID binds to one complete payload. Publication
+uses a local create-once operation that cannot replace the final UUID path.
+Replaying the same UUID and identical complete payload is a no-op that preserves
+the existing bytes; reusing the UUID for any different modeled field raises a
+persistence conflict. Existing malformed data and filename/payload UUID
+mismatches fail visibly without repair or replacement. Valid files written by
+the earlier adapter remain readable and require no migration. Direct filesystem
+mutation remains out-of-band corruption; this contract adds neither
+tamper-evidence nor Knowledge versioning.
 
 ## Playbook Flow
 

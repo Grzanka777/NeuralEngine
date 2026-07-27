@@ -82,7 +82,14 @@ boundary implemented by `ExperienceService.get_by_id()` before creating or
 saving knowledge. Missing evidence raises
 `KnowledgeEvidenceRequiredError`; a missing experience raises
 `ExperienceNotFoundError` with the missing experience UUID. Knowledge is stored
-as one JSON file per knowledge item under `NeuralPaths.KNOWLEDGE`.
+as one JSON file per knowledge item under `NeuralPaths.KNOWLEDGE`. Supported
+repository writes bind one Knowledge UUID to one complete payload: an identical
+same-ID replay is a no-op that preserves existing bytes, while a different
+same-ID payload conflicts without replacement. Malformed stored content and
+filename/payload UUID mismatches fail visibly without repair. Existing valid
+JSON needs no migration. Direct filesystem mutation remains out-of-band
+corruption; this is create-once persistence integrity, not tamper-proof storage
+or Knowledge versioning.
 The Knowledge CLI only records explicit user-supplied statements, rationale,
 confidence, experience IDs, and tags; it does not generate or infer knowledge.
 `KnowledgeService.add_from_experience()` creates knowledge linked to one

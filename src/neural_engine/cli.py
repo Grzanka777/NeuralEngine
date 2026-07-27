@@ -126,6 +126,7 @@ from neural_engine.domain import (
     PlaybookRun,
 )
 from neural_engine.domain.decision_outcome import DecisionOutcomeMetricValue
+from neural_engine.ports.knowledge_repository import KnowledgeRepositoryError
 
 app = typer.Typer(
     add_completion=False,
@@ -1037,6 +1038,8 @@ def list_experience_knowledge(experience_id: UUID) -> None:
         _exit_experience_not_found(error)
     except (DecisionReviewError, DecisionReviewPromotionError) as error:
         _exit_decision_review_integrity_error(error)
+    except KnowledgeRepositoryError as error:
+        _exit_knowledge_repository_error(error)
 
     if not knowledge_items:
         console.print(f"[yellow]No knowledge linked to experience: {experience_id}[/yellow]")
@@ -1091,6 +1094,8 @@ def add_knowledge(
         _exit_experience_not_found(error)
     except (DecisionReviewError, DecisionReviewPromotionError) as error:
         _exit_decision_review_integrity_error(error)
+    except KnowledgeRepositoryError as error:
+        _exit_knowledge_repository_error(error)
 
     console.print(f"[green]Knowledge stored.[/green] ID: [cyan]{knowledge.id}[/cyan]")
 
@@ -1118,6 +1123,8 @@ def add_knowledge_from_experience(
         _exit_experience_not_found(error)
     except (DecisionReviewError, DecisionReviewPromotionError) as error:
         _exit_decision_review_integrity_error(error)
+    except KnowledgeRepositoryError as error:
+        _exit_knowledge_repository_error(error)
 
     console.print(
         f"[green]Knowledge stored from experience.[/green] ID: [cyan]{knowledge.id}[/cyan]"
@@ -1135,6 +1142,8 @@ def list_knowledge() -> None:
         _exit_experience_not_found(error)
     except (DecisionReviewError, DecisionReviewPromotionError) as error:
         _exit_decision_review_integrity_error(error)
+    except KnowledgeRepositoryError as error:
+        _exit_knowledge_repository_error(error)
 
     if not knowledge_items:
         console.print("[yellow]No knowledge found.[/yellow]")
@@ -1154,6 +1163,8 @@ def list_knowledge_playbooks(knowledge_id: UUID) -> None:
         playbooks = service.list_for_knowledge(knowledge_id)
     except KnowledgeNotFoundError as error:
         _exit_knowledge_not_found(error)
+    except KnowledgeRepositoryError as error:
+        _exit_knowledge_repository_error(error)
 
     if not playbooks:
         console.print(f"[yellow]No playbooks linked to knowledge: {knowledge_id}[/yellow]")
@@ -1174,6 +1185,8 @@ def list_knowledge_revisions(knowledge_id: UUID) -> None:
     except RevisionKnowledgeNotFoundError as error:
         console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
         raise typer.Exit(code=1) from error
+    except KnowledgeRepositoryError as error:
+        _exit_knowledge_repository_error(error)
 
     if not revisions:
         console.print(f"[yellow]No playbook revisions linked to knowledge: {knowledge_id}[/yellow]")
@@ -1195,6 +1208,8 @@ def show_knowledge(knowledge_id: UUID) -> None:
         _exit_experience_not_found(error)
     except (DecisionReviewError, DecisionReviewPromotionError) as error:
         _exit_decision_review_integrity_error(error)
+    except KnowledgeRepositoryError as error:
+        _exit_knowledge_repository_error(error)
 
     if knowledge is None:
         console.print(f"[red]Knowledge not found: {knowledge_id}[/red]")
@@ -2431,6 +2446,11 @@ def _exit_experience_not_found(error: ExperienceNotFoundError) -> None:
 
 def _exit_knowledge_not_found(error: KnowledgeNotFoundError) -> None:
     console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _exit_knowledge_repository_error(error: KnowledgeRepositoryError) -> None:
+    console.print(f"[red]{error}[/red]")
     raise typer.Exit(code=1) from error
 
 
