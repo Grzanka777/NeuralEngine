@@ -4,6 +4,7 @@ from neural_engine.application.decision_lifecycle_service import DecisionLifecyc
 from neural_engine.application.decision_outcome_service import DecisionOutcomeService
 from neural_engine.application.decision_review_service import DecisionReviewService
 from neural_engine.application.decision_service import DecisionService
+from neural_engine.application.development_evidence_service import DevelopmentEvidenceService
 from neural_engine.application.evolution_proposal_service import EvolutionProposalService
 from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.knowledge_service import KnowledgeService
@@ -63,10 +64,24 @@ from neural_engine.infrastructure.json_playbook_revision_repository import (
 from neural_engine.infrastructure.json_playbook_run_repository import (
     JsonPlaybookRunRepository,
 )
+from neural_engine.infrastructure.local_development_evidence_source import (
+    LocalDevelopmentEvidenceSource,
+)
 
 
 class Container:
     """Application dependency container."""
+
+    def development_evidence_service(self) -> DevelopmentEvidenceService:
+        return DevelopmentEvidenceService(
+            LocalDevelopmentEvidenceSource(),
+            self.decision_service(),
+            self.decision_acceptance_service(),
+            self.decision_action_service(),
+            self.decision_outcome_service(),
+            self.decision_review_service(),
+            self.experience_service(),
+        )
 
     def decision_action_service(self) -> DecisionActionService:
         return DecisionActionService(

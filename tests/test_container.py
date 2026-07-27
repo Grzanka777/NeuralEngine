@@ -5,6 +5,7 @@ from neural_engine.application.decision_lifecycle_service import DecisionLifecyc
 from neural_engine.application.decision_outcome_service import DecisionOutcomeService
 from neural_engine.application.decision_review_service import DecisionReviewService
 from neural_engine.application.decision_service import DecisionService
+from neural_engine.application.development_evidence_service import DevelopmentEvidenceService
 from neural_engine.application.evolution_proposal_service import EvolutionProposalService
 from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.knowledge_service import KnowledgeService
@@ -49,6 +50,9 @@ from neural_engine.infrastructure.json_playbook_revision_repository import (
     JsonPlaybookRevisionRepository,
 )
 from neural_engine.infrastructure.json_playbook_run_repository import JsonPlaybookRunRepository
+from neural_engine.infrastructure.local_development_evidence_source import (
+    LocalDevelopmentEvidenceSource,
+)
 
 
 def test_container_wires_playbook_revision_service_with_json_repositories() -> None:
@@ -95,6 +99,19 @@ def test_container_wires_decision_service_with_json_repositories() -> None:
     assert isinstance(service, DecisionService)
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._observation_repository, JsonObservationRepository)
+
+
+def test_container_wires_local_development_evidence_orchestration() -> None:
+    service = Container().development_evidence_service()
+
+    assert isinstance(service, DevelopmentEvidenceService)
+    assert isinstance(service._source, LocalDevelopmentEvidenceSource)
+    assert isinstance(service._decision_service, DecisionService)
+    assert isinstance(service._acceptance_service, DecisionAcceptanceService)
+    assert isinstance(service._action_service, DecisionActionService)
+    assert isinstance(service._outcome_service, DecisionOutcomeService)
+    assert isinstance(service._review_service, DecisionReviewService)
+    assert isinstance(service._experience_service, ExperienceService)
 
 
 def test_container_wires_decision_acceptance_repository() -> None:

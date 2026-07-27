@@ -1,8 +1,21 @@
 # Project State
 
-Last updated: 2026-07-18
+Last updated: 2026-07-27
 
 ## Current implementation
+
+NeuralEngine now has a bounded local development-evidence dogfooding use case.
+One explicitly selected NeuralEngine prompt, review, and full non-merge commit
+are read through a specialized local source adapter. The application
+orchestrator validates checkpoint, parent, changed-path, patch, and validation
+claims into a non-persisted candidate. Preview writes nothing; explicit apply
+re-reads all source identities and calls only the existing Decision,
+DecisionAcceptance, DecisionAction, DecisionOutcome, DecisionReview, and
+optional Review-to-Experience services. Actors remain explicit caller
+attribution. Replay uses the repository identity plus full commit SHA and
+resumes partial application through existing service idempotency. No
+Observation, Knowledge, Playbook-family record, persisted evidence/candidate
+model, external integration, or automatic learning is added.
 
 Neural Engine has a first Observation vertical slice:
 

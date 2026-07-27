@@ -41,6 +41,12 @@ from neural_engine.application.decision_service import (
     DecisionSupersededNotFoundError,
     DecisionSupersededProjectMismatchError,
 )
+from neural_engine.application.development_evidence_service import (
+    DevelopmentEvidenceCandidate,
+    DevelopmentEvidenceError,
+    DevelopmentEvidenceRecordInput,
+    DevelopmentEvidenceRequest,
+)
 from neural_engine.application.evolution_proposal_service import (
     EvolutionProposalChangesRequiredError,
     EvolutionProposalEvaluationPlaybookMismatchError,
@@ -126,6 +132,9 @@ from neural_engine.domain import (
     PlaybookRun,
 )
 from neural_engine.domain.decision_outcome import DecisionOutcomeMetricValue
+from neural_engine.infrastructure.local_development_evidence_source import (
+    LocalDevelopmentEvidenceSourceError,
+)
 from neural_engine.ports.knowledge_repository import KnowledgeRepositoryError
 from neural_engine.ports.playbook_revision_repository import (
     PlaybookRevisionRepositoryError,
@@ -171,6 +180,9 @@ playbook_app = typer.Typer(
 run_app = typer.Typer(
     help="Record and inspect playbook runs.",
 )
+development_evidence_app = typer.Typer(
+    help="Preview or explicitly apply one local development evidence bundle.",
+)
 app.add_typer(decision_app, name="decision")
 decision_app.add_typer(decision_action_app, name="action")
 decision_app.add_typer(decision_outcome_app, name="outcome")
@@ -183,6 +195,7 @@ app.add_typer(playbook_app, name="playbook")
 app.add_typer(proposal_app, name="proposal")
 app.add_typer(revision_app, name="revision")
 app.add_typer(run_app, name="run")
+app.add_typer(development_evidence_app, name="development-evidence")
 
 console = Console()
 container = Container()
@@ -244,6 +257,51 @@ def status() -> None:
     console.print(f"[bold cyan]{APP_NAME}[/bold cyan]")
     console.print(f"Version : {__version__}")
     console.print(f"Brain   : {state}")
+
+
+@development_evidence_app.command("preview")
+def preview_development_evidence(
+    repository_root: Annotated[str, typer.Option("--repository-root")],
+    prompt_path: Annotated[str, typer.Option("--prompt-path")],
+    review_path: Annotated[str, typer.Option("--review-path")],
+    commit_sha: Annotated[str, typer.Option("--commit-sha")],
+    records_json: Annotated[str, typer.Option("--records-json")],
+) -> None:
+    """Render a side-effect-free candidate from explicitly selected local evidence."""
+
+    candidate = _development_evidence_candidate(
+        repository_root, prompt_path, review_path, commit_sha, records_json
+    )
+    console.print_json(candidate.model_dump_json())
+
+
+@development_evidence_app.command("apply")
+def apply_development_evidence(
+    repository_root: Annotated[str, typer.Option("--repository-root")],
+    prompt_path: Annotated[str, typer.Option("--prompt-path")],
+    review_path: Annotated[str, typer.Option("--review-path")],
+    commit_sha: Annotated[str, typer.Option("--commit-sha")],
+    records_json: Annotated[str, typer.Option("--records-json")],
+    authority_confirmed: Annotated[
+        bool,
+        typer.Option(
+            "--confirm-authority",
+            help="Confirm explicit authority for all supplied semantic actor fields.",
+        ),
+    ] = False,
+) -> None:
+    """Render, revalidate, and explicitly apply a candidate."""
+
+    service = container.development_evidence_service()
+    candidate = _development_evidence_candidate(
+        repository_root, prompt_path, review_path, commit_sha, records_json
+    )
+    console.print_json(candidate.model_dump_json())
+    try:
+        result = service.apply(candidate, authority_confirmed=authority_confirmed)
+    except (DevelopmentEvidenceError, LocalDevelopmentEvidenceSourceError) as error:
+        _exit_development_evidence_error(error)
+    console.print_json(result.model_dump_json())
 
 
 @decision_app.command("add")
@@ -2536,6 +2594,40 @@ def _exit_revision_activation_playbook_not_found(
     error: PlaybookRevisionActivationPlaybookNotFoundError,
 ) -> None:
     console.print(f"[red]Playbook not found: {error.playbook_id}[/red]")
+    raise typer.Exit(code=1) from error
+
+
+def _development_evidence_candidate(
+    repository_root: str,
+    prompt_path: str,
+    review_path: str,
+    commit_sha: str,
+    records_json: str,
+) -> DevelopmentEvidenceCandidate:
+    try:
+        records = DevelopmentEvidenceRecordInput.model_validate_json(records_json)
+        return container.development_evidence_service().preview(
+            DevelopmentEvidenceRequest(
+                repository_root=repository_root,
+                prompt_path=prompt_path,
+                review_path=review_path,
+                commit_sha=commit_sha,
+            ),
+            records,
+        )
+    except ValidationError as error:
+        console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+    except (DevelopmentEvidenceError, LocalDevelopmentEvidenceSourceError) as error:
+        _exit_development_evidence_error(error)
+
+    raise AssertionError("Unreachable development evidence error path")
+
+
+def _exit_development_evidence_error(
+    error: DevelopmentEvidenceError | LocalDevelopmentEvidenceSourceError,
+) -> None:
+    console.print(f"[red]{error}[/red]")
     raise typer.Exit(code=1) from error
 
 

@@ -45,6 +45,12 @@ neural decision review show REVIEW_UUID
 neural decision state DECISION_UUID
 ```
 
+Completed local NeuralEngine development work can be previewed and explicitly
+applied to that existing chain through `neural development-evidence`. The
+supported one-repository/one-prompt/one-review/one-commit contract and its
+authority, provenance, replay, and non-behavior boundaries are documented in
+[`docs/development-evidence-ingestion.md`](docs/development-evidence-ingestion.md).
+
 Review assessment is exactly `sound`, `flawed`, `mixed`, or `inconclusive`;
 confidence is `low`, `medium`, or `high`. Findings and candidate lessons are
 interpretive statements only. They do not constitute Experience, Knowledge,

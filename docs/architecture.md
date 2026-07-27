@@ -808,10 +808,20 @@ continues to return `proposed`, `accepted`, `in_progress`, `succeeded`,
 No review automatically creates Experience, Knowledge, Playbook,
 PlaybookEvaluation, PlaybookRevision, EvolutionProposal, or any other learning
 artifact. Execution, lifecycle reversal, ingestion, Consigliere integration,
-automatic learning/evolution, and Handbook synchronization remain
-unimplemented. Explicit Review-to-Experience promotion is a separate use case:
+automatic learning/evolution, and Handbook synchronization remain unimplemented
+outside the bounded local evidence flow described below. Explicit
+Review-to-Experience promotion is a separate use case:
 Review statements are not Experience until it succeeds, and the resulting
 Experience is still not Knowledge. One Review may produce multiple Experiences
 under distinct promotion keys. Reviewer and promoter are separate authorities;
 promotion changes no Decision lifecycle state. The next downstream learning
 step remains a separate explicit decision.
+
+The bounded local development-evidence dogfooding flow is documented in
+`docs/development-evidence-ingestion.md`. It adds a specialized local source
+adapter and application orchestrator, not a persisted evidence or candidate
+aggregate. The adapter owns repository-local Markdown and Git reading; the
+orchestrator owns correlation, non-persisted preview, explicit revalidated
+apply, deterministic replay identity, and dependency-order calls into the
+existing Decision-family services. The CLI remains a parsing and rendering
+surface.
