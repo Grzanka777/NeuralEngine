@@ -200,12 +200,20 @@ The canonical lifecycle states remain exactly `proposed`, `accepted`, `in_progre
 `failed`, `partial`, and `outcome_unknown`. Review is orthogonal append-only history; there is no
 `reviewed`, `promoted`, or `learned` state. Outcome or review creation does not create learning;
 only the explicit promotion use case creates an Experience, which remains distinct from Knowledge.
-There is no execution engine, lifecycle reversal, ingestion, automatic learning or evolution,
-generic event replay, or
-Consigliere integration. The authoritative implemented contract and future boundary are defined
-in `handbook/architecture/decision-learning.md`. Generic Knowledge creation is already explicit;
-`neural experience knowledge` is read-only navigation. Storing Knowledge alone does not prove
-later use or improvement.
+Source commit `25599655d0b1483eb37f88d379f6ca99afaf828d` adds one specialized local
+development-evidence boundary. `DevelopmentEvidenceSource` exposes bounded source facts;
+`LocalDevelopmentEvidenceSource` owns local file, Git, and conservative Markdown reads;
+`DevelopmentEvidenceService` owns correlation, non-persisted preview, authority-confirmed apply,
+replay, and dependency-ordered delegation. Existing Decision-family services continue to own all
+durable semantics and persistence, and the CLI remains parsing, delegation, rendering, and
+controlled-error handling only.
+
+This is not a generic ingestion framework. There is no execution engine, lifecycle reversal,
+automatic learning or evolution, generic event replay, persisted evidence or candidate aggregate,
+or Consigliere integration. The authoritative implemented contract and future boundary are
+defined in `handbook/architecture/decision-learning.md`. Generic Knowledge creation is already
+explicit; `neural experience knowledge` is read-only navigation. Storing Knowledge alone does not
+prove later use or improvement.
 
 ## Durable operational Knowledge use and feedback
 
@@ -410,8 +418,11 @@ summary
 bounded, and cannot be blank when supplied. `captured_at` is timezone-aware and normalized to UTC.
 The complete value is serialized inside Decision JSON.
 
-There is no Evidence repository, service, or CLI. A locator is retained as provenance only: the
-Decision CLI does not open it, verify it, or ingest its content.
+There is no persisted Evidence aggregate or Evidence repository. The ordinary Decision-family CLI
+retains a locator as provenance only and does not open, verify, or ingest it. The separate,
+specialized `neural development-evidence` surface described below reads only its deliberately
+bounded local prompt/review/commit topology and embeds bounded `EvidenceReference` values in the
+existing records.
 
 ## DecisionAcceptance foundation
 
@@ -1624,9 +1635,10 @@ reconstructed. There are no Revision snapshots, hashes, digests, content-address
 migration, backfill, repair, backup/restore, direct-filesystem protection, tamper evidence, or
 cryptographic immutability.
 
-## Self-observation and Consigliere boundaries
+## Local development evidence dogfooding
 
-The future dogfooding flow remains a design direction:
+Source commit `25599655d0b1483eb37f88d379f6ca99afaf828d` implements NeuralEngine's first real
+local ingestion and dogfooding path within the wider development workflow:
 
 ```text
 prompt
@@ -1640,16 +1652,191 @@ prompt
 → post-work lesson
 ```
 
-Commit `1b45beb` does not capture or ingest those events automatically. Automatic candidates and
-manual confirmation remain future concepts; no automatic persistence, ingestion, or learning
-exists.
+The implemented topology is narrower:
+
+```text
+one NeuralEngine Git worktree
++ one distinct repository-relative prompt
++ one distinct repository-relative review
++ one exact lowercase full non-merge commit SHA
+→ source validation and correlation
+→ frozen non-persisted candidate preview
+→ separate explicit authority-confirmed apply
+→ Decision
+→ DecisionAcceptance
+→ DecisionAction
+→ DecisionOutcome
+→ DecisionReview
+→ optional explicit Review-to-Experience promotion
+```
+
+It rejects path escape, absolute prompt/review paths, the wrong repository, Handbook input,
+cross-repository bundles, identical prompt and review files, missing or insufficient Markdown,
+short SHAs or aliases, merge commits, multiple prompts/reviews/commits, checkpoint mismatch,
+changed-path mismatch, duplicate review paths, and patch mismatch. The adapter does not search for
+artifacts or support a generic ingestion framework.
+
+### Source ownership and correlation
+
+Ownership is explicit:
+
+- `DevelopmentEvidenceSource` exposes only bounded source facts.
+- `LocalDevelopmentEvidenceSource` owns local file reads, SHA-256 hashing, Git reads, and
+  conservative Markdown parsing.
+- `DevelopmentEvidenceService` owns correlation, candidate construction, validation-tree
+  strength, authority/apply, replay, and service-call ordering.
+- Existing Decision-family services own durable validation, idempotency, relations, and
+  persistence.
+- The CLI owns parsing, delegation, JSON rendering, and controlled error conversion only.
+
+The implemented order is:
+
+1. validate the NeuralEngine repository root, repository-relative paths, and Git availability;
+2. read each selected file once and calculate its SHA-256;
+3. parse only the required conservative Markdown sections;
+4. resolve the exact lowercase full commit SHA;
+5. require exactly one parent;
+6. read parent, bounded subject, tree, changed paths, and patch;
+7. compare prompt and review starting checkpoints;
+8. compare the review checkpoint with the commit parent;
+9. compare review inventory with commit changed paths;
+10. compare the review diff with the commit patch;
+11. classify validation-tree strength;
+12. locally validate the caller-supplied domain payload;
+13. render the candidate;
+14. require explicit apply;
+15. rebuild the preview and compare fresh source facts;
+16. call existing services in dependency order.
+
+No durable write occurs before step 16. The adapter does not execute validation commands. Missing
+exit codes or test counts remain unknown rather than being inferred.
+
+### Candidate, preview, and authority
+
+`DevelopmentEvidenceCandidate` is a frozen application result. It is non-persisted, replaceable,
+side-effect free to produce, not truth, and not durable authority. It carries the repository
+identity and root; prompt/review paths and hashes; prompt/review checkpoints; review outcome,
+changed paths, patch hash, validation claims, and bounded risks; commit SHA, parent, subject, tree,
+changed paths, and patch hash; correlation; validation-tree strength; caller interpretation;
+uncertainty; EvidenceReferences; proposed and excluded writes; replay identity; and partial-apply
+semantics.
+
+Preview is the default and performs no durable write:
+
+```text
+neural development-evidence preview ... --records-json '<caller semantics>'
+```
+
+Apply is a separate surface:
+
+```text
+neural development-evidence apply ... --records-json '<caller semantics>' \
+  --confirm-authority
+```
+
+Apply rebuilds the preview from fresh prompt, review, and Git facts. Changed source facts reject
+the stale candidate before any write. `--confirm-authority` confirms the caller's explicit use of
+the supplied semantic actors; it is not authentication. Git authors, operating-system users,
+Markdown identities, and review outcomes do not confer authority. No RBAC or signatures exist.
+Review-to-Experience promotion remains optional and requires explicit statement selectors,
+promoter, promotion reason, and Experience semantics.
+
+Source evidence, normalized source facts, caller interpretation, the candidate, accepted durable
+records, authority, provenance, replay, and partial apply remain distinct. In particular, review
+outcome `completed` does not mean `DecisionOutcome.result=succeeded`; the caller supplies the
+outcome classification.
+
+### Provenance and validation-tree strength
+
+Apply uses the existing embedded `EvidenceReference` value for four bounded references:
+
+```text
+prompt path + NeuralEngine + prompt SHA-256
+review path + NeuralEngine + review SHA-256
+full commit SHA + NeuralEngine + Git tree + bounded commit subject
+review validation section + review SHA-256
+```
+
+Full prompt/review bodies, diffs, and unrestricted validation output are not persisted. The commit
+SHA locates the committed paths and patch. Prompt/review hashes are necessary because
+`.agent-work` files are mutable and may be ignored or untracked. A hash proves byte identity, not
+truth, authorship, authenticity, or causality.
+
+Validation-tree strength is exactly one of:
+
+```text
+exact committed tree attested
+review diff matches commit but validation was pre-commit
+review claim only
+absent
+contradictory
+```
+
+An exact-tree classification requires recorded zero exit codes and a review attestation matching
+the Git tree. Any recorded nonzero exit is contradictory. A matching review patch plus all
+recorded zero exit codes is pre-commit diff match when no exact-tree attestation exists. Missing
+exit codes remain review claims only.
+
+### Durable writes, replay, and partial apply
+
+Apply may create or replay only:
+
+```text
+Decision
+DecisionAcceptance
+DecisionAction
+DecisionOutcome
+DecisionReview
+optional Experience through existing explicit promotion
+```
+
+It explicitly does not create:
+
+```text
+Observation
+Knowledge
+Playbook
+PlaybookRevision
+PlaybookRun
+PlaybookEvaluation
+EvolutionProposal
+PlaybookRevisionActivation
+PlaybookRevisionApplication
+persisted evidence
+persisted candidate
+```
+
+The replay identity is `NeuralEngine:<full commit SHA>`. The orchestrator derives deterministic
+service idempotency keys; callers cannot override per-record keys through this surface. Equivalent
+replay returns existing records. Changed source hashes or caller semantics conflict. An amended
+commit SHA is a new identity.
+
+Apply is resumable, not transactional. Existing services are called in dependency order and no
+rollback is promised. If a later call fails, the already-written prefix remains visible; an exact
+rerun resumes through existing semantic idempotency. This is deterministic orchestration
+idempotency, not an atomic multi-record transaction.
+
+### Controlled failures and explicit non-behavior
+
+The source boundary reports invalid, missing, insufficient, and unsupported evidence. The
+orchestrator reports mismatched, unauthorized, stale, or semantically conflicting evidence and
+translates existing Decision-family idempotency conflicts. CLI paths render controlled exit-code-1
+messages without tracebacks.
+
+There is no automatic truth, automatic Observation or Knowledge creation, automatic Playbook
+evolution, GitHub or CI integration, webhook, watcher, background ingestion, actor authentication,
+multi-repository ingestion, causal proof, or autonomous learning. Full source bodies and patches
+are not durable records. No persisted evidence or candidate aggregate, repository, lifecycle, or
+approval state exists. It performs no automatic persistence, ingestion, or learning.
+
+## Consigliere boundary
 
 Consigliere also remains future-only. It may later advise. No Consigliere integration exists, and
 no recommendation can directly mutate NeuralEngine or authorize a durable record.
 
 ## Current non-behavior
 
-Commit `49db077` does not implement:
+Commit `25599655d0b1483eb37f88d379f6ca99afaf828d` does not implement:
 
 ```text
 execution engine
@@ -1661,8 +1848,13 @@ reopening
 cancellation
 replacement
 executed/completed/resolved/reviewed states
-file ingestion
-git ingestion
+generic file ingestion
+generic or multi-repository git ingestion
+GitHub or CI ingestion
+background ingestion
+persisted evidence or candidate aggregates
+candidate lifecycle or approval state
+actor authentication, RBAC, or signatures
 automatic Observation creation
 automatic Experience creation
 automatic Knowledge creation
@@ -1695,10 +1887,12 @@ multiple revisions per Run
 automatic activation or application
 ```
 
-It also does not execute commands referenced by evidence, open locators, automatically accept
-Decisions, materialize Playbook revisions, or infer outcomes from `completed_at`. Explicit user
-requests are required to create Decision, DecisionAcceptance, DecisionAction, DecisionOutcome, or
-DecisionReview records and to promote Review statements into Experience.
+It also does not execute validation commands, automatically accept Decisions, materialize Playbook
+revisions, or infer outcomes from review `completed` text or action `completed_at`. The specialized
+local source adapter opens only the explicitly selected bounded prompt/review/commit bundle.
+Explicit authority-confirmed apply is required to create Decision, DecisionAcceptance,
+DecisionAction, DecisionOutcome, or DecisionReview records and to promote Review statements into
+Experience.
 
 ## Remaining learning-loop limits
 
@@ -1837,7 +2031,7 @@ capture is not a durable record that Knowledge informed or improved a later deci
 3. Include validation output, diff stat, diff check, git status, and full diff.
 4. Stop without committing or pushing.
 
-## Future self-observation workflow
+## Development evidence dogfooding
 
 NeuralEngine development is intended to become a dogfooding source through:
 
@@ -1853,9 +2047,27 @@ prompt
 → post-work lesson
 ```
 
-Automatic capture produces candidates only. Manual confirmation authorizes durable records;
-immutable records preserve the audit trail; derived summaries remain replaceable views. No
-automatic persistence, ingestion, or learning exists.
+Source commit `25599655d0b1483eb37f88d379f6ca99afaf828d` implements the first deliberately
+bounded local path through this wider workflow:
+
+```text
+one NeuralEngine worktree
++ one distinct repository-relative prompt
++ one distinct repository-relative review
++ one exact lowercase full non-merge commit SHA
+→ validated non-persisted candidate preview
+→ separate authority-confirmed apply
+→ existing Decision-family records
+→ optional explicit Review-to-Experience promotion
+```
+
+Preview is side-effect free and is the default. Apply requires `--confirm-authority`, rebuilds the
+preview from fresh local file and Git facts, and rejects stale evidence before any durable call.
+The candidate is frozen, replaceable, non-persisted, and neither truth nor authority.
+
+This is explicit local ingestion, not automatic capture. It does not watch the worktree, run in the
+background, integrate with GitHub or CI, authenticate actors, create an Observation or Knowledge,
+evolve a Playbook, or learn autonomously.
 
 ## Handbook synchronization
 
