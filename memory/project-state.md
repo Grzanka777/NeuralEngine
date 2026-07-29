@@ -1,6 +1,30 @@
 # Project State
 
-Last updated: 2026-07-27
+Last updated: 2026-07-29
+
+## 1.0 documentation closure
+
+The bounded NeuralEngine 1.0 capability scope and release evidence gate are now
+canonical in `docs/1-0-scope-and-release-gate.md`. The document fixes the
+supported explicit core chain, Decision lifecycle, local development-evidence
+flow, interpretive limits, non-goals, local writer/concurrency assumptions, and
+the existing validation workflow without adding product behavior.
+
+The scope is grounded in committed checkpoint
+`6303abe56e8362478f7cc60dc9d841658ee815d8`
+(`fix: enforce playbook run create-once persistence`). The package version
+remains `0.0.1a1`; exact package-version and Git-tag selection is a separate
+release action. The current Handbook-generated NeuralEngine skill still
+requires a separately authorized byte-for-byte publication step before release
+and was not copied or regenerated here.
+
+Operational evidence is strong for the Decision family and local
+development-evidence preview/apply/replay. Live evidence is present for
+Review-derived Experience, Experience-derived Knowledge, and ordered Knowledge
+selection into a Playbook. Live PlaybookRevision, activation, application, Run,
+Evaluation, and EvolutionProposal records are not present. Those absences are
+recorded evidence gaps, not implementation blockers, and no durable records are
+created to close them.
 
 ## Current implementation
 
@@ -205,6 +229,17 @@ revision-specific claim. Runs are stored as one JSON file each under
 `NeuralPaths.PLAYBOOK_RUNS`.
 `PlaybookRunService.list_for_playbook()` verifies one existing Playbook and
 returns only runs whose `playbook_id` matches it.
+Supported repository writes now bind one PlaybookRun UUID to one complete
+validated payload. Initial publication cannot replace an existing UUID path.
+An identical same-ID replay preserves the existing bytes and filesystem
+metadata, while any different same-ID payload conflicts without replacement.
+Malformed or invalid stored JSON, non-UUID filenames, and
+filename/request-to-payload identity mismatches fail visibly without repair.
+This repository replay contract does not make ordinary
+`PlaybookRunService.add()` or `neural run add` semantically idempotent: normal
+creation constructs a fresh Run identity. Direct filesystem mutation remains
+out-of-band, and the contract does not add migration, backup, versioning,
+historical reconstruction, or cryptographic tamper evidence.
 Revision-linked Run reads validate the relation and fail closed on missing or
 cross-Playbook provenance. `neural revision runs UUID` validates the revision
 and returns explicit matches in repository order.
@@ -601,20 +636,23 @@ artifact. Evidence locators are not opened. There is no Consigliere integration.
 
 ## Validation
 
-Latest validation passed:
-
-* `uv run ruff format .`
-* `uv run ruff check .`
-* `uv run mypy src tests`
-* `uv run pytest`
-
-The final test count for the DecisionReview slice is recorded by the validation
-evidence in `.agent-work/reviews/review-decision-review-foundation.md`.
+The canonical 1.0 release gate is defined in
+`docs/1-0-scope-and-release-gate.md`. It uses formatter check, Ruff, MyPy, and a
+full isolated pytest run with a temporary HOME/XDG configuration, plus exact
+Brain before/after manifests and final Git evidence. It does not introduce a
+new CI or release framework.
 
 ## Notes for next work
 
-The Review-to-Experience promotion foundation is implemented. The next
-downstream learning step remains a separate explicit decision; this milestone
-does not add Experience-to-Knowledge promotion, automatic learning, Playbook or
-revision changes, lifecycle changes, evidence execution, or Consigliere
-integration.
+No feature or implementation milestone is implied by the 1.0 documentation
+closure. Remaining release actions are:
+
+1. publish the current Handbook-generated NeuralEngine skill byte-for-byte in a
+   separately authorized task;
+2. refresh and explicitly accept the operational evidence inventory;
+3. make the exact package-version and Git-tag decision;
+4. execute and retain the complete release evidence gate.
+
+Automatic learning, promotion, evaluation, proposal generation, revision
+creation, activation, application, execution, and evolution remain outside the
+bounded 1.0 scope.
