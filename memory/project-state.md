@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-29
 
-## 1.0 documentation closure
+## 1.0 versioned release-candidate preparation
 
 The bounded NeuralEngine 1.0 capability scope and release evidence gate are now
 canonical in `docs/1-0-scope-and-release-gate.md`. The document fixes the
@@ -10,21 +10,32 @@ supported explicit core chain, Decision lifecycle, local development-evidence
 flow, interpretive limits, non-goals, local writer/concurrency assumptions, and
 the existing validation workflow without adding product behavior.
 
-The scope is grounded in committed checkpoint
+The bounded source contract is grounded in committed checkpoint
 `6303abe56e8362478f7cc60dc9d841658ee815d8`
-(`fix: enforce playbook run create-once persistence`). The package version
-remains `0.0.1a1`; exact package-version and Git-tag selection is a separate
-release action. The current Handbook-generated NeuralEngine skill still
-requires a separately authorized byte-for-byte publication step before release
-and was not copied or regenerated here.
+(`fix: enforce playbook run create-once persistence`). The current
+Handbook-generated NeuralEngine skill was published byte-for-byte at commit
+`cbfd2185437a2cad38e6059bb14ad177ea9753ae`
+(`docs: publish current NeuralEngine generated skill`). The package version is
+now `1.0.0`.
 
 Operational evidence is strong for the Decision family and local
 development-evidence preview/apply/replay. Live evidence is present for
 Review-derived Experience, Experience-derived Knowledge, and ordered Knowledge
 selection into a Playbook. Live PlaybookRevision, activation, application, Run,
-Evaluation, and EvolutionProposal records are not present. Those absences are
-recorded evidence gaps, not implementation blockers, and no durable records are
-created to close them.
+Evaluation, and EvolutionProposal records are not present. The release owner
+explicitly accepts these six evidence gaps. The residual risk is that real
+downstream operator ergonomics and full Revision-to-Proposal use remain
+unexercised: the downstream end-to-end operator experience, real cross-record
+integration, and practical usefulness of the evaluation/evolution loop have
+not yet been exercised against the durable Brain. Source and tests cover the
+bounded mechanics. Acceptance does not require or authorize synthetic Brain
+records, additional real operational exercises before release, or new
+implementation. Real post-1.0 evidence collection remains recommended.
+
+The exact intended Git tag is annotated `v1.0.0` with message
+`NeuralEngine 1.0.0`. It has not been created. The versioned release candidate
+still must be reviewed, committed, pushed, and revalidated with
+`HEAD == origin/main`; tag creation remains a separate later step.
 
 ## Current implementation
 
@@ -644,14 +655,14 @@ new CI or release framework.
 
 ## Notes for next work
 
-No feature or implementation milestone is implied by the 1.0 documentation
-closure. Remaining release actions are:
+No feature or implementation milestone is implied by the 1.0 release
+preparation. Remaining release actions are:
 
-1. publish the current Handbook-generated NeuralEngine skill byte-for-byte in a
-   separately authorized task;
-2. refresh and explicitly accept the operational evidence inventory;
-3. make the exact package-version and Git-tag decision;
-4. execute and retain the complete release evidence gate.
+1. review and commit the bounded `1.0.0` version candidate;
+2. push and revalidate that exact commit with `HEAD == origin/main`;
+3. create annotated tag `v1.0.0` with message `NeuralEngine 1.0.0` only in the
+   separately authorized tag task;
+4. verify and push that tag separately.
 
 Automatic learning, promotion, evaluation, proposal generation, revision
 creation, activation, application, execution, and evolution remain outside the

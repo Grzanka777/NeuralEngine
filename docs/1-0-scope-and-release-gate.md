@@ -240,6 +240,15 @@ They must not be created merely to make the release inventory appear complete.
 The inventory must be refreshed before release and may explicitly retain a gap
 when the release owner accepts that evidence level.
 
+The release owner explicitly accepts the six gaps for `PlaybookRevision`,
+`PlaybookRevisionActivation`, `PlaybookRevisionApplication`, `PlaybookRun`,
+`PlaybookEvaluation`, and `EvolutionProposal`. The downstream end-to-end
+operator experience, real cross-record integration, and practical usefulness
+of the evaluation/evolution loop have not yet been exercised against the
+durable Brain. Source and tests cover the bounded mechanics. No additional real
+operational exercise is mandatory before release, and no synthetic record is
+required or authorized. Real post-1.0 evidence collection remains recommended.
+
 ## Release Evidence Gate
 
 The gate uses the existing local validation workflow. It creates no new CI
@@ -307,8 +316,9 @@ step:
 - prove byte-for-byte equality with `cmp -s`;
 - prove matching SHA-256 values.
 
-This publication is pending at the checkpoint on which this scope was defined.
-It is not performed by this documentation milestone.
+This publication was completed byte-for-byte at NeuralEngine commit
+`cbfd2185437a2cad38e6059bb14ad177ea9753ae`. The equality requirement remains
+part of final release evidence.
 
 ### 6. Operational Evidence
 
@@ -319,23 +329,23 @@ It is not performed by this documentation milestone.
 
 ### 7. Version and Tag Decision
 
-`pyproject.toml` currently declares:
+The release owner selected:
 
 ```text
-0.0.1a1
+package version: 1.0.0
+tag: v1.0.0
+tag type: annotated
+tag message: NeuralEngine 1.0.0
+operational evidence gaps: explicitly accepted
 ```
 
-This documentation milestone does not change that value and does not create a
-tag. Before release, a separately authorized release action must:
-
-- select and document the exact package version;
-- select and document the exact Git tag;
-- update package metadata if required by that decision;
-- prove the version and tag refer to the validated release candidate.
-
-No repository convention currently authorizes this documentation task to choose
-or apply those values. Until the exact version/tag decision is documented and
-executed, the release gate remains open.
+The versioned release-candidate task synchronizes package metadata to `1.0.0`
+but does not create the tag or declare the release complete. The version commit
+must first be reviewed, committed, pushed, revalidated, and confirmed as
+`HEAD == origin/main`. Only a later separately authorized step may create the
+annotated `v1.0.0` tag with message `NeuralEngine 1.0.0` on that exact validated
+commit. Final evidence must prove that the tag and all package/runtime version
+locations identify the same release candidate.
 
 ### 8. Final Evidence
 

@@ -24,27 +24,30 @@ assumptions, and release evidence gate are defined in
   integrity contracts. Those guarantees do not extend implicitly to every
   repository.
 - The latest committed checkpoint is
-  `6303abe56e8362478f7cc60dc9d841658ee815d8`
-  (`fix: enforce playbook run create-once persistence`).
+  `cbfd2185437a2cad38e6059bb14ad177ea9753ae`
+  (`docs: publish current NeuralEngine generated skill`).
 
 ## 1.0 Closure State
 
 - No new feature or implementation milestone is required by the accepted 1.0
   readiness assessment.
-- The package remains `0.0.1a1`; an exact package-version and Git-tag decision
-  is a separate release action.
-- Publication of the current Handbook-generated NeuralEngine skill remains a
-  separate required documentation task. The skill is not copied or regenerated
-  in this milestone.
+- The package version is `1.0.0`.
+- Publication of the current Handbook-generated NeuralEngine skill is complete
+  at commit `cbfd2185437a2cad38e6059bb14ad177ea9753ae`.
 - Live operational evidence is present through Knowledge selection into a
   Playbook and for Decision/development-evidence dogfooding. Live Revision,
   activation, application, Run, Evaluation, and EvolutionProposal evidence is
-  still absent; this is an evidence gap, not an implementation blocker.
+  still absent. The release owner explicitly accepts these six evidence gaps
+  and their documented residual risk; no synthetic Brain records or additional
+  implementation are required.
+- The intended Git tag is annotated `v1.0.0` with message
+  `NeuralEngine 1.0.0`. It has not been created.
+- This task prepares the versioned release candidate only. The candidate still
+  requires review, commit, push, and revalidation before the separate tag step.
 
 ## Current Priority
 
-1. Complete this documentation-only closure and its validation evidence.
-2. Publish the current generated skill byte-for-byte in a separately authorized
-   task.
-3. Record the remaining operational evidence inventory and exact release
-   version/tag decision before release.
+1. Review and commit the bounded `1.0.0` release candidate.
+2. Push and revalidate the exact version commit with `HEAD == origin/main`.
+3. In a separate authorized step, create annotated tag `v1.0.0` with message
+   `NeuralEngine 1.0.0`, then verify and push it.

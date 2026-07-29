@@ -216,7 +216,7 @@ wheels = [
 
 [[package]]
 name = "neural-engine"
-version = "0.0.1a1"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

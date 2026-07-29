@@ -29,7 +29,7 @@ class Brain:
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
 
-        NeuralPaths.VERSION.write_text("0.0.1a1\n")
+        NeuralPaths.VERSION.write_text("1.0.0\n")
 
         if not NeuralPaths.CONFIG.exists():
             NeuralPaths.CONFIG.write_text("# Neural Engine configuration\n")
