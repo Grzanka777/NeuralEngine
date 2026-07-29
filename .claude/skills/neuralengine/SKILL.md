@@ -196,6 +196,38 @@ supersession, hashes, content-addressed IDs, migration, backfill, repair, backup
 filesystem tamper evidence. Direct filesystem mutation remains out-of-band corruption; the
 contract is not tamper-proof or cryptographically immutable.
 
+Source commit `6303abe56e8362478f7cc60dc9d841658ee815d8` adds create-once persistence
+integrity for `PlaybookRun`. Under supported repository operations, one Run UUID is published
+without replacement. One Run UUID binds to one complete validated modeled payload.
+
+Equality covers `id`, `timestamp`, `playbook_id`, `revision_id`, `situation`, ordered
+`actions_taken`, `outcome`, `success`, ordered `evidence`, `notes`, and ordered `tags`.
+
+`JsonPlaybookRunRepository` validates the candidate, writes and `fsync`s a repository-owned
+same-directory temporary file, and publishes it without replacing an existing UUID path. An absent
+UUID is created once. An identical complete same-ID replay is a successful no-op that preserves
+bytes, inode, size, mtime, and ctime. Any different complete same-ID payload raises
+`PlaybookRunPersistenceConflictError` without overwrite. Malformed JSON or invalid modeled data
+raises `PlaybookRunStoredDataError`; a filename or requested UUID that differs from embedded
+`PlaybookRun.id` raises `PlaybookRunIdentityMismatchError`.
+
+`get_by_id()` returns `None` when the file is absent; present data is validated and identity
+checked. `load_all()` validates every filename stem as a UUID, validates every complete Run, and
+rejects identity mismatches rather than skipping invalid records. Valid existing JSON remains
+readable without migration. Repository-owned temporary files are cleaned up.
+
+Repository replay is not ordinary creation. `PlaybookRunService.add()` and `neural run add`
+continue to generate a fresh Run UUID and timestamp and expose no same-ID or semantic replay.
+Content equality under different generated UUIDs is not idempotent or deduplicated. The repository
+adds no update, delete, replace, version, migration, repair, transaction, generalized
+crash-recovery, or tamper-proof guarantee; direct filesystem mutation remains out-of-band.
+
+Optional Revision provenance is unchanged. `playbook_id` names the base Playbook; caller-supplied
+`revision_id` may name one exact Revision, while omission makes no revision-specific claim.
+Activation, application, timestamps, tags, and repository order never infer that relation.
+No other record automatically creates a Run. Persistence creates no automatic additional Run,
+Evaluation, DecisionAction, Outcome, Review, Experience, Knowledge, or evolution record.
+
 The canonical lifecycle states remain exactly `proposed`, `accepted`, `in_progress`, `succeeded`,
 `failed`, `partial`, and `outcome_unknown`. Review is orthogonal append-only history; there is no
 `reviewed`, `promoted`, or `learned` state. Outcome or review creation does not create learning;
@@ -1568,7 +1600,7 @@ because PlaybookRun and Playbook expose no project key. `DecisionOutcome` remain
 Experience. The promotion use case copies selected Review text into optional immutable Experience
 provenance and never mutates a Playbook.
 
-At source commit `49db077c00e67c1d3b5f25ec92b46c83518a30bb`, the implemented operational path is:
+At source commit `6303abe56e8362478f7cc60dc9d841658ee815d8`, the implemented operational path is:
 
 ```text
 Knowledge
@@ -1634,6 +1666,31 @@ freezing does not deeply freeze nested lists. Pre-hardening payload history cann
 reconstructed. There are no Revision snapshots, hashes, digests, content-addressed IDs, versions,
 migration, backfill, repair, backup/restore, direct-filesystem protection, tamper evidence, or
 cryptographic immutability.
+
+## PlaybookRun persistence integrity
+
+At the current checkpoint, supported `PlaybookRunRepository.save()` operations are create-once.
+One persisted Run UUID identifies one complete validated modeled payload across every Run field.
+Initial publication cannot replace an existing UUID path. An identical complete same-ID replay
+preserves bytes and filesystem metadata; a different same-ID payload conflicts without overwrite.
+Malformed or invalid stored data and filename/request-to-payload UUID mismatches fail visibly
+without repair. `load_all()` validates filename UUID syntax and all records instead of skipping
+invalid data, and missing `get_by_id()` retains `None`.
+
+This repository exact replay is not the public creation use case. `PlaybookRunService.add()` and
+`neural run add` continue to generate a fresh UUID and timestamp for each ordinary creation. They
+have no caller-supplied Run identity, semantic replay, or content-level deduplication. A matching
+payload under a newly generated UUID is a distinct Run.
+
+The optional Revision relation is unchanged: `playbook_id` identifies the base Playbook;
+`revision_id` identifies only an exact Revision explicitly supplied by the Run caller. Omission
+makes no revision claim. No activation, application, timestamp, tag, or repository ordering
+infers it. No other record automatically creates a Run. Repository replay creates no additional
+Run, Evaluation, DecisionAction, Outcome, Review, Experience, Knowledge, or evolution record.
+
+The guarantee is limited to supported repository writes. There is no Run update, delete,
+replacement, versioning, migration, repair, transaction, generalized crash-recovery,
+tamper-proofing, cryptographic integrity, or protection from direct filesystem mutation.
 
 ## Local development evidence dogfooding
 
@@ -1836,7 +1893,7 @@ no recommendation can directly mutate NeuralEngine or authorize a durable record
 
 ## Current non-behavior
 
-Commit `25599655d0b1483eb37f88d379f6ca99afaf828d` does not implement:
+Commit `6303abe56e8362478f7cc60dc9d841658ee815d8` does not implement:
 
 ```text
 execution engine
@@ -1881,7 +1938,12 @@ automatic active-revision selection
 Run-to-PlaybookRevisionApplication binding
 Playbook materialization
 revision content execution
-Run idempotency
+service/CLI Run idempotency or semantic replay
+content-level Run deduplication across generated UUIDs
+PlaybookRun update/delete/replace
+PlaybookRun versioning, migration, or repair
+PlaybookRun transactions or generalized crash recovery
+PlaybookRun tamper-proofing or direct-filesystem protection
 mixed or partial revision execution
 multiple revisions per Run
 automatic activation or application
