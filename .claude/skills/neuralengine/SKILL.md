@@ -78,6 +78,50 @@ NeuralEngine follows a hexagonal architecture.
 - CLI translates input and renders output.
 - Relationship navigation should be composed in services when it does not belong in persistence.
 
+## Neural home path selection
+
+Source commit `f7bdd1dceb6b848c67b8acf2552ddd18cda51a34` implements one fail-closed
+operational path-selection contract. `NEURAL_HOME` is the sole public selector. When it is absent,
+the selected home remains exactly:
+
+```text
+Path.home() / ".neural"
+```
+
+Presence is distinct from absence. A supplied value must be non-blank, have no leading or trailing
+whitespace, contain neither `~` nor NUL, be absolute, and strictly resolve to an existing,
+accessible directory. A valid directory symlink is accepted only after strict resolution.
+Malformed, missing, dangling, non-directory, inaccessible, or otherwise unavailable overrides
+fail closed. Once `NEURAL_HOME` is present, no failure path falls back to `~/.neural`.
+
+Each resolution returns one immutable `NeuralPaths` value. Its resolved home derives the Brain,
+all 15 default JSON record-store directories, projects, logs, `config.toml`, and `VERSION`.
+`Brain`, `Container`, CLI preflight, and every default JSON repository consume that selected path
+set. Environment-derived defaults are not frozen at module import.
+
+`Brain` distinguishes default initialization from override initialization. Default `neural init`
+may create `Path.home() / ".neural"`. Override init requires the selected root itself to
+pre-exist and be writable; it creates only approved children below that root. It does not
+recursively recreate a vanished selected root. Existing initialization content is preserved by
+the bounded idempotent initialization behavior.
+
+`neural status` is read-only. It reports the resolution source, configured value, resolved home,
+resolved Brain path, home and Brain availability, initialization state, and a bounded failure
+reason. Normal commands preflight the selected root; with an override they also require an
+available initialized Brain before service use. An unavailable override is not represented as an
+empty Brain, and the error explicitly states that no fallback was used.
+
+Explicit `directory=...` repository injection remains supported and bypasses the default
+root-selection guard for that injected directory. Domain models, application-service interfaces,
+repository ports, JSON schemas, and existing default-home data do not change.
+
+This capability is path selection only. It does not migrate, copy, back up, restore, synchronize,
+merge, lock, export, or import a Brain. It provides no mount or device management, filesystem
+identity or health policy, multi-host writer coordination, MCP integration, project partitioning
+or inference, or agent integration. The authoritative 22-entry Brain remains host-local at
+`/home/grzanka/.neural/brain`; `NEURAL_HOME` has not been configured on that host, no portable
+Neural home has been created, and portable deployment is not complete.
+
 ## Revision lifecycle and application boundary
 
 The current end of the domain chain is deliberately split across three immutable records:
