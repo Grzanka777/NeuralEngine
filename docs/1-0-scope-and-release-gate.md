@@ -217,11 +217,11 @@ NeuralEngine 1.0 does not include:
 
 These non-goals are boundaries, not missing features.
 
-## Operational Evidence Inventory
+## Historical Release-Gate Evidence Inventory
 
-The current evidence classification is:
+At release preparation, the evidence classification was:
 
-| Area | Current evidence |
+| Area | Release-preparation evidence |
 |---|---|
 | Decision-family dogfooding | Strong: live Decision, Acceptance, Action, Outcome, and Review records exist. |
 | Development-evidence preview/apply/replay | Strong: accepted reviews record no-write preview, fresh revalidation, authority-confirmed apply, exact replay, and store-invariance checks. |
@@ -248,6 +248,30 @@ of the evaluation/evolution loop have not yet been exercised against the
 durable Brain. Source and tests cover the bounded mechanics. No additional real
 operational exercise is mandatory before release, and no synthetic record is
 required or authorized. Real post-1.0 evidence collection remains recommended.
+
+### Current Post-1.0 Operational Evidence
+
+After the release gate, one bounded real retrospective operational-validation
+chain was completed:
+
+- Playbook: `62da1509-c12a-474c-a08d-4ba041f71ca1`
+- PlaybookRun: `8046aaa3-2689-4822-97e1-5b6b20c2b573`
+- PlaybookEvaluation: `bbe16b37-c461-4cf3-a25d-760459fe7674`
+
+The Evaluation is `effective`, records no improvements, and is the endpoint of
+the chain. An EvolutionProposal was not justified and was not created. Current
+PlaybookRevision, PlaybookRevisionActivation, PlaybookRevisionApplication, and
+EvolutionProposal stores each contain 0 records.
+
+This closes one bounded retrospective scenario only. It does not establish
+general effectiveness, independent third-party validation, authenticated
+evaluator identity, statistical generalizability, revision-bearing execution,
+Activation/Application evidence, or a changed-Playbook feedback cycle.
+
+Brain persistence is host-local under `~/.neural/brain`; Git does not
+synchronize Brain records. The selected authoritative host contains the
+verified 22-entry Brain. Durable Brain writes remain restricted to that host
+until an explicit synchronization, export, or import policy exists.
 
 ## Release Evidence Gate
 
@@ -339,13 +363,11 @@ tag message: NeuralEngine 1.0.0
 operational evidence gaps: explicitly accepted
 ```
 
-The versioned release-candidate task synchronizes package metadata to `1.0.0`
-but does not create the tag or declare the release complete. The version commit
-must first be reviewed, committed, pushed, revalidated, and confirmed as
-`HEAD == origin/main`. Only a later separately authorized step may create the
-annotated `v1.0.0` tag with message `NeuralEngine 1.0.0` on that exact validated
-commit. Final evidence must prove that the tag and all package/runtime version
-locations identify the same release candidate.
+The versioned release candidate subsequently converged at
+`dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`. `HEAD` and `origin/main` both
+resolve to that commit, and the annotated `v1.0.0` tag peels to the same
+commit. Release convergence is complete. The sequencing above remains the
+historical authorization record rather than current pending work.
 
 ### 8. Final Evidence
 

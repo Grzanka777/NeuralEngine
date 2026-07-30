@@ -1,8 +1,8 @@
 # Project State
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
-## 1.0 versioned release-candidate preparation
+## NeuralEngine 1.0 release and post-1.0 operational closure
 
 The bounded NeuralEngine 1.0 capability scope and release evidence gate are now
 canonical in `docs/1-0-scope-and-release-gate.md`. The document fixes the
@@ -18,24 +18,31 @@ Handbook-generated NeuralEngine skill was published byte-for-byte at commit
 (`docs: publish current NeuralEngine generated skill`). The package version is
 now `1.0.0`.
 
-Operational evidence is strong for the Decision family and local
-development-evidence preview/apply/replay. Live evidence is present for
-Review-derived Experience, Experience-derived Knowledge, and ordered Knowledge
-selection into a Playbook. Live PlaybookRevision, activation, application, Run,
-Evaluation, and EvolutionProposal records are not present. The release owner
-explicitly accepts these six evidence gaps. The residual risk is that real
-downstream operator ergonomics and full Revision-to-Proposal use remain
-unexercised: the downstream end-to-end operator experience, real cross-record
-integration, and practical usefulness of the evaluation/evolution loop have
-not yet been exercised against the durable Brain. Source and tests cover the
-bounded mechanics. Acceptance does not require or authorize synthetic Brain
-records, additional real operational exercises before release, or new
-implementation. Real post-1.0 evidence collection remains recommended.
+The release is complete at package version `1.0.0`, release commit
+`dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`, and annotated tag `v1.0.0`.
+`HEAD` and `origin/main` both resolve to that commit, so release convergence is
+complete.
 
-The exact intended Git tag is annotated `v1.0.0` with message
-`NeuralEngine 1.0.0`. It has not been created. The versioned release candidate
-still must be reviewed, committed, pushed, and revalidated with
-`HEAD == origin/main`; tag creation remains a separate later step.
+One bounded real retrospective operational-validation chain is complete:
+Playbook `62da1509-c12a-474c-a08d-4ba041f71ca1` -> PlaybookRun
+`8046aaa3-2689-4822-97e1-5b6b20c2b573` -> PlaybookEvaluation
+`bbe16b37-c461-4cf3-a25d-760459fe7674`. The Evaluation is `effective`, records
+no improvements, and is the endpoint of the chain. An EvolutionProposal was
+not justified and was not created. PlaybookRevision,
+PlaybookRevisionActivation, PlaybookRevisionApplication, and EvolutionProposal
+stores each contain 0 records.
+
+This single retrospective scenario does not establish general effectiveness,
+independent third-party validation, authenticated evaluator identity,
+statistical generalizability, revision-bearing execution,
+Activation/Application evidence, or a changed-Playbook feedback cycle. The
+accepted pre-release evidence limits remain part of the historical release-gate
+record rather than current missing release work.
+
+Brain persistence remains host-local under `~/.neural/brain`; Git does not
+synchronize it. The selected authoritative host contains the verified 22-entry
+Brain. Durable Brain writes remain restricted to that host until an explicit
+synchronization, export, or import policy exists.
 
 ## Current implementation
 
@@ -655,14 +662,9 @@ new CI or release framework.
 
 ## Notes for next work
 
-No feature or implementation milestone is implied by the 1.0 release
-preparation. Remaining release actions are:
-
-1. review and commit the bounded `1.0.0` version candidate;
-2. push and revalidate that exact commit with `HEAD == origin/main`;
-3. create annotated tag `v1.0.0` with message `NeuralEngine 1.0.0` only in the
-   separately authorized tag task;
-4. verify and push that tag separately.
+No release convergence action remains. Any post-1.0 work requires separate
+authorization and must preserve the documented 1.0 capability boundary and the
+selected authoritative-host rule for durable Brain writes.
 
 Automatic learning, promotion, evaluation, proposal generation, revision
 creation, activation, application, execution, and evolution remain outside the

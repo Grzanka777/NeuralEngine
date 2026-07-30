@@ -2,8 +2,8 @@
 
 ## Current Focus
 
-Close the documentation-defined NeuralEngine 1.0 release boundary without
-adding product behavior.
+Maintain the post-1.0 current-state record while preserving the canonical
+NeuralEngine 1.0 capability boundary.
 
 The canonical capability scope, interpretive limits, non-goals, writer
 assumptions, and release evidence gate are defined in
@@ -23,9 +23,12 @@ assumptions, and release evidence gate are defined in
   create-once, identical same-ID replay, conflict, and stored-identity
   integrity contracts. Those guarantees do not extend implicitly to every
   repository.
-- The latest committed checkpoint is
-  `cbfd2185437a2cad38e6059bb14ad177ea9753ae`
-  (`docs: publish current NeuralEngine generated skill`).
+- The release commit is
+  `dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`
+  (`release: prepare NeuralEngine 1.0.0`).
+- `HEAD == origin/main == dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`;
+  annotated tag `v1.0.0` peels to the same commit, so release convergence is
+  complete.
 
 ## 1.0 Closure State
 
@@ -34,20 +37,25 @@ assumptions, and release evidence gate are defined in
 - The package version is `1.0.0`.
 - Publication of the current Handbook-generated NeuralEngine skill is complete
   at commit `cbfd2185437a2cad38e6059bb14ad177ea9753ae`.
-- Live operational evidence is present through Knowledge selection into a
-  Playbook and for Decision/development-evidence dogfooding. Live Revision,
-  activation, application, Run, Evaluation, and EvolutionProposal evidence is
-  still absent. The release owner explicitly accepts these six evidence gaps
-  and their documented residual risk; no synthetic Brain records or additional
-  implementation are required.
-- The intended Git tag is annotated `v1.0.0` with message
-  `NeuralEngine 1.0.0`. It has not been created.
-- This task prepares the versioned release candidate only. The candidate still
-  requires review, commit, push, and revalidation before the separate tag step.
+- One bounded real retrospective operational-validation chain is complete:
+  Playbook `62da1509-c12a-474c-a08d-4ba041f71ca1` -> PlaybookRun
+  `8046aaa3-2689-4822-97e1-5b6b20c2b573` -> PlaybookEvaluation
+  `bbe16b37-c461-4cf3-a25d-760459fe7674`.
+- The Evaluation is `effective`, records no improvements, and is the endpoint
+  of the chain. An EvolutionProposal was not justified and was not created.
+  PlaybookRevision, PlaybookRevisionActivation,
+  PlaybookRevisionApplication, and EvolutionProposal stores each contain
+  0 records.
+- This single retrospective scenario does not establish general effectiveness,
+  independent third-party validation, authenticated evaluator identity,
+  statistical generalizability, revision-bearing execution,
+  Activation/Application evidence, or a changed-Playbook feedback cycle.
+- Brain persistence is host-local under `~/.neural/brain`; Git does not
+  synchronize it. The selected authoritative host contains the verified
+  22-entry Brain. Durable Brain writes remain restricted to that host until an
+  explicit synchronization, export, or import policy exists.
 
 ## Current Priority
 
-1. Review and commit the bounded `1.0.0` release candidate.
-2. Push and revalidate the exact version commit with `HEAD == origin/main`.
-3. In a separate authorized step, create annotated tag `v1.0.0` with message
-   `NeuralEngine 1.0.0`, then verify and push it.
+No release-finalization task remains. Any post-1.0 product or persistence work
+requires separate authorization and must preserve the documented 1.0 boundary.
