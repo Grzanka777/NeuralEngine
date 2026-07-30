@@ -23,6 +23,12 @@ assumptions, and release evidence gate are defined in
   create-once, identical same-ID replay, conflict, and stored-identity
   integrity contracts. Those guarantees do not extend implicitly to every
   repository.
+- Neural home selection is opt-in through `NEURAL_HOME`. The exact default
+  remains `Path.home() / ".neural"`; a supplied override must resolve to one
+  existing accessible absolute directory and fails closed without local
+  fallback. All operational paths derive from one immutable resolved home.
+  This is path selection only, not migration, synchronization, backup,
+  locking, or mount management.
 - The release commit is
   `dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`
   (`release: prepare NeuralEngine 1.0.0`).
@@ -53,7 +59,8 @@ assumptions, and release evidence gate are defined in
 - Brain persistence is host-local under `~/.neural/brain`; Git does not
   synchronize it. The selected authoritative host contains the verified
   22-entry Brain. Durable Brain writes remain restricted to that host until an
-  explicit synchronization, export, or import policy exists.
+  explicit migration and operating policy exists. `NEURAL_HOME` has not been
+  configured on the host, and no portable Neural home has been created.
 
 ## Current Priority
 

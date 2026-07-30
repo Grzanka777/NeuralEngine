@@ -1,38 +1,95 @@
+import os
+from dataclasses import dataclass
 from pathlib import Path
 
-from neural_engine.core.paths import NeuralPaths
+from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
+
+
+@dataclass(frozen=True, slots=True)
+class BrainStatus:
+    """Read-only status of one selected Neural home and Brain."""
+
+    home_exists: bool
+    home_is_directory: bool
+    home_accessible: bool
+    brain_exists: bool
+    brain_accessible: bool
+
+    @property
+    def initialized(self) -> bool:
+        return self.brain_exists and self.brain_accessible
 
 
 class Brain:
-    """Represents the local Neural Engine brain."""
+    """Represents one selected local Neural Engine brain."""
+
+    def __init__(self, paths: NeuralPaths | None = None) -> None:
+        self.paths = paths if paths is not None else resolve_neural_paths()
 
     def initialize(self) -> None:
+        if self.paths.is_override:
+            self.paths.require_available(operation="initialization", writable=True)
+        else:
+            self.paths.HOME.mkdir(parents=True, exist_ok=True)
+
         directories: list[Path] = [
-            NeuralPaths.BRAIN,
-            NeuralPaths.EXPERIENCES,
-            NeuralPaths.OBSERVATIONS,
-            NeuralPaths.KNOWLEDGE,
-            NeuralPaths.PLAYBOOKS,
-            NeuralPaths.PLAYBOOK_RUNS,
-            NeuralPaths.PLAYBOOK_EVALUATIONS,
-            NeuralPaths.EVOLUTION_PROPOSALS,
-            NeuralPaths.PLAYBOOK_REVISIONS,
-            NeuralPaths.DECISIONS,
-            NeuralPaths.DECISION_ACCEPTANCES,
-            NeuralPaths.DECISION_ACTIONS,
-            NeuralPaths.DECISION_OUTCOMES,
-            NeuralPaths.DECISION_REVIEWS,
-            NeuralPaths.PROJECTS,
-            NeuralPaths.LOGS,
+            self.paths.BRAIN,
+            self.paths.EXPERIENCES,
+            self.paths.OBSERVATIONS,
+            self.paths.KNOWLEDGE,
+            self.paths.PLAYBOOKS,
+            self.paths.PLAYBOOK_RUNS,
+            self.paths.PLAYBOOK_EVALUATIONS,
+            self.paths.EVOLUTION_PROPOSALS,
+            self.paths.PLAYBOOK_REVISIONS,
+            self.paths.PLAYBOOK_REVISION_ACTIVATIONS,
+            self.paths.PLAYBOOK_REVISION_APPLICATIONS,
+            self.paths.DECISIONS,
+            self.paths.DECISION_ACCEPTANCES,
+            self.paths.DECISION_ACTIONS,
+            self.paths.DECISION_OUTCOMES,
+            self.paths.DECISION_REVIEWS,
+            self.paths.PROJECTS,
+            self.paths.LOGS,
         ]
 
         for directory in directories:
-            directory.mkdir(parents=True, exist_ok=True)
+            directory.mkdir(exist_ok=True)
 
-        NeuralPaths.VERSION.write_text("1.0.0\n")
+        self.paths.VERSION.write_text("1.0.0\n")
 
-        if not NeuralPaths.CONFIG.exists():
-            NeuralPaths.CONFIG.write_text("# Neural Engine configuration\n")
+        if not self.paths.CONFIG.exists():
+            self.paths.CONFIG.write_text("# Neural Engine configuration\n")
+
+    def status(self) -> BrainStatus:
+        home_exists = self.paths.HOME.exists()
+        home_is_directory = home_exists and self.paths.HOME.is_dir()
+        home_accessible = home_is_directory and os.access(
+            self.paths.HOME,
+            os.R_OK | os.X_OK,
+        )
+        brain_exists = home_accessible and (
+            self.paths.BRAIN.exists() or self.paths.BRAIN.is_symlink()
+        )
+        brain_accessible = (
+            brain_exists
+            and self.paths.BRAIN.is_dir()
+            and os.access(self.paths.BRAIN, os.R_OK | os.X_OK)
+        )
+        return BrainStatus(
+            home_exists=home_exists,
+            home_is_directory=home_is_directory,
+            home_accessible=home_accessible,
+            brain_exists=brain_exists,
+            brain_accessible=brain_accessible,
+        )
 
     def exists(self) -> bool:
-        return NeuralPaths.HOME.exists()
+        return self.status().initialized
+
+    def require_initialized(self, *, operation: str, writable: bool = False) -> None:
+        self.paths.require_available(
+            operation=operation,
+            writable=writable,
+            require_brain=True,
+        )

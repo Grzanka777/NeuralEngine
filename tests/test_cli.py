@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
@@ -7890,3 +7891,143 @@ def test_decision_outcome_history_and_summary_have_controlled_empty_states(
     assert "No outcome history found" in history.output
     assert "Outcome count: 0" in summary.output
     assert "Latest result: -" in summary.output
+
+
+class UnexpectedPathPreflightContainer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def observation_service(self) -> FakeObservationService:
+        self.calls += 1
+        raise AssertionError("service must not be resolved after path preflight failure")
+
+
+def test_status_reports_absent_default_without_creating_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_home = tmp_path / "isolated"
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.delenv("NEURAL_HOME", raising=False)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+
+    assert result.exit_code == 0
+    assert "Resolution source        : default" in result.output
+    assert "Resolved Neural home" in result.output
+    assert str(isolated_home / ".neural") in result.output
+    assert "Brain state              : Not initialized" in result.output
+    assert "Failure reason           : -" in result.output
+    assert not isolated_home.exists()
+
+
+def test_status_rejects_existing_default_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_home = tmp_path / "isolated"
+    isolated_home.mkdir()
+    selected_home = isolated_home / ".neural"
+    selected_home.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.delenv("NEURAL_HOME", raising=False)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+
+    assert result.exit_code == 1
+    assert "Resolution source        : default" in result.output
+    assert "Home is directory        : no" in result.output
+    assert "home is not a directory" in result.output.lower()
+
+
+def test_status_reports_valid_uninitialized_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "portable"
+    configured.mkdir()
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+
+    result = CliRunner().invoke(cli.app, ["status"])
+
+    assert result.exit_code == 0
+    assert "Resolution source        : override (NEURAL_HOME)" in result.output
+    assert "Configured Neural home" in result.output
+    assert "Resolved Neural home" in result.output
+    assert str(configured) in result.output
+    assert "Configured root available: yes" in result.output
+    assert "Brain state              : Not initialized" in result.output
+    assert list(configured.iterdir()) == []
+
+
+def test_status_and_no_command_fail_truthfully_for_unavailable_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "missing"
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+    runner = CliRunner()
+
+    status_result = runner.invoke(cli.app, ["status"])
+    root_result = runner.invoke(cli.app, [])
+
+    assert status_result.exit_code == root_result.exit_code == 1
+    for result in (status_result, root_result):
+        assert "Brain state              : Unavailable" in result.output
+        assert "Configured root available: no" in result.output
+        assert "No fallback was used" in " ".join(result.output.split())
+        assert "Ready" not in result.output
+    assert not configured.exists()
+
+
+def test_default_init_creates_default_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_home = tmp_path / "isolated"
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.delenv("NEURAL_HOME", raising=False)
+
+    result = CliRunner().invoke(cli.app, ["init"])
+
+    assert result.exit_code == 0
+    assert (isolated_home / ".neural" / "brain").is_dir()
+
+
+def test_override_init_uses_only_preexisting_selected_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "portable"
+    configured.mkdir()
+    isolated_home = tmp_path / "isolated"
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+
+    result = CliRunner().invoke(cli.app, ["init"])
+
+    assert result.exit_code == 0
+    assert (configured / "brain").is_dir()
+    assert (configured / "brain" / "playbook-revision-activations").is_dir()
+    assert (configured / "brain" / "playbook-revision-applications").is_dir()
+    assert not isolated_home.exists()
+
+
+def test_unavailable_override_blocks_read_and_write_before_service_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "missing"
+    unexpected = UnexpectedPathPreflightContainer()
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+    monkeypatch.setattr(cli, "container", unexpected)
+    runner = CliRunner()
+
+    read_result = runner.invoke(cli.app, ["list"])
+    write_result = runner.invoke(cli.app, ["observe", "must not persist"])
+
+    assert read_result.exit_code == write_result.exit_code == 1
+    assert "No fallback was used" in " ".join(read_result.output.split())
+    assert "No fallback was used" in " ".join(write_result.output.split())
+    assert unexpected.calls == 0
+    assert not configured.exists()

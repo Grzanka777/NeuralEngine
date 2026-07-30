@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from neural_engine.core.paths import NeuralPaths
+from neural_engine.core.paths import resolve_neural_paths
 from neural_engine.domain import (
     DecisionReview,
     DecisionReviewAssessment,
@@ -78,4 +78,4 @@ def test_malformed_persisted_data_fails_without_repair(tmp_path: Path) -> None:
 
 
 def test_default_path_uses_decision_reviews_constant() -> None:
-    assert JsonDecisionReviewRepository()._directory == NeuralPaths.DECISION_REVIEWS
+    assert JsonDecisionReviewRepository()._directory == resolve_neural_paths().DECISION_REVIEWS

@@ -65,6 +65,34 @@ CLI:
 * Creates no business rules.
 * Resolves application services through `application/container.py`.
 
+## Neural Home Path Resolution
+
+`src/neural_engine/core/paths.py` owns the single public path-selection
+contract. Each resolver call returns one immutable `NeuralPaths` value. When
+`NEURAL_HOME` is absent, its home is exactly `Path.home() / ".neural"`. When
+the variable is present, it must name one non-blank absolute existing
+accessible directory; invalid or unavailable values fail without default
+fallback. Strictly resolvable symlink roots are supported.
+
+No environment-derived operational path is fixed at module import. Brain,
+projects, logs, config, version, and every record-store directory derive from
+the same resolved home. `Container` passes one resolved path set through each
+constructed dependency graph. JSON adapters resolve their no-argument
+defaults at construction and revalidate configured-root and Brain
+availability before I/O. Explicit `directory=...` adapter injection remains
+available for tests and alternate infrastructure composition.
+
+`Brain` owns read-only initialization state and approved home initialization.
+Default init may create `~/.neural`; override init requires its selected root
+to pre-exist and creates children only below it. Missing individual stores
+under an available Brain retain their existing empty-read behavior. A missing
+configured root fails before repository use, so it cannot be interpreted as an
+empty Brain or recursively recreated by a default adapter write.
+
+These rules add no domain concept, repository-port method, record schema,
+mount management, migration, backup, synchronization, locking, or multi-host
+coordination.
+
 ## Observation Flow
 
 `neural observe` calls the application container, receives an

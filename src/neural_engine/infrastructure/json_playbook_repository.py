@@ -3,17 +3,24 @@ from uuid import UUID
 
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.domain import Playbook
+from neural_engine.infrastructure.repository_paths import RepositoryPath
 from neural_engine.ports.playbook_repository import PlaybookRepository
 
 
 class JsonPlaybookRepository(PlaybookRepository):
     """Stores playbooks as JSON files."""
 
-    def __init__(self, directory: Path = NeuralPaths.PLAYBOOKS) -> None:
-        self._directory = directory
+    def __init__(
+        self,
+        directory: Path | None = None,
+        *,
+        paths: NeuralPaths | None = None,
+    ) -> None:
+        self._path = RepositoryPath.build(directory, paths, lambda value: value.PLAYBOOKS)
+        self._directory = self._path.directory
 
     def save(self, playbook: Playbook) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
+        self._path.prepare_for_write()
 
         path = self._directory / f"{playbook.id}.json"
 
@@ -23,6 +30,7 @@ class JsonPlaybookRepository(PlaybookRepository):
         )
 
     def load_all(self) -> list[Playbook]:
+        self._path.guard(operation="read")
         if not self._directory.exists():
             return []
 
@@ -34,6 +42,7 @@ class JsonPlaybookRepository(PlaybookRepository):
         return playbooks
 
     def get_by_id(self, playbook_id: UUID) -> Playbook | None:
+        self._path.guard(operation="read")
         path = self._directory / f"{playbook_id}.json"
 
         if not path.exists():

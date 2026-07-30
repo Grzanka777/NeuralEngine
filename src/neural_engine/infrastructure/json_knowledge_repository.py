@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.domain import Knowledge
+from neural_engine.infrastructure.repository_paths import RepositoryPath
 from neural_engine.ports.knowledge_repository import (
     KnowledgeIdentityMismatchError,
     KnowledgePersistenceConflictError,
@@ -18,11 +19,17 @@ from neural_engine.ports.knowledge_repository import (
 class JsonKnowledgeRepository(KnowledgeRepository):
     """Stores knowledge as JSON files."""
 
-    def __init__(self, directory: Path = NeuralPaths.KNOWLEDGE) -> None:
-        self._directory = directory
+    def __init__(
+        self,
+        directory: Path | None = None,
+        *,
+        paths: NeuralPaths | None = None,
+    ) -> None:
+        self._path = RepositoryPath.build(directory, paths, lambda value: value.KNOWLEDGE)
+        self._directory = self._path.directory
 
     def save(self, knowledge: Knowledge) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
+        self._path.prepare_for_write()
 
         path = self._directory / f"{knowledge.id}.json"
         serialized = knowledge.model_dump_json(indent=2)
@@ -54,6 +61,7 @@ class JsonKnowledgeRepository(KnowledgeRepository):
                 temporary_path.unlink(missing_ok=True)
 
     def load_all(self) -> list[Knowledge]:
+        self._path.guard(operation="read")
         if not self._directory.exists():
             return []
 
@@ -69,6 +77,7 @@ class JsonKnowledgeRepository(KnowledgeRepository):
         return knowledge_items
 
     def get_by_id(self, knowledge_id: UUID) -> Knowledge | None:
+        self._path.guard(operation="read")
         path = self._directory / f"{knowledge_id}.json"
 
         if not path.exists():

@@ -5,6 +5,41 @@ Neural Engine is a model-agnostic cognitive evolution engine.
 The project is organized around Clean Architecture boundaries so domain concepts,
 application services, ports, and infrastructure can evolve independently.
 
+## Neural Home Selection
+
+By default, Neural Engine stores its complete local operational home at:
+
+```text
+Path.home() / ".neural"
+```
+
+One explicit alternate home can be selected for a process through
+`NEURAL_HOME`:
+
+```bash
+NEURAL_HOME=/absolute/existing/directory neural status
+```
+
+The variable selects the complete Neural home, including `brain/`, `projects/`,
+`logs/`, `config.toml`, and `VERSION`. A supplied value must be non-blank,
+absolute, free of `~`, and resolve strictly to an existing accessible
+directory. Valid symlinked roots are supported when their target is available.
+A blank, relative, missing, dangling, non-directory, or inaccessible override
+fails without falling back to `~/.neural`.
+
+`neural status` is read-only and reports the selection source, configured and
+resolved home, resolved Brain path, availability, initialization state, and a
+controlled failure reason. `neural init` may create the default `~/.neural`
+root. With `NEURAL_HOME`, the selected root itself must already exist; init
+creates only approved children inside it.
+
+Path selection does not discover or mount devices, migrate or copy Brain data,
+create backups, synchronize hosts, add locking, or coordinate multiple
+writers. If a configured removable root becomes unavailable, normal commands
+fail rather than treating it as an empty Brain or recreating a local fallback.
+The current authoritative Brain remains host-local until a separate migration
+is explicitly authorized.
+
 ## Current Capabilities
 
 The first implemented slice is Observation capture:

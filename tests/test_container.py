@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from neural_engine.application.container import Container
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_action_service import DecisionActionService
@@ -19,7 +21,7 @@ from neural_engine.application.playbook_revision_application_service import (
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
-from neural_engine.core.paths import NeuralPaths
+from neural_engine.core.paths import resolve_neural_paths
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
     JsonDecisionAcceptanceRepository,
 )
@@ -90,7 +92,7 @@ def test_container_wires_decision_repository() -> None:
     repository = Container().decision_repository()
 
     assert isinstance(repository, JsonDecisionRepository)
-    assert repository._directory == NeuralPaths.DECISIONS
+    assert repository._directory == resolve_neural_paths().DECISIONS
 
 
 def test_container_wires_decision_service_with_json_repositories() -> None:
@@ -118,7 +120,7 @@ def test_container_wires_decision_acceptance_repository() -> None:
     repository = Container().decision_acceptance_repository()
 
     assert isinstance(repository, JsonDecisionAcceptanceRepository)
-    assert repository._directory == NeuralPaths.DECISION_ACCEPTANCES
+    assert repository._directory == resolve_neural_paths().DECISION_ACCEPTANCES
 
 
 def test_container_wires_decision_acceptance_service_with_json_repositories() -> None:
@@ -133,7 +135,7 @@ def test_container_wires_decision_action_repository() -> None:
     repository = Container().decision_action_repository()
 
     assert isinstance(repository, JsonDecisionActionRepository)
-    assert repository._directory == NeuralPaths.DECISION_ACTIONS
+    assert repository._directory == resolve_neural_paths().DECISION_ACTIONS
 
 
 def test_container_wires_decision_action_service_with_json_repositories() -> None:
@@ -151,7 +153,7 @@ def test_container_wires_decision_outcome_repository_and_service() -> None:
     service = Container().decision_outcome_service()
 
     assert isinstance(repository, JsonDecisionOutcomeRepository)
-    assert repository._directory == NeuralPaths.DECISION_OUTCOMES
+    assert repository._directory == resolve_neural_paths().DECISION_OUTCOMES
     assert isinstance(service, DecisionOutcomeService)
     assert isinstance(service._outcome_repository, JsonDecisionOutcomeRepository)
     assert isinstance(service._action_repository, JsonDecisionActionRepository)
@@ -175,7 +177,7 @@ def test_container_wires_decision_review_repository_and_service() -> None:
     service = Container().decision_review_service()
 
     assert isinstance(repository, JsonDecisionReviewRepository)
-    assert repository._directory == NeuralPaths.DECISION_REVIEWS
+    assert repository._directory == resolve_neural_paths().DECISION_REVIEWS
     assert isinstance(service, DecisionReviewService)
     assert isinstance(service._review_repository, JsonDecisionReviewRepository)
     assert isinstance(service._decision_repository, JsonDecisionRepository)
@@ -212,7 +214,7 @@ def test_container_wires_playbook_revision_activation_repository() -> None:
     repository = Container().playbook_revision_activation_repository()
 
     assert isinstance(repository, JsonPlaybookRevisionActivationRepository)
-    assert repository._directory == NeuralPaths.PLAYBOOK_REVISION_ACTIVATIONS
+    assert repository._directory == resolve_neural_paths().PLAYBOOK_REVISION_ACTIVATIONS
 
 
 def test_container_wires_playbook_revision_activation_service_with_json_repositories() -> None:
@@ -229,7 +231,27 @@ def test_container_wires_playbook_revision_application_repository() -> None:
     repository = Container().playbook_revision_application_repository()
 
     assert isinstance(repository, JsonPlaybookRevisionApplicationRepository)
-    assert repository._directory == NeuralPaths.PLAYBOOK_REVISION_APPLICATIONS
+    assert repository._directory == resolve_neural_paths().PLAYBOOK_REVISION_APPLICATIONS
+
+
+def test_container_reuses_one_resolved_path_set_through_nested_graph(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "portable"
+    home.mkdir()
+    paths = resolve_neural_paths(environ={"NEURAL_HOME": str(home)})
+
+    service = Container(paths).development_evidence_service()
+
+    decision_repository = service._decision_service._decision_repository
+    action_repository = service._action_service._action_repository
+    experience_repository = service._experience_service._experience_repository
+    assert isinstance(decision_repository, JsonDecisionRepository)
+    assert isinstance(action_repository, JsonDecisionActionRepository)
+    assert isinstance(experience_repository, JsonExperienceRepository)
+    assert decision_repository._path.paths is paths
+    assert action_repository._path.paths is paths
+    assert experience_repository._path.paths is paths
 
 
 def test_container_wires_playbook_revision_application_service_with_json_repositories() -> None:

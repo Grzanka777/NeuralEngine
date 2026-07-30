@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.domain import PlaybookRun
+from neural_engine.infrastructure.repository_paths import RepositoryPath
 from neural_engine.ports.playbook_run_repository import (
     PlaybookRunIdentityMismatchError,
     PlaybookRunPersistenceConflictError,
@@ -18,11 +19,17 @@ from neural_engine.ports.playbook_run_repository import (
 class JsonPlaybookRunRepository(PlaybookRunRepository):
     """Stores playbook runs as JSON files."""
 
-    def __init__(self, directory: Path = NeuralPaths.PLAYBOOK_RUNS) -> None:
-        self._directory = directory
+    def __init__(
+        self,
+        directory: Path | None = None,
+        *,
+        paths: NeuralPaths | None = None,
+    ) -> None:
+        self._path = RepositoryPath.build(directory, paths, lambda value: value.PLAYBOOK_RUNS)
+        self._directory = self._path.directory
 
     def save(self, run: PlaybookRun) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
+        self._path.prepare_for_write()
 
         path = self._directory / f"{run.id}.json"
         serialized = run.model_dump_json(indent=2)
@@ -54,6 +61,7 @@ class JsonPlaybookRunRepository(PlaybookRunRepository):
                 temporary_path.unlink(missing_ok=True)
 
     def load_all(self) -> list[PlaybookRun]:
+        self._path.guard(operation="read")
         if not self._directory.exists():
             return []
 
@@ -69,6 +77,7 @@ class JsonPlaybookRunRepository(PlaybookRunRepository):
         return runs
 
     def get_by_id(self, run_id: UUID) -> PlaybookRun | None:
+        self._path.guard(operation="read")
         path = self._directory / f"{run_id}.json"
 
         if not path.exists():

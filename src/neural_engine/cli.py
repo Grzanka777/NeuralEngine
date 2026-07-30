@@ -7,10 +7,9 @@ from uuid import UUID
 import typer
 from pydantic import ValidationError
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
-from neural_engine import APP_NAME, MISSION, __version__
+from neural_engine import APP_NAME, __version__
 from neural_engine.application.container import Container
 from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
@@ -106,6 +105,7 @@ from neural_engine.application.playbook_service import (
     PlaybookStepsRequiredError,
 )
 from neural_engine.core.brain import Brain
+from neural_engine.core.paths import NeuralHomeError, resolve_neural_paths
 from neural_engine.domain import (
     Decision,
     DecisionAction,
@@ -205,43 +205,35 @@ container = Container()
 def main(ctx: typer.Context) -> None:
     """Neural Engine entry point."""
 
-    if ctx.invoked_subcommand is not None:
+    if ctx.invoked_subcommand in {"init", "status"}:
         return
 
-    brain = Brain()
-    brain_status = (
-        "[green]Initialized[/green]" if brain.exists() else "[yellow]Not initialized[/yellow]"
-    )
+    if ctx.invoked_subcommand is None:
+        if not _render_neural_status():
+            raise typer.Exit(code=1)
+        return
 
-    console.print(
-        Panel.fit(
-            f"""[bold cyan]{APP_NAME}[/bold cyan]
-
-Version: {__version__}
-
-Mission:
-  {MISSION}
-
-Status:
-  Ready
-
-Brain:
-  {brain_status}
-
-Run:
-  neural init
-""",
-            title="🧠 Neural Engine",
-        )
-    )
+    try:
+        paths = resolve_neural_paths()
+        paths.require_available(operation=ctx.invoked_subcommand)
+        if paths.is_override:
+            Brain(paths).require_initialized(operation=ctx.invoked_subcommand)
+    except NeuralHomeError as error:
+        _exit_neural_home_error(error)
 
 
 @app.command()
 def init() -> None:
     """Initialize the local Neural Engine brain."""
 
-    brain = Brain()
-    brain.initialize()
+    try:
+        paths = resolve_neural_paths()
+        Brain(paths).initialize()
+    except NeuralHomeError as error:
+        _exit_neural_home_error(error)
+    except OSError as error:
+        console.print(f"[red]Neural home initialization failed: {error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print("[green]🧠 Neural Engine initialized successfully![/green]")
 
@@ -250,13 +242,108 @@ def init() -> None:
 def status() -> None:
     """Show Neural Engine status."""
 
-    brain = Brain()
+    if not _render_neural_status():
+        raise typer.Exit(code=1)
 
-    state = "Initialized" if brain.exists() else "Not initialized"
 
+def _render_neural_status() -> bool:
+    try:
+        paths = resolve_neural_paths()
+        paths.require_available(operation="status")
+    except NeuralHomeError as error:
+        _render_unavailable_neural_status(error)
+        return False
+
+    brain_status = Brain(paths).status()
+    configured = paths.configured_value if paths.configured_value is not None else "-"
+    state = (
+        "Initialized"
+        if brain_status.initialized
+        else "Unavailable"
+        if brain_status.brain_exists
+        else "Not initialized"
+    )
+    failure_reason = (
+        f"Neural Brain is unavailable at {paths.BRAIN}." if state == "Unavailable" else "-"
+    )
+    _render_status_fields(
+        source="override (NEURAL_HOME)" if paths.is_override else "default",
+        configured=configured,
+        resolved_home=str(paths.HOME),
+        resolved_brain=str(paths.BRAIN),
+        home_exists=brain_status.home_exists,
+        home_is_directory=brain_status.home_is_directory,
+        home_accessible=brain_status.home_accessible,
+        brain_exists=brain_status.brain_exists,
+        brain_accessible=brain_status.brain_accessible,
+        configured_root_available=brain_status.home_accessible,
+        brain_state=state,
+        failure_reason=failure_reason,
+    )
+    return state != "Unavailable"
+
+
+def _render_unavailable_neural_status(error: NeuralHomeError) -> None:
+    configured = error.configured_value
+    if configured == "":
+        configured = "(blank)"
+    resolved_home = error.resolved_path
+    home_exists = resolved_home is not None and resolved_home.exists()
+    home_is_directory = resolved_home is not None and resolved_home.is_dir()
+    _render_status_fields(
+        source="override (NEURAL_HOME)" if error.source == "override" else "default",
+        configured=configured or "-",
+        resolved_home=str(resolved_home) if resolved_home is not None else "-",
+        resolved_brain=(str(resolved_home / "brain") if resolved_home is not None else "-"),
+        home_exists=home_exists,
+        home_is_directory=home_is_directory,
+        home_accessible=False,
+        brain_exists=False,
+        brain_accessible=False,
+        configured_root_available=False,
+        brain_state="Unavailable",
+        failure_reason=str(error),
+    )
+
+
+def _render_status_fields(
+    *,
+    source: str,
+    configured: str,
+    resolved_home: str,
+    resolved_brain: str,
+    home_exists: bool,
+    home_is_directory: bool,
+    home_accessible: bool,
+    brain_exists: bool,
+    brain_accessible: bool,
+    configured_root_available: bool,
+    brain_state: str,
+    failure_reason: str,
+) -> None:
     console.print(f"[bold cyan]{APP_NAME}[/bold cyan]")
-    console.print(f"Version : {__version__}")
-    console.print(f"Brain   : {state}")
+    console.print(f"Version                  : {__version__}")
+    console.print(f"Resolution source        : {source}")
+    console.print(f"Configured Neural home   : {configured}")
+    console.print(f"Resolved Neural home     : {resolved_home}")
+    console.print(f"Resolved Brain path      : {resolved_brain}")
+    console.print(f"Home exists              : {_yes_no(home_exists)}")
+    console.print(f"Home is directory        : {_yes_no(home_is_directory)}")
+    console.print(f"Home accessible          : {_yes_no(home_accessible)}")
+    console.print(f"Brain exists             : {_yes_no(brain_exists)}")
+    console.print(f"Brain accessible         : {_yes_no(brain_accessible)}")
+    console.print(f"Configured root available: {_yes_no(configured_root_available)}")
+    console.print(f"Brain state              : {brain_state}")
+    console.print(f"Failure reason           : {failure_reason}")
+
+
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _exit_neural_home_error(error: NeuralHomeError) -> None:
+    console.print(f"[red]{error}[/red]")
+    raise typer.Exit(code=1) from error
 
 
 @development_evidence_app.command("preview")

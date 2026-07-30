@@ -42,7 +42,30 @@ record rather than current missing release work.
 Brain persistence remains host-local under `~/.neural/brain`; Git does not
 synchronize it. The selected authoritative host contains the verified 22-entry
 Brain. Durable Brain writes remain restricted to that host until an explicit
-synchronization, export, or import policy exists.
+migration and operating policy exists. `NEURAL_HOME` is not configured on the
+host and no portable Neural home exists.
+
+## Neural home path selection
+
+NeuralEngine supports one environment-only, opt-in Neural home selector named
+`NEURAL_HOME`. When absent, the exact default remains
+`Path.home() / ".neural"`. When present, the value must be non-blank,
+absolute, free of `~`, and strictly resolve to one existing accessible
+directory. Invalid, unavailable, dangling, non-directory, or inaccessible
+overrides fail without selecting or creating the default home.
+
+One immutable resolved path set supplies Brain, projects, logs, config,
+version, and every JSON record-store directory. Default repositories recheck a
+configured root and Brain before I/O, so a vanished portable root is not
+reported as empty and is not recursively recreated. Explicit repository
+directory injection remains supported.
+
+`neural status` reports selection and availability without mutation. Default
+`neural init` may create `~/.neural`; configured init requires the override
+root itself to pre-exist and creates only approved children below it, including
+the PlaybookRevisionActivation and PlaybookRevisionApplication stores. This
+capability performs no migration, copy, backup, mount management,
+synchronization, locking, or multi-host coordination.
 
 ## Current implementation
 

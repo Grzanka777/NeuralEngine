@@ -3,17 +3,24 @@ from uuid import UUID
 
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.domain import Experience
+from neural_engine.infrastructure.repository_paths import RepositoryPath
 from neural_engine.ports.experience_repository import ExperienceRepository
 
 
 class JsonExperienceRepository(ExperienceRepository):
     """Stores experiences as JSON files."""
 
-    def __init__(self, directory: Path = NeuralPaths.EXPERIENCES) -> None:
-        self._directory = directory
+    def __init__(
+        self,
+        directory: Path | None = None,
+        *,
+        paths: NeuralPaths | None = None,
+    ) -> None:
+        self._path = RepositoryPath.build(directory, paths, lambda value: value.EXPERIENCES)
+        self._directory = self._path.directory
 
     def save(self, experience: Experience) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
+        self._path.prepare_for_write()
 
         path = self._directory / f"{experience.id}.json"
 
@@ -23,6 +30,7 @@ class JsonExperienceRepository(ExperienceRepository):
         )
 
     def load_all(self) -> list[Experience]:
+        self._path.guard(operation="read")
         if not self._directory.exists():
             return []
 
@@ -34,6 +42,7 @@ class JsonExperienceRepository(ExperienceRepository):
         return experiences
 
     def get_by_id(self, experience_id: UUID) -> Experience | None:
+        self._path.guard(operation="read")
         path = self._directory / f"{experience_id}.json"
 
         if not path.exists():

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.domain import PlaybookRevision
+from neural_engine.infrastructure.repository_paths import RepositoryPath
 from neural_engine.ports.playbook_revision_repository import (
     PlaybookRevisionIdentityMismatchError,
     PlaybookRevisionPersistenceConflictError,
@@ -18,11 +19,21 @@ from neural_engine.ports.playbook_revision_repository import (
 class JsonPlaybookRevisionRepository(PlaybookRevisionRepository):
     """Stores playbook revisions as JSON files."""
 
-    def __init__(self, directory: Path = NeuralPaths.PLAYBOOK_REVISIONS) -> None:
-        self._directory = directory
+    def __init__(
+        self,
+        directory: Path | None = None,
+        *,
+        paths: NeuralPaths | None = None,
+    ) -> None:
+        self._path = RepositoryPath.build(
+            directory,
+            paths,
+            lambda value: value.PLAYBOOK_REVISIONS,
+        )
+        self._directory = self._path.directory
 
     def save(self, revision: PlaybookRevision) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
+        self._path.prepare_for_write()
 
         path = self._directory / f"{revision.id}.json"
         serialized = revision.model_dump_json(indent=2)
@@ -54,6 +65,7 @@ class JsonPlaybookRevisionRepository(PlaybookRevisionRepository):
                 temporary_path.unlink(missing_ok=True)
 
     def load_all(self) -> list[PlaybookRevision]:
+        self._path.guard(operation="read")
         if not self._directory.exists():
             return []
 
@@ -69,6 +81,7 @@ class JsonPlaybookRevisionRepository(PlaybookRevisionRepository):
         return revisions
 
     def get_by_id(self, revision_id: UUID) -> PlaybookRevision | None:
+        self._path.guard(operation="read")
         path = self._directory / f"{revision_id}.json"
 
         if not path.exists():

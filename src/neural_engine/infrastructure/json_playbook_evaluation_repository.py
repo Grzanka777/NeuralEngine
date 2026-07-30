@@ -3,6 +3,7 @@ from uuid import UUID
 
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.domain import PlaybookEvaluation
+from neural_engine.infrastructure.repository_paths import RepositoryPath
 from neural_engine.ports.playbook_evaluation_repository import (
     PlaybookEvaluationRepository,
 )
@@ -11,11 +12,21 @@ from neural_engine.ports.playbook_evaluation_repository import (
 class JsonPlaybookEvaluationRepository(PlaybookEvaluationRepository):
     """Stores playbook evaluations as JSON files."""
 
-    def __init__(self, directory: Path = NeuralPaths.PLAYBOOK_EVALUATIONS) -> None:
-        self._directory = directory
+    def __init__(
+        self,
+        directory: Path | None = None,
+        *,
+        paths: NeuralPaths | None = None,
+    ) -> None:
+        self._path = RepositoryPath.build(
+            directory,
+            paths,
+            lambda value: value.PLAYBOOK_EVALUATIONS,
+        )
+        self._directory = self._path.directory
 
     def save(self, evaluation: PlaybookEvaluation) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
+        self._path.prepare_for_write()
 
         path = self._directory / f"{evaluation.id}.json"
 
@@ -25,6 +36,7 @@ class JsonPlaybookEvaluationRepository(PlaybookEvaluationRepository):
         )
 
     def load_all(self) -> list[PlaybookEvaluation]:
+        self._path.guard(operation="read")
         if not self._directory.exists():
             return []
 
@@ -38,6 +50,7 @@ class JsonPlaybookEvaluationRepository(PlaybookEvaluationRepository):
         return evaluations
 
     def get_by_id(self, evaluation_id: UUID) -> PlaybookEvaluation | None:
+        self._path.guard(operation="read")
         path = self._directory / f"{evaluation_id}.json"
 
         if not path.exists():

@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from neural_engine.core.paths import NeuralPaths
+from neural_engine.core.paths import resolve_neural_paths
 from neural_engine.domain import Decision, EvidenceReference
 from neural_engine.infrastructure.json_decision_repository import JsonDecisionRepository
 
@@ -117,4 +117,4 @@ def test_malformed_decision_data_surfaces_validation_error(tmp_path: Path) -> No
 def test_repository_default_path_uses_decisions_constant() -> None:
     repository = JsonDecisionRepository()
 
-    assert repository._directory == NeuralPaths.DECISIONS
+    assert repository._directory == resolve_neural_paths().DECISIONS

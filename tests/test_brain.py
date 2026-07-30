@@ -3,64 +3,101 @@ from pathlib import Path
 import pytest
 
 from neural_engine.core.brain import Brain
-from neural_engine.core.paths import NeuralPaths
+from neural_engine.core.paths import NeuralHomeError, resolve_neural_paths
 
 
-def test_brain_exists() -> None:
-    brain = Brain()
+def test_brain_exists_after_default_initialization(tmp_path: Path) -> None:
+    paths = resolve_neural_paths(environ={}, default_home=tmp_path)
+    brain = Brain(paths)
+
     brain.initialize()
 
     assert brain.exists()
 
 
-def test_brain_initializes_playbook_evaluations_directory(
+def test_default_initialization_creates_only_approved_paths(tmp_path: Path) -> None:
+    paths = resolve_neural_paths(environ={}, default_home=tmp_path)
+
+    Brain(paths).initialize()
+
+    expected = {
+        "VERSION",
+        "brain",
+        "brain/decision-acceptances",
+        "brain/decision-actions",
+        "brain/decision-outcomes",
+        "brain/decision-reviews",
+        "brain/decisions",
+        "brain/evolution-proposals",
+        "brain/experiences",
+        "brain/knowledge",
+        "brain/observations",
+        "brain/playbook-evaluations",
+        "brain/playbook-revision-activations",
+        "brain/playbook-revision-applications",
+        "brain/playbook-revisions",
+        "brain/playbook-runs",
+        "brain/playbooks",
+        "config.toml",
+        "logs",
+        "projects",
+    }
+    actual = {str(path.relative_to(paths.HOME)) for path in paths.HOME.rglob("*")}
+    assert actual == expected
+
+
+def test_override_initialization_requires_preexisting_root(tmp_path: Path) -> None:
+    configured = tmp_path / "missing"
+
+    with pytest.raises(NeuralHomeError):
+        resolve_neural_paths(environ={"NEURAL_HOME": str(configured)})
+
+    assert not configured.exists()
+
+
+def test_override_initialization_creates_children_inside_existing_root(tmp_path: Path) -> None:
+    configured = tmp_path / "portable"
+    configured.mkdir()
+    paths = resolve_neural_paths(environ={"NEURAL_HOME": str(configured)})
+
+    Brain(paths).initialize()
+
+    assert paths.BRAIN.is_dir()
+    assert paths.PLAYBOOK_REVISION_ACTIVATIONS.is_dir()
+    assert paths.PLAYBOOK_REVISION_APPLICATIONS.is_dir()
+
+
+def test_partial_initialization_is_idempotent_and_preserves_existing_content(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    home = tmp_path / ".neural"
-    brain_path = home / "brain"
-    monkeypatch.setattr(NeuralPaths, "HOME", home)
-    monkeypatch.setattr(NeuralPaths, "BRAIN", brain_path)
-    monkeypatch.setattr(NeuralPaths, "EXPERIENCES", brain_path / "experiences")
-    monkeypatch.setattr(NeuralPaths, "OBSERVATIONS", brain_path / "observations")
-    monkeypatch.setattr(NeuralPaths, "KNOWLEDGE", brain_path / "knowledge")
-    monkeypatch.setattr(NeuralPaths, "PLAYBOOKS", brain_path / "playbooks")
-    monkeypatch.setattr(NeuralPaths, "PLAYBOOK_RUNS", brain_path / "playbook-runs")
-    monkeypatch.setattr(
-        NeuralPaths,
-        "PLAYBOOK_EVALUATIONS",
-        brain_path / "playbook-evaluations",
-    )
-    monkeypatch.setattr(
-        NeuralPaths,
-        "EVOLUTION_PROPOSALS",
-        brain_path / "evolution-proposals",
-    )
-    monkeypatch.setattr(
-        NeuralPaths,
-        "PLAYBOOK_REVISIONS",
-        brain_path / "playbook-revisions",
-    )
-    monkeypatch.setattr(NeuralPaths, "DECISIONS", brain_path / "decisions")
-    monkeypatch.setattr(
-        NeuralPaths,
-        "DECISION_ACCEPTANCES",
-        brain_path / "decision-acceptances",
-    )
-    monkeypatch.setattr(NeuralPaths, "DECISION_ACTIONS", brain_path / "decision-actions")
-    monkeypatch.setattr(NeuralPaths, "DECISION_OUTCOMES", brain_path / "decision-outcomes")
-    monkeypatch.setattr(NeuralPaths, "DECISION_REVIEWS", brain_path / "decision-reviews")
-    monkeypatch.setattr(NeuralPaths, "PROJECTS", home / "projects")
-    monkeypatch.setattr(NeuralPaths, "LOGS", home / "logs")
-    monkeypatch.setattr(NeuralPaths, "CONFIG", home / "config.toml")
-    monkeypatch.setattr(NeuralPaths, "VERSION", home / "VERSION")
+    configured = tmp_path / "portable"
+    configured.mkdir()
+    paths = resolve_neural_paths(environ={"NEURAL_HOME": str(configured)})
+    paths.BRAIN.mkdir()
+    paths.OBSERVATIONS.mkdir()
+    record = paths.OBSERVATIONS / "existing.json"
+    record.write_text('{"preserved": true}', encoding="utf-8")
+    paths.CONFIG.write_text("custom = true\n", encoding="utf-8")
 
-    Brain().initialize()
+    brain = Brain(paths)
+    brain.initialize()
+    brain.initialize()
 
-    assert NeuralPaths.PLAYBOOK_EVALUATIONS.exists()
-    assert NeuralPaths.EVOLUTION_PROPOSALS.exists()
-    assert NeuralPaths.PLAYBOOK_REVISIONS.exists()
-    assert NeuralPaths.DECISION_ACCEPTANCES.exists()
-    assert NeuralPaths.DECISION_ACTIONS.exists()
-    assert NeuralPaths.DECISION_OUTCOMES.exists()
-    assert NeuralPaths.DECISION_REVIEWS.exists()
+    assert record.read_text(encoding="utf-8") == '{"preserved": true}'
+    assert paths.CONFIG.read_text(encoding="utf-8") == "custom = true\n"
+    assert paths.PLAYBOOK_REVISION_ACTIVATIONS.is_dir()
+    assert paths.PLAYBOOK_REVISION_APPLICATIONS.is_dir()
+
+
+def test_wrong_type_child_fails_without_replacement(tmp_path: Path) -> None:
+    configured = tmp_path / "portable"
+    configured.mkdir()
+    paths = resolve_neural_paths(environ={"NEURAL_HOME": str(configured)})
+    paths.BRAIN.mkdir()
+    paths.OBSERVATIONS.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        Brain(paths).initialize()
+
+    assert paths.OBSERVATIONS.is_file()
+    assert paths.OBSERVATIONS.read_text(encoding="utf-8") == "not a directory"

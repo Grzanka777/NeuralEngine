@@ -21,6 +21,7 @@ from neural_engine.application.playbook_revision_application_service import (
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
+from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
     JsonDecisionAcceptanceRepository,
 )
@@ -72,153 +73,177 @@ from neural_engine.infrastructure.local_development_evidence_source import (
 class Container:
     """Application dependency container."""
 
+    def __init__(self, paths: NeuralPaths | None = None) -> None:
+        self._paths = paths
+
+    def _resolved_paths(self) -> NeuralPaths:
+        return self._paths if self._paths is not None else resolve_neural_paths()
+
     def development_evidence_service(self) -> DevelopmentEvidenceService:
+        paths = self._resolved_paths()
+        scoped = Container(paths)
         return DevelopmentEvidenceService(
             LocalDevelopmentEvidenceSource(),
-            self.decision_service(),
-            self.decision_acceptance_service(),
-            self.decision_action_service(),
-            self.decision_outcome_service(),
-            self.decision_review_service(),
-            self.experience_service(),
+            scoped.decision_service(),
+            scoped.decision_acceptance_service(),
+            scoped.decision_action_service(),
+            scoped.decision_outcome_service(),
+            scoped.decision_review_service(),
+            scoped.experience_service(),
         )
 
     def decision_action_service(self) -> DecisionActionService:
+        paths = self._resolved_paths()
         return DecisionActionService(
-            JsonDecisionActionRepository(),
-            JsonDecisionRepository(),
-            JsonDecisionAcceptanceRepository(),
-            self.playbook_run_service(),
+            JsonDecisionActionRepository(paths=paths),
+            JsonDecisionRepository(paths=paths),
+            JsonDecisionAcceptanceRepository(paths=paths),
+            Container(paths).playbook_run_service(),
         )
 
     def decision_lifecycle_service(self) -> DecisionLifecycleService:
+        paths = self._resolved_paths()
         return DecisionLifecycleService(
-            JsonDecisionRepository(),
-            JsonDecisionAcceptanceRepository(),
-            JsonDecisionActionRepository(),
-            JsonDecisionOutcomeRepository(),
+            JsonDecisionRepository(paths=paths),
+            JsonDecisionAcceptanceRepository(paths=paths),
+            JsonDecisionActionRepository(paths=paths),
+            JsonDecisionOutcomeRepository(paths=paths),
         )
 
     def decision_outcome_service(self) -> DecisionOutcomeService:
+        paths = self._resolved_paths()
         return DecisionOutcomeService(
-            JsonDecisionOutcomeRepository(),
-            JsonDecisionRepository(),
-            JsonDecisionAcceptanceRepository(),
-            JsonDecisionActionRepository(),
+            JsonDecisionOutcomeRepository(paths=paths),
+            JsonDecisionRepository(paths=paths),
+            JsonDecisionAcceptanceRepository(paths=paths),
+            JsonDecisionActionRepository(paths=paths),
         )
 
     def decision_acceptance_service(self) -> DecisionAcceptanceService:
+        paths = self._resolved_paths()
         return DecisionAcceptanceService(
-            JsonDecisionAcceptanceRepository(),
-            JsonDecisionRepository(),
+            JsonDecisionAcceptanceRepository(paths=paths),
+            JsonDecisionRepository(paths=paths),
         )
 
     def decision_service(self) -> DecisionService:
+        paths = self._resolved_paths()
         return DecisionService(
-            JsonDecisionRepository(),
-            JsonObservationRepository(),
+            JsonDecisionRepository(paths=paths),
+            JsonObservationRepository(paths=paths),
         )
 
     def observation_service(self) -> ObservationService:
+        paths = self._resolved_paths()
         return ObservationService(
-            JsonObservationRepository(),
+            JsonObservationRepository(paths=paths),
         )
 
     def experience_service(self) -> ExperienceService:
+        paths = self._resolved_paths()
         return ExperienceService(
-            JsonExperienceRepository(),
-            JsonObservationRepository(),
-            self.decision_review_service(),
+            JsonExperienceRepository(paths=paths),
+            JsonObservationRepository(paths=paths),
+            Container(paths).decision_review_service(),
         )
 
     def knowledge_service(self) -> KnowledgeService:
+        paths = self._resolved_paths()
         return KnowledgeService(
-            JsonKnowledgeRepository(),
-            self.experience_service(),
+            JsonKnowledgeRepository(paths=paths),
+            Container(paths).experience_service(),
         )
 
     def playbook_service(self) -> PlaybookService:
+        paths = self._resolved_paths()
         return PlaybookService(
-            JsonPlaybookRepository(),
-            JsonKnowledgeRepository(),
+            JsonPlaybookRepository(paths=paths),
+            JsonKnowledgeRepository(paths=paths),
         )
 
     def playbook_run_service(self) -> PlaybookRunService:
+        paths = self._resolved_paths()
         return PlaybookRunService(
-            JsonPlaybookRunRepository(),
-            JsonPlaybookRepository(),
-            JsonPlaybookRevisionRepository(),
+            JsonPlaybookRunRepository(paths=paths),
+            JsonPlaybookRepository(paths=paths),
+            JsonPlaybookRevisionRepository(paths=paths),
         )
 
     def playbook_evaluation_service(self) -> PlaybookEvaluationService:
+        paths = self._resolved_paths()
         return PlaybookEvaluationService(
-            JsonPlaybookEvaluationRepository(),
-            self.playbook_run_service(),
+            JsonPlaybookEvaluationRepository(paths=paths),
+            Container(paths).playbook_run_service(),
         )
 
     def evolution_proposal_service(self) -> EvolutionProposalService:
+        paths = self._resolved_paths()
         return EvolutionProposalService(
-            JsonEvolutionProposalRepository(),
-            JsonPlaybookRepository(),
-            JsonPlaybookEvaluationRepository(),
-            self.playbook_run_service(),
+            JsonEvolutionProposalRepository(paths=paths),
+            JsonPlaybookRepository(paths=paths),
+            JsonPlaybookEvaluationRepository(paths=paths),
+            Container(paths).playbook_run_service(),
         )
 
     def playbook_revision_service(self) -> PlaybookRevisionService:
+        paths = self._resolved_paths()
         return PlaybookRevisionService(
-            JsonPlaybookRevisionRepository(),
-            JsonPlaybookRepository(),
-            JsonEvolutionProposalRepository(),
-            JsonKnowledgeRepository(),
+            JsonPlaybookRevisionRepository(paths=paths),
+            JsonPlaybookRepository(paths=paths),
+            JsonEvolutionProposalRepository(paths=paths),
+            JsonKnowledgeRepository(paths=paths),
         )
 
     def playbook_revision_activation_service(self) -> PlaybookRevisionActivationService:
+        paths = self._resolved_paths()
         return PlaybookRevisionActivationService(
-            JsonPlaybookRevisionActivationRepository(),
-            JsonPlaybookRevisionRepository(),
-            JsonPlaybookRepository(),
-            JsonEvolutionProposalRepository(),
+            JsonPlaybookRevisionActivationRepository(paths=paths),
+            JsonPlaybookRevisionRepository(paths=paths),
+            JsonPlaybookRepository(paths=paths),
+            JsonEvolutionProposalRepository(paths=paths),
         )
 
     def playbook_revision_application_service(self) -> PlaybookRevisionApplicationService:
+        paths = self._resolved_paths()
         return PlaybookRevisionApplicationService(
-            JsonPlaybookRevisionApplicationRepository(),
-            JsonPlaybookRevisionRepository(),
-            JsonPlaybookRepository(),
-            JsonEvolutionProposalRepository(),
-            JsonPlaybookRevisionActivationRepository(),
-            self.playbook_revision_activation_service(),
+            JsonPlaybookRevisionApplicationRepository(paths=paths),
+            JsonPlaybookRevisionRepository(paths=paths),
+            JsonPlaybookRepository(paths=paths),
+            JsonEvolutionProposalRepository(paths=paths),
+            JsonPlaybookRevisionActivationRepository(paths=paths),
+            Container(paths).playbook_revision_activation_service(),
         )
 
     def playbook_revision_activation_repository(
         self,
     ) -> JsonPlaybookRevisionActivationRepository:
-        return JsonPlaybookRevisionActivationRepository()
+        return JsonPlaybookRevisionActivationRepository(paths=self._resolved_paths())
 
     def playbook_revision_application_repository(
         self,
     ) -> JsonPlaybookRevisionApplicationRepository:
-        return JsonPlaybookRevisionApplicationRepository()
+        return JsonPlaybookRevisionApplicationRepository(paths=self._resolved_paths())
 
     def decision_repository(self) -> JsonDecisionRepository:
-        return JsonDecisionRepository()
+        return JsonDecisionRepository(paths=self._resolved_paths())
 
     def decision_acceptance_repository(self) -> JsonDecisionAcceptanceRepository:
-        return JsonDecisionAcceptanceRepository()
+        return JsonDecisionAcceptanceRepository(paths=self._resolved_paths())
 
     def decision_action_repository(self) -> JsonDecisionActionRepository:
-        return JsonDecisionActionRepository()
+        return JsonDecisionActionRepository(paths=self._resolved_paths())
 
     def decision_outcome_repository(self) -> JsonDecisionOutcomeRepository:
-        return JsonDecisionOutcomeRepository()
+        return JsonDecisionOutcomeRepository(paths=self._resolved_paths())
 
     def decision_review_repository(self) -> JsonDecisionReviewRepository:
-        return JsonDecisionReviewRepository()
+        return JsonDecisionReviewRepository(paths=self._resolved_paths())
 
     def decision_review_service(self) -> DecisionReviewService:
+        paths = self._resolved_paths()
         return DecisionReviewService(
-            JsonDecisionReviewRepository(),
-            JsonDecisionRepository(),
-            JsonDecisionAcceptanceRepository(),
-            JsonDecisionOutcomeRepository(),
+            JsonDecisionReviewRepository(paths=paths),
+            JsonDecisionRepository(paths=paths),
+            JsonDecisionAcceptanceRepository(paths=paths),
+            JsonDecisionOutcomeRepository(paths=paths),
         )

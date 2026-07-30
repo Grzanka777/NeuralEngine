@@ -3,6 +3,7 @@ from uuid import UUID
 
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.domain import PlaybookRevisionActivation
+from neural_engine.infrastructure.repository_paths import RepositoryPath
 from neural_engine.ports.playbook_revision_activation_repository import (
     PlaybookRevisionActivationRepository,
 )
@@ -11,11 +12,21 @@ from neural_engine.ports.playbook_revision_activation_repository import (
 class JsonPlaybookRevisionActivationRepository(PlaybookRevisionActivationRepository):
     """Stores playbook revision activations as JSON files."""
 
-    def __init__(self, directory: Path = NeuralPaths.PLAYBOOK_REVISION_ACTIVATIONS) -> None:
-        self._directory = directory
+    def __init__(
+        self,
+        directory: Path | None = None,
+        *,
+        paths: NeuralPaths | None = None,
+    ) -> None:
+        self._path = RepositoryPath.build(
+            directory,
+            paths,
+            lambda value: value.PLAYBOOK_REVISION_ACTIVATIONS,
+        )
+        self._directory = self._path.directory
 
     def save(self, activation: PlaybookRevisionActivation) -> None:
-        self._directory.mkdir(parents=True, exist_ok=True)
+        self._path.prepare_for_write()
 
         path = self._directory / f"{activation.id}.json"
 
@@ -25,6 +36,7 @@ class JsonPlaybookRevisionActivationRepository(PlaybookRevisionActivationReposit
         )
 
     def load_all(self) -> list[PlaybookRevisionActivation]:
+        self._path.guard(operation="read")
         if not self._directory.exists():
             return []
 
@@ -38,6 +50,7 @@ class JsonPlaybookRevisionActivationRepository(PlaybookRevisionActivationReposit
         return activations
 
     def get_by_id(self, activation_id: UUID) -> PlaybookRevisionActivation | None:
+        self._path.guard(operation="read")
         path = self._directory / f"{activation_id}.json"
 
         if not path.exists():

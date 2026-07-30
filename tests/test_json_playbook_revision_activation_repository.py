@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 
-from neural_engine.core.paths import NeuralPaths
+from neural_engine.core.paths import resolve_neural_paths
 from neural_engine.domain import (
     PlaybookRevisionActivation,
     PlaybookRevisionActivationDecision,
@@ -138,4 +138,4 @@ def test_repository_does_not_perform_cross_aggregate_validation(tmp_path: Path) 
 def test_repository_default_path_uses_neural_paths_constant() -> None:
     repository = JsonPlaybookRevisionActivationRepository()
 
-    assert repository._directory == NeuralPaths.PLAYBOOK_REVISION_ACTIVATIONS
+    assert repository._directory == resolve_neural_paths().PLAYBOOK_REVISION_ACTIVATIONS
