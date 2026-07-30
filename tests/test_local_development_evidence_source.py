@@ -295,7 +295,7 @@ def test_merge_commit_is_unsupported(tmp_path: Path) -> None:
     _write(root / "feature.txt", "feature\n")
     _git(root, "add", "feature.txt")
     _git(root, "commit", "-qm", "feature")
-    _git(root, "checkout", "-q", "master")
+    _git(root, "checkout", "-q", "-")
     _write(root / "main.txt", "main\n")
     _git(root, "add", "main.txt")
     _git(root, "commit", "-qm", "main")
