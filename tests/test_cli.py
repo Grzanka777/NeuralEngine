@@ -93,6 +93,8 @@ from neural_engine.application.playbook_service import (
     PlaybookKnowledgeRequiredError,
     PlaybookStepsRequiredError,
 )
+from neural_engine.core.brain import Brain
+from neural_engine.core.paths import resolve_neural_paths
 from neural_engine.domain import (
     Decision,
     DecisionAcceptance,
@@ -7915,7 +7917,7 @@ def test_status_reports_absent_default_without_creating_it(
     assert result.exit_code == 0
     assert "Resolution source        : default" in result.output
     assert "Resolved Neural home" in result.output
-    assert str(isolated_home / ".neural") in result.output
+    assert str(isolated_home / ".neural") in "".join(result.output.splitlines())
     assert "Brain state              : Not initialized" in result.output
     assert "Failure reason           : -" in result.output
     assert not isolated_home.exists()
@@ -8031,3 +8033,97 @@ def test_unavailable_override_blocks_read_and_write_before_service_use(
     assert "No fallback was used" in " ".join(write_result.output.split())
     assert unexpected.calls == 0
     assert not configured.exists()
+
+
+def test_doctor_reports_ready_default_without_writes_or_payload_leakage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_home = tmp_path / "isolated"
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.delenv("NEURAL_HOME", raising=False)
+    paths = resolve_neural_paths()
+    Brain(paths).initialize()
+    observation = Observation(content="doctor-secret-payload")
+    (paths.OBSERVATIONS / f"{observation.id}.json").write_text(
+        observation.model_dump_json(),
+        encoding="utf-8",
+    )
+    before = {
+        path.relative_to(paths.HOME).as_posix(): (path.read_bytes() if path.is_file() else None)
+        for path in paths.HOME.rglob("*")
+    }
+
+    result = CliRunner().invoke(cli.app, ["doctor"])
+
+    after = {
+        path.relative_to(paths.HOME).as_posix(): (path.read_bytes() if path.is_file() else None)
+        for path in paths.HOME.rglob("*")
+    }
+    assert result.exit_code == 0
+    assert "Selection" in result.output
+    assert "Readiness" in result.output
+    assert "READY" in result.output
+    assert "sha256-relative-v1" in result.output
+    assert "Fallback used   : no" in result.output
+    assert "TOTAL" in result.output
+    assert "Relative root   : Brain" in result.output
+    assert "doctor-secret-payload" not in result.output
+    assert str(observation.id) not in result.output
+    assert before == after
+
+
+def test_doctor_uses_override_and_reports_uninitialized_without_creating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "portable"
+    configured.mkdir()
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+
+    result = CliRunner().invoke(cli.app, ["doctor"])
+
+    assert result.exit_code == 1
+    assert "override (NEURAL_HOME)" in result.output
+    assert "NOT READY" in result.output
+    assert list(configured.iterdir()) == []
+
+
+def test_doctor_invalid_invocation_and_internal_failure_exit_two(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invalid = CliRunner().invoke(cli.app, ["doctor", "--json"])
+
+    class FailingService:
+        def inspect(self) -> None:
+            raise RuntimeError("private internal detail")
+
+    class FailingContainer:
+        def neural_doctor_service(self) -> FailingService:
+            return FailingService()
+
+    monkeypatch.setattr(cli, "container", FailingContainer())
+    internal = CliRunner().invoke(cli.app, ["doctor"])
+
+    assert invalid.exit_code == 2
+    assert internal.exit_code == 2
+    assert "failed unexpectedly" in internal.output
+    assert "private internal detail" not in internal.output
+
+
+def test_status_and_doctor_remain_separate_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "portable"
+    configured.mkdir()
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+    runner = CliRunner()
+
+    status_result = runner.invoke(cli.app, ["status"])
+    doctor_result = runner.invoke(cli.app, ["doctor"])
+
+    assert "Brain state" in status_result.output
+    assert "Readiness" not in status_result.output
+    assert "Readiness" in doctor_result.output
+    assert "Brain state" not in doctor_result.output

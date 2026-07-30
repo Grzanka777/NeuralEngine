@@ -29,20 +29,26 @@ assumptions, and release evidence gate are defined in
   fallback. All operational paths derive from one immutable resolved home.
   This is path selection only, not migration, synchronization, backup,
   locking, or mount management.
+- `neural doctor` provides bounded read-only operational-readiness evidence for
+  the selected home: home/Brain access, version/config files, all 15 stores,
+  record readability and domain integrity, identity/duplicate checks, counts,
+  and a deterministic relative-path manifest. It does not initialize, repair,
+  migrate, configure, or write state.
 - The release commit is
   `dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`
   (`release: prepare NeuralEngine 1.0.0`).
-- `HEAD == origin/main == dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`;
-  annotated tag `v1.0.0` peels to the same commit, so release convergence is
-  complete.
+- Before the current uncommitted Doctor milestone,
+  `HEAD == origin/main == 73b90efb8785b8c5202a28fd9de09b7939ee3670`;
+  annotated tag `v1.0.0` remains invariant and peels to release commit
+  `dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`.
 
 ## 1.0 Closure State
 
 - No new feature or implementation milestone is required by the accepted 1.0
   readiness assessment.
 - The package version is `1.0.0`.
-- Publication of the current Handbook-generated NeuralEngine skill is complete
-  at commit `cbfd2185437a2cad38e6059bb14ad177ea9753ae`.
+- Publication of the current Handbook-generated `NEURAL_HOME` skill is
+  complete at commit `73b90efb8785b8c5202a28fd9de09b7939ee3670`.
 - One bounded real retrospective operational-validation chain is complete:
   Playbook `62da1509-c12a-474c-a08d-4ba041f71ca1` -> PlaybookRun
   `8046aaa3-2689-4822-97e1-5b6b20c2b573` -> PlaybookEvaluation

@@ -33,6 +33,16 @@ controlled failure reason. `neural init` may create the default `~/.neural`
 root. With `NEURAL_HOME`, the selected root itself must already exist; init
 creates only approved children inside it.
 
+`neural doctor` is a deeper, intrinsically read-only readiness inspection. It
+checks the selected home and Brain access, `VERSION`, `config.toml`, the exact
+15-store topology, every JSON record's readability, UTF-8, domain schema and
+filename/payload identity, per-store duplicate IDs, and a deterministic
+relative-path SHA-256 manifest. It prints compact evidence without record
+payloads, config contents, individual IDs, or per-file hashes. Exit status is
+`0` for `READY`, `1` for `NOT READY`, and `2` for invalid invocation or an
+unexpected internal failure. Doctor does not initialize, repair, migrate, copy,
+or write any state.
+
 Path selection does not discover or mount devices, migrate or copy Brain data,
 create backups, synchronize hosts, add locking, or coordinate multiple
 writers. If a configured removable root becomes unavailable, normal commands

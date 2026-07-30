@@ -13,15 +13,15 @@ the existing validation workflow without adding product behavior.
 The bounded source contract is grounded in committed checkpoint
 `6303abe56e8362478f7cc60dc9d841658ee815d8`
 (`fix: enforce playbook run create-once persistence`). The current
-Handbook-generated NeuralEngine skill was published byte-for-byte at commit
-`cbfd2185437a2cad38e6059bb14ad177ea9753ae`
-(`docs: publish current NeuralEngine generated skill`). The package version is
-now `1.0.0`.
+Handbook-generated `NEURAL_HOME` skill was published byte-for-byte at commit
+`73b90efb8785b8c5202a28fd9de09b7939ee3670`
+(`docs: publish Neural home skill`). The package version remains `1.0.0`.
 
 The release is complete at package version `1.0.0`, release commit
 `dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`, and annotated tag `v1.0.0`.
-`HEAD` and `origin/main` both resolve to that commit, so release convergence is
-complete.
+Before the current uncommitted Doctor milestone, `HEAD` and `origin/main` both
+resolve to `73b90efb8785b8c5202a28fd9de09b7939ee3670`. The release tag remains
+invariant at the release commit.
 
 One bounded real retrospective operational-validation chain is complete:
 Playbook `62da1509-c12a-474c-a08d-4ba041f71ca1` -> PlaybookRun
@@ -66,6 +66,15 @@ root itself to pre-exist and creates only approved children below it, including
 the PlaybookRevisionActivation and PlaybookRevisionApplication stores. This
 capability performs no migration, copy, backup, mount management,
 synchronization, locking, or multi-host coordination.
+
+`neural doctor` is the bounded, intrinsically read-only readiness companion to
+status. It checks selected home and Brain access, package/`VERSION` equality,
+`config.toml` availability, the exact canonical 15-store topology, per-store
+and total JSON counts, one-pass byte hashing plus UTF-8/JSON/domain validation,
+filename/payload identity, per-store duplicate IDs, and a deterministic
+Brain-relative aggregate manifest. It reports `READY` or `NOT READY` without
+printing payloads, config contents, individual IDs, or per-file hashes. It
+does not initialize, repair, migrate, configure, or write state.
 
 ## Current implementation
 

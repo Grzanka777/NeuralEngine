@@ -1,3 +1,4 @@
+from neural_engine import __version__
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_action_service import DecisionActionService
 from neural_engine.application.decision_lifecycle_service import DecisionLifecycleService
@@ -8,6 +9,7 @@ from neural_engine.application.development_evidence_service import DevelopmentEv
 from neural_engine.application.evolution_proposal_service import EvolutionProposalService
 from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.knowledge_service import KnowledgeService
+from neural_engine.application.neural_doctor_service import NeuralDoctorService
 from neural_engine.application.observation_service import ObservationService
 from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationService,
@@ -68,6 +70,7 @@ from neural_engine.infrastructure.json_playbook_run_repository import (
 from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSource,
 )
+from neural_engine.infrastructure.local_neural_doctor_probe import LocalNeuralDoctorProbe
 
 
 class Container:
@@ -78,6 +81,13 @@ class Container:
 
     def _resolved_paths(self) -> NeuralPaths:
         return self._paths if self._paths is not None else resolve_neural_paths()
+
+    def neural_doctor_service(self) -> NeuralDoctorService:
+        return NeuralDoctorService(
+            self._resolved_paths,
+            LocalNeuralDoctorProbe(),
+            __version__,
+        )
 
     def development_evidence_service(self) -> DevelopmentEvidenceService:
         paths = self._resolved_paths()

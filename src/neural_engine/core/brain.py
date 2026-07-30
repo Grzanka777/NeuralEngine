@@ -34,21 +34,7 @@ class Brain:
 
         directories: list[Path] = [
             self.paths.BRAIN,
-            self.paths.EXPERIENCES,
-            self.paths.OBSERVATIONS,
-            self.paths.KNOWLEDGE,
-            self.paths.PLAYBOOKS,
-            self.paths.PLAYBOOK_RUNS,
-            self.paths.PLAYBOOK_EVALUATIONS,
-            self.paths.EVOLUTION_PROPOSALS,
-            self.paths.PLAYBOOK_REVISIONS,
-            self.paths.PLAYBOOK_REVISION_ACTIVATIONS,
-            self.paths.PLAYBOOK_REVISION_APPLICATIONS,
-            self.paths.DECISIONS,
-            self.paths.DECISION_ACCEPTANCES,
-            self.paths.DECISION_ACTIONS,
-            self.paths.DECISION_OUTCOMES,
-            self.paths.DECISION_REVIEWS,
+            *(path for _, path in self.paths.record_stores),
             self.paths.PROJECTS,
             self.paths.LOGS,
         ]

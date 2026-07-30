@@ -5,6 +5,23 @@ from pathlib import Path
 from typing import Literal
 
 NEURAL_HOME_ENV = "NEURAL_HOME"
+RECORD_STORE_NAMES: tuple[str, ...] = (
+    "observations",
+    "experiences",
+    "knowledge",
+    "playbooks",
+    "playbook-runs",
+    "playbook-evaluations",
+    "evolution-proposals",
+    "playbook-revisions",
+    "playbook-revision-activations",
+    "playbook-revision-applications",
+    "decisions",
+    "decision-acceptances",
+    "decision-actions",
+    "decision-outcomes",
+    "decision-reviews",
+)
 
 NeuralHomeSource = Literal["default", "override"]
 NeuralHomeReason = Literal[
@@ -125,6 +142,29 @@ class NeuralPaths:
     @property
     def is_override(self) -> bool:
         return self.source == "override"
+
+    @property
+    def record_stores(self) -> tuple[tuple[str, Path], ...]:
+        """Return the canonical ordered JSON record-store topology."""
+
+        paths = (
+            self.OBSERVATIONS,
+            self.EXPERIENCES,
+            self.KNOWLEDGE,
+            self.PLAYBOOKS,
+            self.PLAYBOOK_RUNS,
+            self.PLAYBOOK_EVALUATIONS,
+            self.EVOLUTION_PROPOSALS,
+            self.PLAYBOOK_REVISIONS,
+            self.PLAYBOOK_REVISION_ACTIVATIONS,
+            self.PLAYBOOK_REVISION_APPLICATIONS,
+            self.DECISIONS,
+            self.DECISION_ACCEPTANCES,
+            self.DECISION_ACTIONS,
+            self.DECISION_OUTCOMES,
+            self.DECISION_REVIEWS,
+        )
+        return tuple(zip(RECORD_STORE_NAMES, paths, strict=True))
 
     def require_available(
         self,

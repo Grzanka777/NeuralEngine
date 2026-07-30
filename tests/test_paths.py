@@ -3,7 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from neural_engine.core.paths import NeuralHomeError, resolve_neural_paths
+from neural_engine.core.paths import (
+    RECORD_STORE_NAMES,
+    NeuralHomeError,
+    resolve_neural_paths,
+)
 
 
 def test_default_is_exactly_dot_neural_below_path_home(tmp_path: Path) -> None:
@@ -125,6 +129,24 @@ def test_all_derived_paths_share_one_resolved_home(tmp_path: Path) -> None:
     assert paths.LOGS == paths.HOME / "logs"
     assert paths.CONFIG == paths.HOME / "config.toml"
     assert paths.VERSION == paths.HOME / "VERSION"
+    assert tuple(name for name, _path in paths.record_stores) == RECORD_STORE_NAMES
+    assert tuple(path for _name, path in paths.record_stores) == (
+        paths.OBSERVATIONS,
+        paths.EXPERIENCES,
+        paths.KNOWLEDGE,
+        paths.PLAYBOOKS,
+        paths.PLAYBOOK_RUNS,
+        paths.PLAYBOOK_EVALUATIONS,
+        paths.EVOLUTION_PROPOSALS,
+        paths.PLAYBOOK_REVISIONS,
+        paths.PLAYBOOK_REVISION_ACTIVATIONS,
+        paths.PLAYBOOK_REVISION_APPLICATIONS,
+        paths.DECISIONS,
+        paths.DECISION_ACCEPTANCES,
+        paths.DECISION_ACTIONS,
+        paths.DECISION_OUTCOMES,
+        paths.DECISION_REVIEWS,
+    )
 
 
 def test_resolution_is_not_frozen_between_calls(

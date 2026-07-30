@@ -93,6 +93,21 @@ These rules add no domain concept, repository-port method, record schema,
 mount management, migration, backup, synchronization, locking, or multi-host
 coordination.
 
+`neural doctor` adds one read-only diagnostic path across this selection
+boundary. `NeuralDoctorService` derives readiness states from the resolved
+`NeuralPaths` and a narrow `NeuralDoctorProbe` port;
+`LocalNeuralDoctorProbe` performs local access and content inspection. The
+canonical 15-store topology remains owned by `NeuralPaths` and is shared with
+Brain initialization, avoiding a second directory list.
+
+The probe reads each `*.json` candidate once, hashes those exact bytes, decodes
+UTF-8, validates JSON through the store's domain model, and checks filename
+UUID, payload identity, and per-store duplicate IDs. The service builds the
+aggregate manifest from sorted Brain-relative POSIX paths, so its digest is
+independent of the selected mount path. Doctor never calls repositories or
+writers and exposes no repair, initialization, migration, expected-manifest,
+relation-graph, mount, process, locking, or coordination behavior.
+
 ## Observation Flow
 
 `neural observe` calls the application container, receives an

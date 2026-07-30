@@ -11,6 +11,7 @@ from neural_engine.application.development_evidence_service import DevelopmentEv
 from neural_engine.application.evolution_proposal_service import EvolutionProposalService
 from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.knowledge_service import KnowledgeService
+from neural_engine.application.neural_doctor_service import NeuralDoctorService
 from neural_engine.application.playbook_evaluation_service import PlaybookEvaluationService
 from neural_engine.application.playbook_revision_activation_service import (
     PlaybookRevisionActivationService,
@@ -55,6 +56,7 @@ from neural_engine.infrastructure.json_playbook_run_repository import JsonPlaybo
 from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSource,
 )
+from neural_engine.infrastructure.local_neural_doctor_probe import LocalNeuralDoctorProbe
 
 
 def test_container_wires_playbook_revision_service_with_json_repositories() -> None:
@@ -114,6 +116,13 @@ def test_container_wires_local_development_evidence_orchestration() -> None:
     assert isinstance(service._outcome_service, DecisionOutcomeService)
     assert isinstance(service._review_service, DecisionReviewService)
     assert isinstance(service._experience_service, ExperienceService)
+
+
+def test_container_wires_read_only_neural_doctor_boundary() -> None:
+    service = Container().neural_doctor_service()
+
+    assert isinstance(service, NeuralDoctorService)
+    assert isinstance(service._probe, LocalNeuralDoctorProbe)
 
 
 def test_container_wires_decision_acceptance_repository() -> None:

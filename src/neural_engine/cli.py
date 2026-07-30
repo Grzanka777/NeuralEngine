@@ -66,6 +66,11 @@ from neural_engine.application.knowledge_service import (
     ExperienceNotFoundError,
     KnowledgeEvidenceRequiredError,
 )
+from neural_engine.application.neural_doctor_service import (
+    DoctorCheck,
+    DoctorState,
+    NeuralDoctorReport,
+)
 from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationFindingsRequiredError,
     PlaybookRunNotFoundError,
@@ -205,7 +210,7 @@ container = Container()
 def main(ctx: typer.Context) -> None:
     """Neural Engine entry point."""
 
-    if ctx.invoked_subcommand in {"init", "status"}:
+    if ctx.invoked_subcommand in {"doctor", "init", "status"}:
         return
 
     if ctx.invoked_subcommand is None:
@@ -244,6 +249,97 @@ def status() -> None:
 
     if not _render_neural_status():
         raise typer.Exit(code=1)
+
+
+@app.command()
+def doctor() -> None:
+    """Assess local Neural Engine operational readiness without writing."""
+
+    try:
+        report = container.neural_doctor_service().inspect()
+    except Exception as error:
+        console.print("[red]Neural Doctor failed unexpectedly.[/red]")
+        raise typer.Exit(code=2) from error
+
+    _render_neural_doctor(report)
+    if not report.ready:
+        raise typer.Exit(code=1)
+
+
+def _render_neural_doctor(report: NeuralDoctorReport) -> None:
+    console.print(f"[bold cyan]{APP_NAME} Doctor[/bold cyan]")
+    _render_doctor_section("Selection", report.selection_checks)
+    console.print(f"Source          : {report.source}")
+    console.print(f"Configured home : {_doctor_value(report.configured_value)}")
+    console.print(f"Resolved home   : {_doctor_value(report.resolved_home)}")
+    console.print(f"Resolved Brain  : {_doctor_value(report.resolved_brain)}")
+    console.print("Fallback used   : no")
+    _render_doctor_section("Home", report.home_checks)
+    _render_doctor_section("Brain", report.brain_checks)
+
+    console.print("\n[bold]Stores[/bold]")
+    stores = Table(show_header=True, box=None)
+    stores.add_column("Store")
+    stores.add_column("State")
+    stores.add_column("Records", justify="right")
+    stores.add_column("Detail")
+    for store in report.stores:
+        stores.add_row(
+            store.name,
+            _doctor_state(store.state),
+            str(store.record_count),
+            store.detail,
+        )
+    total_state = (
+        DoctorState.FAIL
+        if any(store.state == DoctorState.FAIL for store in report.stores)
+        else DoctorState.SKIP
+        if any(store.state == DoctorState.SKIP for store in report.stores)
+        else DoctorState.PASS
+    )
+    stores.add_row(
+        "TOTAL",
+        _doctor_state(total_state),
+        str(sum(store.record_count for store in report.stores)),
+        f"{len(report.stores)} stores",
+    )
+    console.print(stores)
+
+    _render_doctor_section("Integrity", report.integrity_checks)
+    console.print("\n[bold]Manifest[/bold]")
+    console.print(f"State           : {_doctor_state(report.manifest.state)}")
+    console.print(f"Algorithm       : {report.manifest.algorithm}")
+    console.print("Relative root   : Brain")
+    console.print(f"JSON files      : {report.manifest.file_count}")
+    console.print(f"Aggregate SHA-256: {_doctor_value(report.manifest.aggregate_sha256)}")
+    console.print(f"Detail          : {report.manifest.detail}")
+
+    console.print("\n[bold]Readiness[/bold]")
+    readiness = "[green]READY[/green]" if report.ready else "[red]NOT READY[/red]"
+    console.print(f"State           : {readiness}")
+    console.print(f"Failed checks   : {report.failed_check_count}")
+
+
+def _render_doctor_section(name: str, checks: tuple[DoctorCheck, ...]) -> None:
+    console.print(f"\n[bold]{name}[/bold]")
+    for check in checks:
+        console.print(f"{_doctor_state(check.state):20} {check.label}: {check.detail}")
+
+
+def _doctor_state(state: DoctorState) -> str:
+    colors = {
+        DoctorState.PASS: "green",
+        DoctorState.WARN: "yellow",
+        DoctorState.FAIL: "red",
+        DoctorState.SKIP: "dim",
+    }
+    return f"[{colors[state]}]{state.value}[/{colors[state]}]"
+
+
+def _doctor_value(value: str | None) -> str:
+    if value == "":
+        return "(blank)"
+    return value if value is not None else "-"
 
 
 def _render_neural_status() -> bool:
