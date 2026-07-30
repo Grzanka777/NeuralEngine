@@ -47,8 +47,10 @@ Path selection does not discover or mount devices, migrate or copy Brain data,
 create backups, synchronize hosts, add locking, or coordinate multiple
 writers. If a configured removable root becomes unavailable, normal commands
 fail rather than treating it as an empty Brain or recreating a local fallback.
-The current authoritative Brain remains host-local until a separate migration
-is explicitly authorized.
+When `NEURAL_HOME` points to a directory on portable storage, a user-managed
+portable Neural home is supported provided the same path is available and
+accessible. Storage lifecycle, device management, and deployment remain user
+and operator responsibilities.
 
 ## Current Capabilities
 

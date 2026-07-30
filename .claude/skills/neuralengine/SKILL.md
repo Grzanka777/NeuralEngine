@@ -136,7 +136,7 @@ selection and availability, while Doctor explains operational readiness of the s
 For a pre-existing portable home, an environment override may be used for one process:
 
 ```bash
-NEURAL_HOME=/run/media/grzanka/777/NeuralEngine-State neural doctor
+NEURAL_HOME=/path/to/NeuralEngine-State neural doctor
 ```
 
 This is an operational example, not a universal product default or a migration/synchronization
@@ -149,9 +149,10 @@ repository ports, JSON schemas, and existing default-home data do not change.
 This capability is path selection only. It does not migrate, copy, back up, restore, synchronize,
 merge, lock, export, or import a Brain. It provides no mount or device management, filesystem
 identity or health policy, multi-host writer coordination, MCP integration, project partitioning
-or inference, or agent integration. The authoritative 22-entry Brain remains host-local at
-`/home/grzanka/.neural/brain`; `NEURAL_HOME` has not been configured on that host, no portable
-Neural home has been created, and portable deployment is not complete.
+or inference, or agent integration. When `NEURAL_HOME` points to a directory on
+portable storage, a user-managed portable Neural home is supported provided the same
+path is available and accessible. Storage lifecycle, device management, and deployment
+remain user and operator responsibilities.
 
 ## Revision lifecycle and application boundary
 

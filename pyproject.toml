@@ -5,7 +5,7 @@ description = "A model-agnostic cognitive evolution engine."
 readme = "README.md"
 requires-python = ">=3.14"
 authors = [
-    { name = "Grzegorz Pilich", email = "grzegorz.pilich@gmail.com" }
+    { name = "Grzegorz Pilich", email = "grzanka.creative@gmail.com" }
 ]
 license = { text = "MIT" }
 
