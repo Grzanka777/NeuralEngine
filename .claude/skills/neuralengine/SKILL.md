@@ -111,6 +111,37 @@ reason. Normal commands preflight the selected root; with an override they also 
 available initialized Brain before service use. An unavailable override is not represented as an
 empty Brain, and the error explicitly states that no fallback was used.
 
+## Neural Doctor readiness diagnostics
+
+`neural doctor` is the bounded, intrinsically read-only readiness companion to `neural status`.
+It diagnoses the selected Neural home and Brain without initializing, repairing, migrating,
+configuring, or writing state. It accepts no command flags. The selected home is the authority
+for every check; an unavailable override fails closed and never falls back to `~/.neural`.
+
+Doctor checks home and Brain existence, directory and read/write access, package `VERSION`,
+`config.toml`, and the exact 15 canonical JSON stores. It counts records and validates each
+record's UTF-8 decoding, JSON structure, domain schema, filename UUID/payload-ID consistency,
+and duplicate IDs within a store. It also computes a deterministic relative-path aggregate
+SHA-256 manifest without printing payloads, configuration contents, individual IDs, or per-file
+hashes.
+
+The report has the fixed sections `Selection`, `Home`, `Brain`, `Stores`, `Integrity`, `Manifest`,
+and `Readiness`. Checks use the states `PASS`, `WARN`, `FAIL`, and `SKIP`. A `READY` report exits
+`0`; `NOT READY` exits `1`; invalid invocation or an unexpected internal failure exits `2`.
+Doctor provides evidence only: it does not repair, initialize, migrate, back up, mount or inspect
+devices/processes, manage locks, validate relationship graphs, inspect project behavior, manage
+agent configuration, or write Brain records. It complements `neural status`: status explains
+selection and availability, while Doctor explains operational readiness of the selected state.
+
+For a pre-existing portable home, an environment override may be used for one process:
+
+```bash
+NEURAL_HOME=/run/media/grzanka/777/NeuralEngine-State neural doctor
+```
+
+This is an operational example, not a universal product default or a migration/synchronization
+mechanism. The default remains `Path.home() / ".neural"` when the override is absent.
+
 Explicit `directory=...` repository injection remains supported and bypasses the default
 root-selection guard for that injected directory. Domain models, application-service interfaces,
 repository ports, JSON schemas, and existing default-home data do not change.
