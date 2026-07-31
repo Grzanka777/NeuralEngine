@@ -106,6 +106,18 @@ class KnowledgeService:
             self._validate_knowledge_relations(knowledge)
         return knowledge
 
+    def search(self, query: str) -> list[Knowledge]:
+        query_lower = query.lower()
+        knowledge_items = self._knowledge_repository.load_all()
+        for knowledge in knowledge_items:
+            self._validate_knowledge_relations(knowledge)
+        return [
+            knowledge
+            for knowledge in knowledge_items
+            if query_lower in knowledge.statement.lower()
+            or query_lower in knowledge.rationale.lower()
+        ]
+
     def _validate_experience_ids(self, experience_ids: list[UUID]) -> None:
         if not experience_ids:
             raise KnowledgeEvidenceRequiredError()
