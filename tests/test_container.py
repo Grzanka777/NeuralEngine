@@ -22,6 +22,7 @@ from neural_engine.application.playbook_revision_application_service import (
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
+from neural_engine.core.brain import BRAIN_FORMAT_VERSION
 from neural_engine.core.paths import resolve_neural_paths
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
     JsonDecisionAcceptanceRepository,
@@ -123,6 +124,7 @@ def test_container_wires_read_only_neural_doctor_boundary() -> None:
 
     assert isinstance(service, NeuralDoctorService)
     assert isinstance(service._probe, LocalNeuralDoctorProbe)
+    assert service._supported_brain_format_version == BRAIN_FORMAT_VERSION
 
 
 def test_container_wires_decision_acceptance_repository() -> None:

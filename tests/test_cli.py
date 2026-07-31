@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -133,6 +134,14 @@ class CliResult(Protocol):
 
     @property
     def output(self) -> str: ...
+
+
+_ANSI_SGR_SEQUENCE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def semantic_cli_output(output: str) -> str:
+    """Remove ANSI styling without changing CLI text or whitespace."""
+    return _ANSI_SGR_SEQUENCE.sub("", output)
 
 
 class FakeObservationService:
@@ -3588,7 +3597,7 @@ def test_run_and_revision_help_expose_revision_provenance_surfaces() -> None:
     revision_help = runner.invoke(cli.app, ["revision", "--help"])
 
     assert run_add_help.exit_code == 0
-    assert "--revision-id" in run_add_help.output
+    assert "--revision-id" in semantic_cli_output(run_add_help.output)
     assert revision_help.exit_code == 0
     assert "runs" in revision_help.output
 
@@ -5344,7 +5353,7 @@ def test_revision_activate_missing_reason_fails_before_service_call(
 
     assert result.exit_code == 2
     assert "Missing option" in result.output
-    assert "--reason" in result.output
+    assert "--reason" in semantic_cli_output(result.output)
     assert service.add_calls == []
 
 
@@ -5767,7 +5776,7 @@ def test_revision_supersede_missing_previous_revision_option_fails_before_servic
 
     assert result.exit_code == 2
     assert "Missing option" in result.output
-    assert "--previous-revision" in result.output
+    assert "--previous-revision" in semantic_cli_output(result.output)
     assert service.add_calls == []
 
 
@@ -6115,7 +6124,7 @@ def test_revision_reject_does_not_expose_previous_revision_option(
 
     assert result.exit_code == 2
     assert "No such option" in result.output
-    assert "--previous-revision" in result.output
+    assert "--previous-revision" in semantic_cli_output(result.output)
     assert service.add_calls == []
 
 
@@ -6482,7 +6491,7 @@ def test_revision_add_handles_empty_steps_without_storing(
     )
 
     assert result.exit_code == 2
-    assert "--step" in result.output
+    assert "--step" in semantic_cli_output(result.output)
     assert service.add_calls == []
 
 
@@ -6520,7 +6529,7 @@ def test_revision_add_handles_empty_success_criteria_without_storing(
     )
 
     assert result.exit_code == 2
-    assert "--success-criterion" in result.output
+    assert "--success-criterion" in semantic_cli_output(result.output)
     assert service.add_calls == []
 
 

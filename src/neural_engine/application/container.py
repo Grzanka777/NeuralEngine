@@ -1,4 +1,3 @@
-from neural_engine import __version__
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_action_service import DecisionActionService
 from neural_engine.application.decision_lifecycle_service import DecisionLifecycleService
@@ -23,6 +22,7 @@ from neural_engine.application.playbook_revision_application_service import (
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
+from neural_engine.core.brain import BRAIN_FORMAT_VERSION
 from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
     JsonDecisionAcceptanceRepository,
@@ -86,7 +86,7 @@ class Container:
         return NeuralDoctorService(
             self._resolved_paths,
             LocalNeuralDoctorProbe(),
-            __version__,
+            BRAIN_FORMAT_VERSION,
         )
 
     def development_evidence_service(self) -> DevelopmentEvidenceService:

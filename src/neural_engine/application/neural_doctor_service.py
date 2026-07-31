@@ -82,11 +82,11 @@ class NeuralDoctorService:
         self,
         path_resolver: Callable[[], NeuralPaths],
         probe: NeuralDoctorProbe,
-        package_version: str,
+        supported_brain_format_version: str,
     ) -> None:
         self._path_resolver = path_resolver
         self._probe = probe
-        self._package_version = package_version
+        self._supported_brain_format_version = supported_brain_format_version
 
     def inspect(self) -> NeuralDoctorReport:
         try:
@@ -168,9 +168,9 @@ class NeuralDoctorService:
             return DoctorCheck("VERSION", DoctorState.FAIL, "not a regular file")
         if not path.readable or evidence.version_read_failed:
             return DoctorCheck("VERSION", DoctorState.FAIL, "unreadable")
-        if evidence.version_value != self._package_version:
-            return DoctorCheck("VERSION", DoctorState.FAIL, "package version mismatch")
-        return DoctorCheck("VERSION", DoctorState.PASS, self._package_version)
+        if evidence.version_value != self._supported_brain_format_version:
+            return DoctorCheck("VERSION", DoctorState.FAIL, "unsupported Brain format")
+        return DoctorCheck("VERSION", DoctorState.PASS, self._supported_brain_format_version)
 
     @staticmethod
     def _config_check(path: PathEvidence, brain_ready: bool) -> DoctorCheck:
