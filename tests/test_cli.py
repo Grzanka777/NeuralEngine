@@ -526,6 +526,7 @@ class FakeKnowledgeService:
             tuple[UUID, str, str, KnowledgeConfidence, list[str] | None]
         ] = []
         self.list_for_experience_calls: list[UUID] = []
+        self.search_calls: list[str] = []
         self.requested_ids: list[UUID] = []
 
     def add(
@@ -602,6 +603,18 @@ class FakeKnowledgeService:
             knowledge
             for knowledge in self.knowledge_items
             if experience_id in knowledge.experience_ids
+        ]
+
+    def search(self, query: str) -> list[Knowledge]:
+        self.search_calls.append(query)
+        if self.integrity_error is not None:
+            raise self.integrity_error
+        query_lower = query.lower()
+        return [
+            knowledge
+            for knowledge in self.knowledge_items
+            if query_lower in knowledge.statement.lower()
+            or query_lower in knowledge.rationale.lower()
         ]
 
     def get_by_id(self, knowledge_id: UUID) -> Knowledge | None:
@@ -2441,6 +2454,93 @@ def test_knowledge_creation_renders_controlled_persistence_conflict_without_stor
     assert service.knowledge_items == []
     assert " ".join(str(conflict).split()) in " ".join(result.output.split())
     assert "Traceback" not in result.output
+
+
+def test_knowledge_search_displays_matching_knowledge(monkeypatch: pytest.MonkeyPatch) -> None:
+    knowledge = Knowledge(
+        statement="Create-once persistence must fail closed",
+        rationale="Reject conflicting writes",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[UUID("11111111-1111-1111-1111-111111111111")],
+    )
+    service = FakeKnowledgeService([knowledge])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "search", "create-once"])
+
+    assert result.exit_code == 0
+    assert service.search_calls == ["create-once"]
+    assert f"ID: {knowledge.id}" in result.output
+    assert "Statement: Create-once persistence must fail closed" in result.output
+    assert "Confidence: medium" in result.output
+
+
+def test_knowledge_search_matches_rationale_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    knowledge = Knowledge(
+        statement="Stable identity",
+        rationale="One UUID must map to one payload for create-once semantics",
+        confidence=KnowledgeConfidence.HIGH,
+        experience_ids=[UUID("22222222-2222-2222-2222-222222222222")],
+    )
+    service = FakeKnowledgeService([knowledge])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "search", "create-once"])
+
+    assert result.exit_code == 0
+    assert service.search_calls == ["create-once"]
+    assert f"ID: {knowledge.id}" in result.output
+    assert "Statement: Stable identity" in result.output
+
+
+def test_knowledge_search_empty_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = FakeKnowledgeService([])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "search", "nonesuch"])
+
+    assert result.exit_code == 0
+    assert service.search_calls == ["nonesuch"]
+    assert "No matching knowledge found." in result.output
+
+
+def test_knowledge_search_preserves_observation_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observation = Observation(content="create-once observation note", tags=[])
+    obs_service = FakeObservationService([observation])
+    monkeypatch.setattr(cli, "container", FakeContainer(observation_service=obs_service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["search", "create-once"])
+
+    assert result.exit_code == 0
+    assert obs_service.queries == ["create-once"]
+    assert "create-once observation note" in result.output
+    assert "No matching observations found." not in result.output
+
+
+def test_knowledge_search_output_shows_full_uuid(monkeypatch: pytest.MonkeyPatch) -> None:
+    knowledge = Knowledge(
+        statement="Test statement",
+        rationale="Test rationale",
+        confidence=KnowledgeConfidence.LOW,
+        experience_ids=[UUID("33333333-3333-3333-3333-333333333333")],
+    )
+    service = FakeKnowledgeService([knowledge])
+    monkeypatch.setattr(cli, "container", FakeContainer(knowledge_service=service))
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["knowledge", "search", "test"])
+
+    assert result.exit_code == 0
+    assert str(knowledge.id) in result.output
+    assert f"Timestamp: {knowledge.timestamp}" in result.output
+    assert "Statement: Test statement" in result.output
+    assert "Confidence: low" in result.output
 
 
 def test_playbook_add_delegates_with_parsed_repeatable_values_and_prints_id(

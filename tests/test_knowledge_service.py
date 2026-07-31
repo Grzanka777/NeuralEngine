@@ -612,3 +612,147 @@ def test_list_for_experience_fails_on_invalid_non_requested_relation(
         service.list_for_experience(requested.id)
 
     assert reader.requested_ids == [requested.id, requested.id, other.id]
+
+
+def test_search_matches_statement_case_insensitively() -> None:
+    experience = make_experience()
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+    knowledge = service.add(
+        statement="Create-once persistence must fail closed",
+        rationale="Reject conflicting writes",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+
+    assert service.search("CREATE-ONCE") == [knowledge]
+
+
+def test_search_matches_rationale_case_insensitively() -> None:
+    experience = make_experience()
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+    knowledge = service.add(
+        statement="Stable identity",
+        rationale="One UUID must map to one payload for create-once semantics",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+
+    assert service.search("create-once") == [knowledge]
+
+
+def test_search_or_matches_either_field() -> None:
+    experience = make_experience()
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+    statement_match = service.add(
+        statement="Create-once in statement",
+        rationale="No match here",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+    rationale_match = service.add(
+        statement="No match here",
+        rationale="Create-once in rationale",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+
+    results = service.search("create-once")
+    assert len(results) == 2
+    assert statement_match in results
+    assert rationale_match in results
+
+
+def test_search_no_match_returns_empty() -> None:
+    experience = make_experience()
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+    service.add(
+        statement="Create-once persistence",
+        rationale="Reject conflicting writes",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+
+    assert service.search("nonesuch") == []
+
+
+def test_search_confidence_field_does_not_match() -> None:
+    experience = make_experience()
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+    service.add(
+        statement="Something",
+        rationale="Something else",
+        confidence=KnowledgeConfidence.LOW,
+        experience_ids=[experience.id],
+    )
+
+    assert service.search("low") == []
+
+
+def test_search_preserves_repository_load_order() -> None:
+    experience = make_experience()
+    experience_repo = FakeExperienceRepository([experience])
+    knowledge_repo = FakeKnowledgeRepository(experience_repo)
+    service = KnowledgeService(knowledge_repo, experience_repo)
+    first = service.add(
+        statement="First create-once item",
+        rationale="A",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+    second = service.add(
+        statement="Second create-once item",
+        rationale="B",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[experience.id],
+    )
+
+    assert service.search("create-once") == [first, second]
+
+
+def test_search_raises_for_missing_linked_experience() -> None:
+    missing_id = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    knowledge = make_knowledge(missing_id)
+    reader = ReaderOnly()
+    service = KnowledgeService(ReaderKnowledgeRepository(reader, [knowledge]), reader)
+
+    with pytest.raises(ExperienceNotFoundError) as error:
+        service.search("Stored knowledge")
+
+    assert error.value.experience_id == missing_id
+    assert reader.requested_ids == [missing_id]
+
+
+def test_search_fails_on_invalid_non_matching_record() -> None:
+    valid_experience = make_experience()
+    missing_id = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+    matching_valid = Knowledge(
+        statement="Create-once persistence",
+        rationale="This matches the query",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[valid_experience.id],
+    )
+    non_matching_invalid = Knowledge(
+        statement="Unrelated topic",
+        rationale="Does not match the query",
+        confidence=KnowledgeConfidence.LOW,
+        experience_ids=[missing_id],
+    )
+    reader = ReaderOnly([valid_experience])
+    items = [matching_valid, non_matching_invalid]
+    service = KnowledgeService(ReaderKnowledgeRepository(reader, items), reader)
+
+    with pytest.raises(ExperienceNotFoundError) as error:
+        service.search("create-once")
+
+    assert error.value.experience_id == missing_id
+    assert reader.requested_ids == [valid_experience.id, missing_id]

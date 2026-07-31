@@ -1400,6 +1400,22 @@ def list_knowledge() -> None:
         console.print()
 
 
+@knowledge_app.command("search")
+def search_knowledge(query: str) -> None:
+    """Search knowledge by content."""
+
+    service = container.knowledge_service()
+    results = service.search(query)
+
+    if not results:
+        console.print("No matching knowledge found.")
+        return
+
+    for knowledge in results:
+        _print_knowledge_summary(knowledge)
+        console.print()
+
+
 @knowledge_app.command("playbooks")
 def list_knowledge_playbooks(knowledge_id: UUID) -> None:
     """List playbooks linked to one knowledge item."""
