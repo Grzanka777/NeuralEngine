@@ -390,6 +390,27 @@ provenance and makes no revision-specific claim. Selection, Run recording, Evalu
 creation, and decision linkage remain explicit caller actions; none triggers automatic learning,
 mutation, materialization, activation, application, or evolution.
 
+## Package and Brain format version contracts
+
+NeuralEngine package/application version and persisted Brain format version are independent
+contracts.
+
+For NeuralEngine v1.1.0:
+
+- package/application version is 1.1.0,
+- persisted Brain format version remains 1.0.0.
+
+A package release does not imply a Brain-format migration. Brain compatibility is determined by
+the persisted Brain format contract, not by the package version.
+
+The authority for the package/application version is the NeuralEngine `pyproject.toml` and the
+`neuralengine.__version__` module attribute. The authority for the persisted Brain format version
+is the Brain `VERSION` file produced by Brain initialization.
+
+Package upgrade does not automatically migrate Brain format. Compatibility checks use the
+persisted format contract, not the package version. Only behavior supported by NeuralEngine source
+determines actual format support.
+
 ## Decision Learning architecture
 
 # Decision Learning Architecture
