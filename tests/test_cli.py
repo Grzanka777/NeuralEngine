@@ -3584,7 +3584,11 @@ def test_run_add_passes_explicit_revision_selector(monkeypatch: pytest.MonkeyPat
 def test_run_and_revision_help_expose_revision_provenance_surfaces() -> None:
     runner = CliRunner()
 
-    run_add_help = runner.invoke(cli.app, ["run", "add", "--help"])
+    run_add_help = runner.invoke(
+        cli.app,
+        ["run", "add", "--help"],
+        terminal_width=240,
+    )
     revision_help = runner.invoke(cli.app, ["revision", "--help"])
 
     assert run_add_help.exit_code == 0
@@ -5073,6 +5077,7 @@ def invoke_revision_reject(
             "Manual rejection decision",
             *(extra_args or []),
         ],
+        terminal_width=240,
     )
 
 
@@ -5340,6 +5345,7 @@ def test_revision_activate_missing_reason_fails_before_service_call(
             "--proposal",
             str(proposal_id),
         ],
+        terminal_width=240,
     )
 
     assert result.exit_code == 2
@@ -5763,6 +5769,7 @@ def test_revision_supersede_missing_previous_revision_option_fails_before_servic
             "--reason",
             "Manual supersession decision",
         ],
+        terminal_width=240,
     )
 
     assert result.exit_code == 2
@@ -6479,6 +6486,7 @@ def test_revision_add_handles_empty_steps_without_storing(
             "--success-criterion",
             "Criterion",
         ],
+        terminal_width=240,
     )
 
     assert result.exit_code == 2
@@ -6517,6 +6525,7 @@ def test_revision_add_handles_empty_success_criteria_without_storing(
             "--step",
             "Step",
         ],
+        terminal_width=240,
     )
 
     assert result.exit_code == 2
