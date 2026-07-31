@@ -100,6 +100,11 @@ boundary. `NeuralDoctorService` derives readiness states from the resolved
 canonical 15-store topology remains owned by `NeuralPaths` and is shared with
 Brain initialization, avoiding a second directory list.
 
+The package release version and persisted Brain format version are separate
+contracts. `BRAIN_FORMAT_VERSION` is the single supported-format value used by
+both `Brain.initialize()` and `NeuralDoctorService`; package-only upgrades do
+not rewrite `VERSION` unless the persisted format itself changes.
+
 The probe reads each `*.json` candidate once, hashes those exact bytes, decodes
 UTF-8, validates JSON through the store's domain model, and checks filename
 UUID, payload identity, and per-store duplicate IDs. The service builds the

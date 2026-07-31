@@ -68,11 +68,12 @@ capability performs no migration, copy, backup, mount management,
 synchronization, locking, or multi-host coordination.
 
 `neural doctor` is the bounded, intrinsically read-only readiness companion to
-status. It checks selected home and Brain access, package/`VERSION` equality,
-`config.toml` availability, the exact canonical 15-store topology, per-store
-and total JSON counts, one-pass byte hashing plus UTF-8/JSON/domain validation,
-filename/payload identity, per-store duplicate IDs, and a deterministic
-Brain-relative aggregate manifest. It reports `READY` or `NOT READY` without
+status. It checks selected home and Brain access, supported Brain-format
+`VERSION`, `config.toml` availability, the exact canonical 15-store topology,
+per-store and total JSON counts, one-pass byte hashing plus
+UTF-8/JSON/domain validation, filename/payload identity, per-store duplicate
+IDs, and a deterministic Brain-relative aggregate manifest. It reports
+`READY` or `NOT READY` without
 printing payloads, config contents, individual IDs, or per-file hashes. It
 does not initialize, repair, migrate, configure, or write state.
 

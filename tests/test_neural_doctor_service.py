@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from neural_engine import __version__
 from neural_engine.application.neural_doctor_service import (
     MANIFEST_ALGORITHM,
     DoctorState,
     NeuralDoctorService,
 )
+from neural_engine.core.brain import BRAIN_FORMAT_VERSION
 from neural_engine.core.paths import NeuralHomeError, NeuralPaths, resolve_neural_paths
 from neural_engine.ports.neural_doctor_probe import (
     ManifestEntry,
@@ -90,6 +92,21 @@ def test_ready_empty_home_has_empty_manifest_and_all_store_counts(tmp_path: Path
     assert probe.inspected == [paths]
 
 
+def test_package_1_1_is_ready_with_brain_format_1_0(tmp_path: Path) -> None:
+    paths = _paths(tmp_path / "portable")
+
+    report = NeuralDoctorService(
+        lambda: paths,
+        StaticProbe(_evidence(paths, version="1.0.0")),
+        BRAIN_FORMAT_VERSION,
+    ).inspect()
+
+    assert __version__ == "1.1.0"
+    assert BRAIN_FORMAT_VERSION == "1.0.0"
+    assert report.brain_checks[-2].detail == "1.0.0"
+    assert report.ready
+
+
 def test_manifest_is_sorted_and_independent_of_selected_mount(tmp_path: Path) -> None:
     first_paths = _paths(tmp_path / "mount-a")
     second_paths = _paths(tmp_path / "mount-b")
@@ -133,6 +150,7 @@ def test_version_mismatch_and_record_issues_make_report_not_ready(
 
     assert not report.ready
     assert report.brain_checks[-2].state == DoctorState.FAIL
+    assert report.brain_checks[-2].detail == "unsupported Brain format"
     assert [check.state for check in report.integrity_checks] == [
         DoctorState.PASS,
         DoctorState.FAIL,
@@ -193,6 +211,21 @@ def test_version_and_config_fail_closed(
     check = report.brain_checks[-2 if field == "version" else -1]
     assert check.state == DoctorState.FAIL
     assert check.detail == expected_detail
+    assert not report.ready
+
+
+def test_malformed_brain_format_version_fails_closed(tmp_path: Path) -> None:
+    paths = _paths(tmp_path / "portable")
+
+    report = NeuralDoctorService(
+        lambda: paths,
+        StaticProbe(_evidence(paths, version="not-a-version")),
+        BRAIN_FORMAT_VERSION,
+    ).inspect()
+
+    check = report.brain_checks[-2]
+    assert check.state == DoctorState.FAIL
+    assert check.detail == "unsupported Brain format"
     assert not report.ready
 
 

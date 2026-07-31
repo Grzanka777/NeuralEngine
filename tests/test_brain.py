@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from neural_engine.core.brain import Brain
+from neural_engine.core.brain import BRAIN_FORMAT_VERSION, Brain
 from neural_engine.core.paths import NeuralHomeError, resolve_neural_paths
 
 
@@ -44,6 +44,15 @@ def test_default_initialization_creates_only_approved_paths(tmp_path: Path) -> N
     }
     actual = {str(path.relative_to(paths.HOME)) for path in paths.HOME.rglob("*")}
     assert actual == expected
+
+
+def test_initialization_writes_supported_brain_format_version(tmp_path: Path) -> None:
+    paths = resolve_neural_paths(environ={}, default_home=tmp_path)
+
+    Brain(paths).initialize()
+
+    assert BRAIN_FORMAT_VERSION == "1.0.0"
+    assert paths.VERSION.read_text(encoding="utf-8") == "1.0.0\n"
 
 
 def test_override_initialization_requires_preexisting_root(tmp_path: Path) -> None:

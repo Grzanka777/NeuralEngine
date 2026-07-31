@@ -4,6 +4,8 @@ from pathlib import Path
 
 from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
 
+BRAIN_FORMAT_VERSION = "1.0.0"
+
 
 @dataclass(frozen=True, slots=True)
 class BrainStatus:
@@ -42,7 +44,7 @@ class Brain:
         for directory in directories:
             directory.mkdir(exist_ok=True)
 
-        self.paths.VERSION.write_text("1.0.0\n")
+        self.paths.VERSION.write_text(f"{BRAIN_FORMAT_VERSION}\n")
 
         if not self.paths.CONFIG.exists():
             self.paths.CONFIG.write_text("# Neural Engine configuration\n")
