@@ -1,8 +1,24 @@
 # Project State
 
-Last updated: 2026-07-30
+Last updated: 2026-08-04
 
-## NeuralEngine 1.0 release and post-1.0 operational closure
+## Current release state and historical 1.0 operational closure
+
+The current package version is `1.1.0`. The annotated `v1.1.0` tag points to
+release commit `f9b74c652b2000e1d5eedf16fc1e3427a6ff3b2b`. Knowledge search
+implementation commit `22918f4f6897e05f7e695dd3de3f0cac3b0bd6bc` was merged
+to `main` by merge commit `7f276b2bc20391a182a94163cedaac574a9b196a`.
+Agent-governance hardening implementation commit
+`5c34c4f14282ae2a6415d83de4715d733f0f025c` was merged to `main` by merge
+commit `bf437f89b3a32dc87490ea4ebb6a93a5d713c8f4`.
+
+`neural knowledge search QUERY` is read-only. It performs case-insensitive
+substring matching against Knowledge `statement` or `rationale`, preserves
+repository load order, and neither ranks results nor performs semantic or
+cross-record retrieval.
+
+The following 1.0 closure record is historical release evidence, not the
+current package or release state.
 
 The bounded NeuralEngine 1.0 capability scope and release evidence gate are now
 canonical in `docs/1-0-scope-and-release-gate.md`. The document fixes the
@@ -15,7 +31,8 @@ The bounded source contract is grounded in committed checkpoint
 (`fix: enforce playbook run create-once persistence`). The current
 Handbook-generated `NEURAL_HOME` skill was published byte-for-byte at commit
 `73b90efb8785b8c5202a28fd9de09b7939ee3670`
-(`docs: publish Neural home skill`). The package version remains `1.0.0`.
+(`docs: publish Neural home skill`). At that historical point, the package
+version was `1.0.0`.
 
 The release is complete at package version `1.0.0`, release commit
 `dd90164ee6842c3dbc0b68cd6b290cfcbc712d4e`, and annotated tag `v1.0.0`.
@@ -151,7 +168,7 @@ authorities. One Review may create multiple Experiences under distinct keys.
 Promotion changes no Decision lifecycle state and triggers no downstream
 learning artifact.
 
-Neural Engine now has a minimal Knowledge vertical slice:
+Neural Engine has a Knowledge vertical slice:
 
 * Domain model: `neural_engine.domain.Knowledge`
 * Confidence enum: `neural_engine.domain.KnowledgeConfidence`
@@ -160,7 +177,8 @@ Neural Engine now has a minimal Knowledge vertical slice:
 * Infrastructure implementation: `JsonKnowledgeRepository`
 * Dependency wiring: `application/container.py`
 * CLI commands: `neural knowledge add`, `neural knowledge from-experience`,
-  `neural knowledge list`, `neural knowledge show UUID`, and
+  `neural knowledge list`, `neural knowledge show UUID`,
+  `neural knowledge search QUERY`, and
   `neural knowledge playbooks UUID`, and `neural knowledge revisions UUID`
 
 Knowledge is a durable rule, lesson, or conclusion derived from one or more
