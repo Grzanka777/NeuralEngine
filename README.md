@@ -178,6 +178,7 @@ neural knowledge from-experience 11111111-1111-1111-1111-111111111111 \
 
 neural knowledge list
 neural knowledge show 11111111-1111-1111-1111-111111111111
+neural knowledge search focused
 neural knowledge playbooks 11111111-1111-1111-1111-111111111111
 neural knowledge revisions 11111111-1111-1111-1111-111111111111
 ```
@@ -191,6 +192,11 @@ read-only navigation; explicit creation uses the existing generic `neural
 knowledge add` or `neural knowledge from-experience` command. No Knowledge
 schema, authority, idempotency, or automatic creation behavior is implied, and
 storing Knowledge does not prove that it improved a later decision.
+
+`neural knowledge search QUERY` is read-only. It performs case-insensitive
+substring matching against each Knowledge item's statement or rationale and
+returns matches in repository load order. It does not rank results, perform
+semantic or cross-record retrieval, add CLI options, or change persistence.
 
 Playbook capture is exposed through a nested CLI group and stores explicit
 operational procedures:

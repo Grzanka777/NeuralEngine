@@ -219,6 +219,13 @@ by the caller.
 exists, and displays all knowledge fields. A missing Knowledge item still
 returns no record without an Experience read.
 
+`neural knowledge search QUERY` delegates to `KnowledgeService.search()`. It
+loads Knowledge through the repository, validates every linked Experience, and
+returns items in repository load order when the query is a case-insensitive
+substring of their statement or rationale. This is read-only filtering: it does
+not rank results, perform semantic or cross-record retrieval, create records,
+or change persistence.
+
 `KnowledgeService` propagates the existing `DecisionReviewError` and
 `DecisionReviewPromotionError` families from their canonical owners. It does
 not inspect promotion fields or duplicate Review validation. Missing Experience
