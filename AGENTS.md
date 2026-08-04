@@ -49,6 +49,21 @@ Rules:
 
 ---
 
+# Repository Authority and Scope Safety
+
+Every AI agent must:
+
+* Read repository instructions and required project context before editing.
+* Work only within the authorized task scope.
+* Preserve explicitly stated non-goals.
+* Treat the verified live checkout as repository authority.
+* Use `/run/media/grzanka/777/projekty/NeuralEngine` for NeuralEngine work.
+* Never substitute stale checkouts under `/run/media/grzanka/Big_Shit/`.
+* Treat the live NeuralEngine Brain as read-only by default.
+* Never write to Brain, create lifecycle records, or mutate durable state without separate explicit authorization.
+
+---
+
 # Validation Requirements
 
 Before considering any task complete, every AI agent **must** perform:
@@ -82,6 +97,7 @@ A task is complete only if:
 * Pytest passes.
 * Documentation is updated if necessary.
 * No unrelated files were modified.
+* No unrelated changes exist in the worktree.
 * A concise summary of the changes is provided.
 
 ---
@@ -93,13 +109,47 @@ Before starting work:
 1. Read `VISION.md`.
 2. Read `CONTEXT.md`.
 3. Read `memory/project-state.md`.
+4. Verify the live checkout required by the task.
+5. Confirm the worktree is clean unless the task explicitly allows working with existing changes.
 
 When finishing work:
 
 1. Update documentation if needed.
 2. Run validation.
-3. Summarize completed work.
-4. Suggest the next logical step.
+3. Create the exact task-specific review artifact under `.agent-work/reviews/`.
+4. Summarize completed work.
+5. Suggest the next logical step.
+
+Review artifacts must include:
+
+* Verified checkpoint.
+* Context read.
+* Changed files.
+* Validation output.
+* Diff stat.
+* `git diff --check`.
+* `git status --short`.
+* Full diff.
+* Scope and non-goal audit.
+
+---
+
+# Git Operation Boundaries
+
+AI agents must never stage files or run:
+
+```bash
+git add
+git add -N
+git apply --cached
+git rm --cached
+```
+
+AI agents must never commit, amend, tag, merge, or push.
+
+Staging, commit, amend, tag, merge, and push are separate user-authorized operations outside the agent task.
+
+Never claim completion when validation fails or unrelated changes exist.
 
 ---
 
