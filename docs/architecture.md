@@ -880,3 +880,18 @@ orchestrator owns correlation, non-persisted preview, explicit revalidated
 apply, deterministic replay identity, and dependency-order calls into the
 existing Decision-family services. The CLI remains a parsing and rendering
 surface.
+
+## Authority-Aware Planner Context
+
+`PlannerContextService.prepare()` is a read-only application use case for one
+planner assessment. It coordinates five narrow reader ports for verified
+repository metadata, a fixed current-document inventory, caller-selected Brain
+Knowledge UUIDs, a fixed review inventory, and caller-supplied bounded
+historical or frozen-release evidence. The returned immutable package always
+contains its seven authority-labelled categories and never allows supporting or
+historical evidence to override a verified live checkout.
+
+The use case has no CLI, persistence model, writer port, cache, source
+registry, filesystem discovery, prompt execution, semantic retrieval, or Brain
+write. Current-source reads verify the supplied repository checkpoint before
+and after reading; a mismatch produces no `CURRENT` assertion.

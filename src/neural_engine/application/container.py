@@ -10,6 +10,7 @@ from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.knowledge_service import KnowledgeService
 from neural_engine.application.neural_doctor_service import NeuralDoctorService
 from neural_engine.application.observation_service import ObservationService
+from neural_engine.application.planner_context_service import PlannerContextService
 from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationService,
 )
@@ -71,6 +72,7 @@ from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSource,
 )
 from neural_engine.infrastructure.local_neural_doctor_probe import LocalNeuralDoctorProbe
+from neural_engine.infrastructure.local_planner_context_readers import LocalPlannerContextReaders
 
 
 class Container:
@@ -101,6 +103,11 @@ class Container:
             scoped.decision_review_service(),
             scoped.experience_service(),
         )
+
+    def planner_context_service(self) -> PlannerContextService:
+        """Build the bounded read-only planner-context use case (no CLI exposure)."""
+        readers = LocalPlannerContextReaders(self._resolved_paths())
+        return PlannerContextService(readers, readers, readers, readers, readers)
 
     def decision_action_service(self) -> DecisionActionService:
         paths = self._resolved_paths()
