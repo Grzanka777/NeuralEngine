@@ -420,9 +420,24 @@ def _render_status_fields(
     console.print(f"[bold cyan]{APP_NAME}[/bold cyan]")
     console.print(f"Version                  : {__version__}")
     console.print(f"Resolution source        : {source}")
-    console.print(f"Configured Neural home   : {configured}")
-    console.print(f"Resolved Neural home     : {resolved_home}")
-    console.print(f"Resolved Brain path      : {resolved_brain}")
+    console.print(
+        f"Configured Neural home   : {configured}",
+        no_wrap=True,
+        overflow="ignore",
+        crop=False,
+    )
+    console.print(
+        f"Resolved Neural home     : {resolved_home}",
+        no_wrap=True,
+        overflow="ignore",
+        crop=False,
+    )
+    console.print(
+        f"Resolved Brain path      : {resolved_brain}",
+        no_wrap=True,
+        overflow="ignore",
+        crop=False,
+    )
     console.print(f"Home exists              : {_yes_no(home_exists)}")
     console.print(f"Home is directory        : {_yes_no(home_is_directory)}")
     console.print(f"Home accessible          : {_yes_no(home_accessible)}")
