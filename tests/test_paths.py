@@ -129,6 +129,11 @@ def test_all_derived_paths_share_one_resolved_home(tmp_path: Path) -> None:
     assert paths.LOGS == paths.HOME / "logs"
     assert paths.CONFIG == paths.HOME / "config.toml"
     assert paths.VERSION == paths.HOME / "VERSION"
+    assert paths.BRAIN_METADATA == paths.BRAIN / "brain-trust-metadata.json"
+    assert paths.BRAIN_METADATA not in {path for _name, path in paths.record_stores}
+    assert paths.TRUST_BINDING.name == "brain-trust-binding.json"
+    assert paths.TRUST_BINDING != paths.BRAIN_METADATA
+    assert paths.BRAIN not in paths.TRUST_BINDING.parents
     assert tuple(name for name, _path in paths.record_stores) == RECORD_STORE_NAMES
     assert tuple(path for _name, path in paths.record_stores) == (
         paths.OBSERVATIONS,
@@ -147,6 +152,33 @@ def test_all_derived_paths_share_one_resolved_home(tmp_path: Path) -> None:
         paths.DECISION_OUTCOMES,
         paths.DECISION_REVIEWS,
     )
+
+
+def test_trust_paths_are_deterministic_and_do_not_create_files(tmp_path: Path) -> None:
+    configured = tmp_path / "portable"
+    configured.mkdir()
+    paths = resolve_neural_paths(environ={"NEURAL_HOME": str(configured)})
+    before = {path.relative_to(tmp_path) for path in tmp_path.rglob("*")}
+
+    same_paths = resolve_neural_paths(environ={"NEURAL_HOME": str(configured)})
+
+    assert paths.BRAIN_METADATA == same_paths.BRAIN_METADATA
+    assert paths.TRUST_BINDING == same_paths.TRUST_BINDING
+    assert paths.TRUST_BINDING.parent == Path.home() / ".config" / "neural-engine"
+    assert {path.relative_to(tmp_path) for path in tmp_path.rglob("*")} == before
+
+
+def test_trust_binding_path_is_independent_of_brain_path(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+
+    first_paths = resolve_neural_paths(environ={"NEURAL_HOME": str(first)})
+    second_paths = resolve_neural_paths(environ={"NEURAL_HOME": str(second)})
+
+    assert first_paths.TRUST_BINDING == second_paths.TRUST_BINDING
+    assert first_paths.BRAIN_METADATA != second_paths.BRAIN_METADATA
 
 
 def test_resolution_is_not_frozen_between_calls(
