@@ -312,8 +312,24 @@ class PlannerContextService:
             warnings.append(
                 "verified repository checkpoint did not match before and after current-source reads"
             )
-            all_items = (*all_items, before, after)
+            all_items = (
+                *all_items,
+                self._checkpoint_invalidated(before),
+                self._checkpoint_invalidated(after),
+            )
         return self._assemble(all_items, warnings)
+
+    @staticmethod
+    def _checkpoint_invalidated(item: SourceEvidence) -> SourceEvidence:
+        if item.evidence_state is not EvidenceState.CURRENT:
+            return item
+        return item.model_copy(
+            update={
+                "authority_class": "checkpoint-invalidated repository metadata",
+                "evidence_state": EvidenceState.STALE,
+                "diagnostic": "repository checkpoint changed during current-source reads",
+            }
+        )
 
     @staticmethod
     def _sort_key(item: SourceEvidence) -> tuple[int, str, str, int, str]:

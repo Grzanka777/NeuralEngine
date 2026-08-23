@@ -271,7 +271,19 @@ class LocalPlannerContextReaders:
                 return self._diagnostic(
                     source_type, locator, checkpoint.head, state, retrieved_at, reason
                 )
-            if not candidate.is_file() or candidate.stat().st_size > 65536:
+            resolved_candidate = candidate.resolve(strict=True)
+            try:
+                resolved_candidate.relative_to(root)
+            except ValueError:
+                return self._diagnostic(
+                    source_type,
+                    locator,
+                    checkpoint.head,
+                    EvidenceState.UNREADABLE,
+                    retrieved_at,
+                    "resolved path escapes verified repository root",
+                )
+            if not resolved_candidate.is_file() or resolved_candidate.stat().st_size > 65536:
                 return self._diagnostic(
                     source_type,
                     locator,
@@ -280,7 +292,7 @@ class LocalPlannerContextReaders:
                     retrieved_at,
                     "source is not a readable regular UTF-8 file within 64 KiB",
                 )
-            raw = candidate.read_bytes()
+            raw = resolved_candidate.read_bytes()
             content = raw.decode("utf-8")
         except OSError, UnicodeDecodeError:
             return self._diagnostic(
