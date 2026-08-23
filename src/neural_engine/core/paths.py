@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Literal
 
 NEURAL_HOME_ENV = "NEURAL_HOME"
+TRUST_BINDING_FILENAME = "brain-trust-binding.json"
+TRUST_STATE_DIRECTORY = ".config/neural-engine"
+TRUST_METADATA_FILENAME = "brain-trust-metadata.json"
 RECORD_STORE_NAMES: tuple[str, ...] = (
     "observations",
     "experiences",
@@ -107,6 +110,8 @@ class NeuralPaths:
     LOGS: Path = field(init=False)
     CONFIG: Path = field(init=False)
     VERSION: Path = field(init=False)
+    BRAIN_METADATA: Path = field(init=False)
+    TRUST_BINDING: Path = field(init=False)
 
     def __post_init__(self) -> None:
         brain = self.HOME / "brain"
@@ -138,6 +143,12 @@ class NeuralPaths:
         object.__setattr__(self, "LOGS", self.HOME / "logs")
         object.__setattr__(self, "CONFIG", self.HOME / "config.toml")
         object.__setattr__(self, "VERSION", self.HOME / "VERSION")
+        object.__setattr__(self, "BRAIN_METADATA", brain / TRUST_METADATA_FILENAME)
+        object.__setattr__(
+            self,
+            "TRUST_BINDING",
+            Path.home() / TRUST_STATE_DIRECTORY / TRUST_BINDING_FILENAME,
+        )
 
     @property
     def is_override(self) -> bool:
