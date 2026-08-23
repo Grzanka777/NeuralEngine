@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from neural_engine import APP_NAME, __version__
+from neural_engine.application.brain_trust_inspector import BrainTrustInspection
 from neural_engine.application.container import Container
 from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
@@ -276,6 +277,7 @@ def _render_neural_doctor(report: NeuralDoctorReport) -> None:
     console.print("Fallback used   : no")
     _render_doctor_section("Home", report.home_checks)
     _render_doctor_section("Brain", report.brain_checks)
+    _render_brain_trust(report.brain_trust)
 
     console.print("\n[bold]Stores[/bold]")
     stores = Table(show_header=True, box=None)
@@ -375,6 +377,7 @@ def _render_neural_status() -> bool:
         configured_root_available=brain_status.home_accessible,
         brain_state=state,
         failure_reason=failure_reason,
+        brain_trust_state=container.brain_trust_inspector(paths).inspect_paths(paths).state.value,
     )
     return state != "Unavailable"
 
@@ -399,6 +402,7 @@ def _render_unavailable_neural_status(error: NeuralHomeError) -> None:
         configured_root_available=False,
         brain_state="Unavailable",
         failure_reason=str(error),
+        brain_trust_state="UNAVAILABLE",
     )
 
 
@@ -416,6 +420,7 @@ def _render_status_fields(
     configured_root_available: bool,
     brain_state: str,
     failure_reason: str,
+    brain_trust_state: str,
 ) -> None:
     console.print(f"[bold cyan]{APP_NAME}[/bold cyan]")
     console.print(f"Version                  : {__version__}")
@@ -446,6 +451,17 @@ def _render_status_fields(
     console.print(f"Configured root available: {_yes_no(configured_root_available)}")
     console.print(f"Brain state              : {brain_state}")
     console.print(f"Failure reason           : {failure_reason}")
+    console.print(f"Brain Trust state        : {brain_trust_state}")
+
+
+def _render_brain_trust(inspection: BrainTrustInspection | None) -> None:
+    console.print("\n[bold]Brain Trust[/bold]")
+    if inspection is None:
+        console.print("State           : UNAVAILABLE")
+        return
+    console.print(f"State           : {inspection.state.value}")
+    if inspection.reasons:
+        console.print(f"Reasons         : {'; '.join(inspection.reasons)}")
 
 
 def _yes_no(value: bool) -> str:

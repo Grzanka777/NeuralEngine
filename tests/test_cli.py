@@ -95,7 +95,13 @@ from neural_engine.application.playbook_service import (
     PlaybookStepsRequiredError,
 )
 from neural_engine.core.brain import Brain
-from neural_engine.core.paths import resolve_neural_paths
+from neural_engine.core.brain_trust import (
+    BRAIN_TRUST_BINDING_FORMAT,
+    BRAIN_TRUST_METADATA_FORMAT,
+    BrainMetadata,
+    ExternalTrustBinding,
+)
+from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
 from neural_engine.domain import (
     Decision,
     DecisionAcceptance,
@@ -8028,8 +8034,83 @@ def test_status_reports_absent_default_without_creating_it(
     assert "Resolved Neural home" in result.output
     assert str(isolated_home / ".neural") in "".join(result.output.splitlines())
     assert "Brain state              : Not initialized" in result.output
+    assert "Brain Trust state        : UNADOPTED" in result.output
     assert "Failure reason           : -" in result.output
     assert not isolated_home.exists()
+
+
+def test_status_projects_trusted_brain_without_writes_or_exit_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_home = tmp_path / "isolated"
+    configured = tmp_path / "portable"
+    isolated_home.mkdir()
+    configured.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+    paths = resolve_neural_paths()
+    Brain(paths).initialize()
+    brain_id = UUID("11111111-1111-4111-8111-111111111111")
+    paths.BRAIN_METADATA.write_text(
+        BrainMetadata(
+            metadata_format=BRAIN_TRUST_METADATA_FORMAT,
+            brain_id=brain_id,
+            generation=1,
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    paths.TRUST_BINDING.parent.mkdir(parents=True, exist_ok=True)
+    paths.TRUST_BINDING.write_text(
+        ExternalTrustBinding(
+            binding_format=BRAIN_TRUST_BINDING_FORMAT,
+            expected_brain_id=brain_id,
+            accepted_generation=1,
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    before = {
+        path.relative_to(tmp_path).as_posix(): (path.read_bytes() if path.is_file() else None)
+        for path in tmp_path.rglob("*")
+    }
+
+    result = CliRunner().invoke(cli.app, ["status"])
+
+    after = {
+        path.relative_to(tmp_path).as_posix(): (path.read_bytes() if path.is_file() else None)
+        for path in tmp_path.rglob("*")
+    }
+    assert result.exit_code == 0
+    assert "Brain state              : Initialized" in result.output
+    assert "Brain Trust state        : TRUSTED_CURRENT" in result.output
+    assert before == after
+
+
+def test_status_reuses_resolved_paths_for_trust_inspection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_home = tmp_path / "isolated"
+    configured = tmp_path / "portable"
+    isolated_home.mkdir()
+    configured.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
+    paths = resolve_neural_paths(environ={"NEURAL_HOME": str(configured)})
+    Brain(paths).initialize()
+    resolution_count = 0
+
+    def resolve_once() -> NeuralPaths:
+        nonlocal resolution_count
+        resolution_count += 1
+        return paths
+
+    monkeypatch.setattr(cli, "resolve_neural_paths", resolve_once)
+
+    result = CliRunner().invoke(cli.app, ["status"])
+
+    assert result.exit_code == 0
+    assert "Brain Trust state        : UNADOPTED" in result.output
+    assert resolution_count == 1
 
 
 def test_status_rejects_existing_default_file(
@@ -8172,6 +8253,8 @@ def test_doctor_reports_ready_default_without_writes_or_payload_leakage(
     assert result.exit_code == 0
     assert "Selection" in result.output
     assert "Readiness" in result.output
+    assert "Brain Trust" in result.output
+    assert "State           : UNADOPTED" in result.output
     assert "READY" in result.output
     assert "sha256-relative-v1" in result.output
     assert "Fallback used   : no" in result.output
@@ -8196,6 +8279,32 @@ def test_doctor_uses_override_and_reports_uninitialized_without_creating(
     assert "override (NEURAL_HOME)" in result.output
     assert "NOT READY" in result.output
     assert list(configured.iterdir()) == []
+
+
+def test_doctor_reports_unavailable_override_without_writes_or_generic_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = tmp_path / "missing"
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+    before = {
+        path.relative_to(tmp_path).as_posix(): (path.read_bytes() if path.is_file() else None)
+        for path in tmp_path.rglob("*")
+    }
+
+    result = CliRunner().invoke(cli.app, ["doctor"])
+
+    after = {
+        path.relative_to(tmp_path).as_posix(): (path.read_bytes() if path.is_file() else None)
+        for path in tmp_path.rglob("*")
+    }
+    assert result.exit_code == 1
+    assert "Path resolution" in result.output
+    assert "Neural Doctor failed unexpectedly" not in result.output
+    assert "Brain Trust" in result.output
+    assert "State           : UNAVAILABLE" in result.output
+    assert before == after
+    assert not configured.exists()
 
 
 def test_doctor_invalid_invocation_and_internal_failure_exit_two(

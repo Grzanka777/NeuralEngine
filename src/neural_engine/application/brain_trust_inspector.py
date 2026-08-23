@@ -63,6 +63,11 @@ class BrainTrustInspector:
 
     def inspect(self) -> BrainTrustInspection:
         paths = self._path_resolver()
+        return self.inspect_paths(paths)
+
+    def inspect_paths(self, paths: NeuralPaths) -> BrainTrustInspection:
+        """Inspect one already-resolved Neural home without resolving it again."""
+
         return self.classify(self._probe.inspect(paths))
 
     @classmethod

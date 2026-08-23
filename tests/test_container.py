@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from neural_engine.application.brain_trust_inspector import BrainTrustInspector
 from neural_engine.application.container import Container
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_action_service import DecisionActionService
@@ -23,7 +26,7 @@ from neural_engine.application.playbook_revision_service import PlaybookRevision
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
 from neural_engine.core.brain import BRAIN_FORMAT_VERSION
-from neural_engine.core.paths import resolve_neural_paths
+from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
     JsonDecisionAcceptanceRepository,
 )
@@ -54,6 +57,7 @@ from neural_engine.infrastructure.json_playbook_revision_repository import (
     JsonPlaybookRevisionRepository,
 )
 from neural_engine.infrastructure.json_playbook_run_repository import JsonPlaybookRunRepository
+from neural_engine.infrastructure.local_brain_trust_probe import LocalBrainTrustProbe
 from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSource,
 )
@@ -125,6 +129,31 @@ def test_container_wires_read_only_neural_doctor_boundary() -> None:
     assert isinstance(service, NeuralDoctorService)
     assert isinstance(service._probe, LocalNeuralDoctorProbe)
     assert service._supported_brain_format_version == BRAIN_FORMAT_VERSION
+    assert isinstance(service._brain_trust_inspector, BrainTrustInspector)
+    assert isinstance(service._brain_trust_inspector._probe, LocalBrainTrustProbe)
+
+
+def test_container_exposes_one_read_only_brain_trust_inspector() -> None:
+    inspector = Container().brain_trust_inspector()
+
+    assert isinstance(inspector, BrainTrustInspector)
+    assert isinstance(inspector._probe, LocalBrainTrustProbe)
+
+
+def test_container_defers_path_resolution_for_doctor_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_resolution() -> NeuralPaths:
+        raise AssertionError("Doctor service construction must not resolve paths")
+
+    monkeypatch.setattr(
+        "neural_engine.application.container.resolve_neural_paths",
+        unexpected_resolution,
+    )
+
+    service = Container().neural_doctor_service()
+
+    assert isinstance(service, NeuralDoctorService)
 
 
 def test_container_wires_decision_acceptance_repository() -> None:

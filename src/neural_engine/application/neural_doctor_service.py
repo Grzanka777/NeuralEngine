@@ -3,6 +3,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
+from neural_engine.application.brain_trust_inspector import (
+    BrainTrustInspection,
+    BrainTrustInspector,
+)
 from neural_engine.core.paths import RECORD_STORE_NAMES, NeuralHomeError, NeuralPaths
 from neural_engine.ports.neural_doctor_probe import (
     NeuralDoctorEvidence,
@@ -59,6 +63,7 @@ class NeuralDoctorReport:
     integrity_checks: tuple[DoctorCheck, ...]
     manifest: DoctorManifest
     ready: bool
+    brain_trust: BrainTrustInspection | None = None
 
     @property
     def failed_check_count(self) -> int:
@@ -83,10 +88,12 @@ class NeuralDoctorService:
         path_resolver: Callable[[], NeuralPaths],
         probe: NeuralDoctorProbe,
         supported_brain_format_version: str,
+        brain_trust_inspector: BrainTrustInspector | None = None,
     ) -> None:
         self._path_resolver = path_resolver
         self._probe = probe
         self._supported_brain_format_version = supported_brain_format_version
+        self._brain_trust_inspector = brain_trust_inspector
 
     def inspect(self) -> NeuralDoctorReport:
         try:
@@ -135,6 +142,11 @@ class NeuralDoctorService:
             integrity_checks=integrity_checks,
             manifest=manifest,
             ready=ready,
+            brain_trust=(
+                self._brain_trust_inspector.inspect_paths(paths)
+                if self._brain_trust_inspector is not None
+                else None
+            ),
         )
 
     def _brain_checks(
