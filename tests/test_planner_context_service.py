@@ -600,9 +600,7 @@ REPRESENTATIVE_EXPECTATIONS = (
         "fixture diagnostic",
         ("verified repository checkpoint did not match before and after current-source reads",),
         True,
-        category_locators=_literal_categories(
-            current=("repository-before",), stale=("repository-after",)
-        ),
+        category_locators=_literal_categories(stale=("repository-after", "repository-before")),
         provenance=(
             RepresentativeEvidenceExpectation(
                 SourceType.REPOSITORY_METADATA,
@@ -614,11 +612,11 @@ REPRESENTATIVE_EXPECTATIONS = (
             ),
             RepresentativeEvidenceExpectation(
                 SourceType.REPOSITORY_METADATA,
-                EvidenceState.CURRENT,
-                "fixture authority",
+                EvidenceState.STALE,
+                "checkpoint-invalidated repository metadata",
                 "repository-before",
                 "id:repository-before",
-                None,
+                "repository checkpoint changed during current-source reads",
             ),
         ),
     ),
@@ -925,6 +923,36 @@ def test_filters_only_narrow_and_source_count_is_bounded() -> None:
         PlannerSourceFilters(current_documents=("/etc/passwd",))
 
 
+def test_checkpoint_mismatch_invalidates_all_checkpoint_dependent_current_evidence() -> None:
+    readers = SequencedFixtureReaders(
+        (
+            _item(SourceType.REPOSITORY_METADATA, EvidenceState.CURRENT, "repository-before"),
+            _item(SourceType.REPOSITORY_METADATA, EvidenceState.STALE, "repository-after"),
+        )
+    )
+    service = PlannerContextService(readers, readers, readers, readers, readers)
+    package = service.prepare(_request())
+
+    assert not package.current_authoritative_sources
+    assert {item.normalized_locator for item in package.stale_or_conflicting_sources} == {
+        "repository-before",
+        "repository-after",
+    }
+    assert package.warnings == (
+        "verified repository checkpoint did not match before and after current-source reads",
+    )
+    assert all(
+        item.evidence_state is not EvidenceState.CURRENT
+        for item in package.provenance
+        if item.source_type
+        in {
+            SourceType.REPOSITORY_METADATA,
+            SourceType.DESIGNATED_DOCUMENT,
+            SourceType.DESIGNATED_REVIEW,
+        }
+    )
+
+
 def test_local_reader_rejects_path_traversal_absolute_symlink_binary_and_oversize(
     tmp_path: Path,
 ) -> None:
@@ -940,6 +968,28 @@ def test_local_reader_rejects_path_traversal_absolute_symlink_binary_and_oversiz
     items = reader.read_current_documents(checkpoint, cases)
     assert all(item.evidence_state is EvidenceState.UNREADABLE for item in items)
     assert all(item.excerpt is None for item in items)
+
+
+def test_local_reader_rejects_parent_symlink_escape_without_affecting_contained_files(
+    tmp_path: Path,
+) -> None:
+    reader = LocalPlannerContextReaders(clock=lambda: NOW)
+    checkpoint = _checkpoint(str(tmp_path))
+    external = tmp_path.parent / f"{tmp_path.name}-external"
+    external.mkdir()
+    (external / "outside.md").write_text("outside-controlled-content", encoding="utf-8")
+    (tmp_path / "docs").symlink_to(external, target_is_directory=True)
+    (tmp_path / "contained.md").write_text("contained", encoding="utf-8")
+
+    escaped, contained = reader.read_current_documents(
+        checkpoint, ("docs/outside.md", "contained.md")
+    )
+
+    assert escaped.evidence_state is EvidenceState.UNREADABLE
+    assert escaped.excerpt is None
+    assert escaped.diagnostic == "resolved path escapes verified repository root"
+    assert contained.evidence_state is EvidenceState.CURRENT
+    assert contained.excerpt == "contained"
 
 
 def test_local_reader_secret_guard_and_excerpt_limits_are_read_only(tmp_path: Path) -> None:
@@ -1154,9 +1204,16 @@ def test_legacy_boundary_examples_are_deterministic(tmp_path: Path, fixture_id: 
     package = service.prepare(request)
 
     assert serializations[0] == serializations[1] == serializations[2]
-    assert tuple(item.normalized_locator for item in getattr(package, expected_category)) == (
-        source_item.normalized_locator,
-    )
+    if fixture_id == "checkpoint-race":
+        assert not package.current_authoritative_sources
+        assert tuple(item.normalized_locator for item in package.stale_or_conflicting_sources) == (
+            "repository-after",
+            "repository-before",
+        )
+    else:
+        assert tuple(item.normalized_locator for item in getattr(package, expected_category)) == (
+            source_item.normalized_locator,
+        )
     assert source_item.authority_class == expected_authority
     assert sum(item == source_item for item in package.provenance) == 1
     if fixture_id == "restrictive-filter":
