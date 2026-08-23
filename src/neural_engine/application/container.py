@@ -70,6 +70,9 @@ from neural_engine.infrastructure.json_playbook_run_repository import (
     JsonPlaybookRunRepository,
 )
 from neural_engine.infrastructure.local_brain_trust_probe import LocalBrainTrustProbe
+from neural_engine.infrastructure.local_brain_trust_transition import (
+    LocalBrainTrustTransitionCoordinator,
+)
 from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSource,
 )
@@ -99,6 +102,10 @@ class Container:
             lambda: paths if paths is not None else self._resolved_paths(),
             LocalBrainTrustProbe(),
         )
+
+    def brain_trust_transition_coordinator(self) -> LocalBrainTrustTransitionCoordinator:
+        paths = self._resolved_paths()
+        return LocalBrainTrustTransitionCoordinator(paths, self.brain_trust_inspector(paths))
 
     def development_evidence_service(self) -> DevelopmentEvidenceService:
         paths = self._resolved_paths()
@@ -175,9 +182,12 @@ class Container:
 
     def knowledge_service(self) -> KnowledgeService:
         paths = self._resolved_paths()
+        knowledge_repository = JsonKnowledgeRepository(paths=paths)
         return KnowledgeService(
-            JsonKnowledgeRepository(paths=paths),
+            knowledge_repository,
             Container(paths).experience_service(),
+            controlled_writer=knowledge_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def playbook_service(self) -> PlaybookService:
