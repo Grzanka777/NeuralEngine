@@ -1,3 +1,4 @@
+from neural_engine.application.brain_trust_inspector import BrainTrustInspector
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_action_service import DecisionActionService
 from neural_engine.application.decision_lifecycle_service import DecisionLifecycleService
@@ -68,6 +69,7 @@ from neural_engine.infrastructure.json_playbook_revision_repository import (
 from neural_engine.infrastructure.json_playbook_run_repository import (
     JsonPlaybookRunRepository,
 )
+from neural_engine.infrastructure.local_brain_trust_probe import LocalBrainTrustProbe
 from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSource,
 )
@@ -89,6 +91,13 @@ class Container:
             self._resolved_paths,
             LocalNeuralDoctorProbe(),
             BRAIN_FORMAT_VERSION,
+            self.brain_trust_inspector(),
+        )
+
+    def brain_trust_inspector(self, paths: NeuralPaths | None = None) -> BrainTrustInspector:
+        return BrainTrustInspector(
+            lambda: paths if paths is not None else self._resolved_paths(),
+            LocalBrainTrustProbe(),
         )
 
     def development_evidence_service(self) -> DevelopmentEvidenceService:

@@ -100,6 +100,13 @@ boundary. `NeuralDoctorService` derives readiness states from the resolved
 canonical 15-store topology remains owned by `NeuralPaths` and is shared with
 Brain initialization, avoiding a second directory list.
 
+Doctor also projects the optional `BrainTrustInspection` produced by the
+application `BrainTrustInspector`. `Container` wires one inspector with the
+read-only `LocalBrainTrustProbe`; status renders the same classification as an
+additive `Brain Trust state` field. Trust classification remains independent of
+structural readiness, and neither command changes readiness or exit-code
+semantics because a pre-trust Brain is `UNADOPTED`.
+
 The package release version and persisted Brain format version are separate
 contracts. `BRAIN_FORMAT_VERSION` is the single supported-format value used by
 both `Brain.initialize()` and `NeuralDoctorService`; package-only upgrades do

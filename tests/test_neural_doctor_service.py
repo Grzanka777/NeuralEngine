@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from neural_engine import __version__
+from neural_engine.application.brain_trust_inspector import BrainTrustInspector
 from neural_engine.application.neural_doctor_service import (
     MANIFEST_ALGORITHM,
     DoctorState,
@@ -13,6 +14,7 @@ from neural_engine.application.neural_doctor_service import (
 )
 from neural_engine.core.brain import BRAIN_FORMAT_VERSION
 from neural_engine.core.paths import NeuralHomeError, NeuralPaths, resolve_neural_paths
+from neural_engine.infrastructure.local_brain_trust_probe import LocalBrainTrustProbe
 from neural_engine.ports.neural_doctor_probe import (
     ManifestEntry,
     NeuralDoctorEvidence,
@@ -105,6 +107,24 @@ def test_package_1_1_is_ready_with_brain_format_1_0(tmp_path: Path) -> None:
     assert BRAIN_FORMAT_VERSION == "1.0.0"
     assert report.brain_checks[-2].detail == "1.0.0"
     assert report.ready
+
+
+def test_doctor_projects_existing_brain_trust_inspection_additively(tmp_path: Path) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.BRAIN.mkdir()
+    inspector = BrainTrustInspector(lambda: paths, LocalBrainTrustProbe())
+
+    report = NeuralDoctorService(
+        lambda: paths,
+        StaticProbe(_evidence(paths)),
+        "1.0.0",
+        inspector,
+    ).inspect()
+
+    assert report.ready
+    assert report.brain_trust is not None
+    assert report.brain_trust.state.value == "UNADOPTED"
+    assert report.failed_check_count == 0
 
 
 def test_manifest_is_sorted_and_independent_of_selected_mount(tmp_path: Path) -> None:
