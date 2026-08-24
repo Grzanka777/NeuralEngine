@@ -1,13 +1,14 @@
-import os
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from uuid import UUID
 
 from pydantic import ValidationError
 
+from neural_engine.core.brain_trust import TargetAction
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.domain import PlaybookRun
+from neural_engine.infrastructure.durability import create_once_bytes
 from neural_engine.infrastructure.repository_paths import RepositoryPath
+from neural_engine.ports.brain_trust_transition import ControlledMutationTarget
 from neural_engine.ports.playbook_run_repository import (
     PlaybookRunIdentityMismatchError,
     PlaybookRunPersistenceConflictError,
@@ -29,36 +30,38 @@ class JsonPlaybookRunRepository(PlaybookRunRepository):
         self._directory = self._path.directory
 
     def save(self, run: PlaybookRun) -> None:
-        self._path.prepare_for_write()
+        candidate, serialized = self._candidate_bytes(run)
+        self._publish_candidate(self._directory / f"{run.id}.json", candidate, serialized)
 
+    def controlled_create_target(self, run: PlaybookRun) -> ControlledMutationTarget:
+        """Prepare one Run create for deferred Brain Trust publication."""
+
+        if self._path.paths is None:
+            raise ValueError("Controlled PlaybookRun targets require NeuralPaths-backed storage.")
+
+        candidate, serialized = self._candidate_bytes(run)
         path = self._directory / f"{run.id}.json"
-        serialized = run.model_dump_json(indent=2)
-        candidate = PlaybookRun.model_validate_json(serialized)
-        temporary_path: Path | None = None
+        relative_path = path.relative_to(self._path.paths.BRAIN).as_posix()
+        return ControlledMutationTarget(
+            relative_path=relative_path,
+            action=TargetAction.CREATE,
+            after_bytes=serialized,
+            publish=lambda: self._publish_candidate(path, candidate, serialized),
+        )
 
+    def _publish_candidate(self, path: Path, candidate: PlaybookRun, serialized: bytes) -> None:
+        self._path.prepare_for_write()
         try:
-            with NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self._directory,
-                prefix=f".{run.id}.",
-                suffix=".tmp",
-                delete=False,
-            ) as temporary_file:
-                temporary_path = Path(temporary_file.name)
-                temporary_file.write(candidate.model_dump_json(indent=2))
-                temporary_file.flush()
-                os.fsync(temporary_file.fileno())
+            create_once_bytes(path, serialized)
+        except FileExistsError:
+            existing = self._load_path(path, candidate.id)
+            if existing != candidate:
+                raise PlaybookRunPersistenceConflictError(candidate.id) from None
 
-            try:
-                os.link(temporary_path, path)
-            except FileExistsError:
-                existing = self._load_path(path, run.id)
-                if existing != candidate:
-                    raise PlaybookRunPersistenceConflictError(run.id) from None
-        finally:
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
+    @staticmethod
+    def _candidate_bytes(run: PlaybookRun) -> tuple[PlaybookRun, bytes]:
+        candidate = PlaybookRun.model_validate_json(run.model_dump_json(indent=2))
+        return candidate, candidate.model_dump_json(indent=2).encode("utf-8")
 
     def load_all(self) -> list[PlaybookRun]:
         self._path.guard(operation="read")

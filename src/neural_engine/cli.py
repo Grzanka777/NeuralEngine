@@ -277,7 +277,7 @@ def doctor() -> None:
 
 @brain_app.command("recover")
 def recover_brain() -> None:
-    """Complete one valid pending Knowledge CREATE transition suffix."""
+    """Complete one valid pending supported single-record CREATE suffix."""
 
     try:
         transition_id = (
@@ -1426,6 +1426,9 @@ def add_knowledge_from_experience(
         _exit_experience_not_found(error)
     except (DecisionReviewError, DecisionReviewPromotionError) as error:
         _exit_decision_review_integrity_error(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
     except KnowledgeRepositoryError as error:
         _exit_knowledge_repository_error(error)
 
@@ -1844,6 +1847,9 @@ def add_revision(
     except RevisionKnowledgeNotFoundError as error:
         console.print(f"[red]Knowledge not found: {error.knowledge_id}[/red]")
         raise typer.Exit(code=1) from error
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
     except PlaybookRevisionRepositoryError as error:
         _exit_playbook_revision_repository_error(error)
 
@@ -2253,6 +2259,9 @@ def add_run(
         _exit_playbook_not_found(error)
     except (PlaybookRevisionNotFoundError, PlaybookRunRevisionPlaybookMismatchError) as error:
         _exit_playbook_run_revision_error(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
     except PlaybookRevisionRepositoryError as error:
         _exit_playbook_revision_repository_error(error)
 
