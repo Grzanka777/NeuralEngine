@@ -12,6 +12,10 @@ from neural_engine.domain import (
     Experience,
     ExperienceResult,
 )
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.experience_repository import ExperienceRepository
 from neural_engine.ports.observation_repository import ObservationRepository
 
@@ -116,10 +120,18 @@ class ExperienceService:
         experience_repository: ExperienceRepository,
         observation_repository: ObservationRepository,
         decision_review_service: DecisionReviewReader,
+        controlled_writer: ControlledCreateWriter[Experience] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled Experience writer and coordinator must be configured together."
+            )
         self._experience_repository = experience_repository
         self._observation_repository = observation_repository
         self._decision_review_service = decision_review_service
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -144,7 +156,7 @@ class ExperienceService:
             tags=tags or [],
         )
 
-        self._experience_repository.save(experience)
+        self._publish(experience)
 
         return experience
 
@@ -172,7 +184,7 @@ class ExperienceService:
             tags=tags or [],
         )
 
-        self._experience_repository.save(experience)
+        self._publish(experience)
 
         return experience
 
@@ -230,8 +242,16 @@ class ExperienceService:
                 promotion.decision_review_id, promotion.idempotency_key
             )
 
-        self._experience_repository.save(candidate)
+        self._publish(candidate)
         return candidate
+
+    def _publish(self, experience: Experience) -> None:
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(experience)
+            )
+        else:
+            self._experience_repository.save(experience)
 
     def list_experiences(self) -> list[Experience]:
         experiences = self._experience_repository.load_all()

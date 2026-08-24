@@ -32,7 +32,35 @@ from neural_engine.core.brain_trust import (
 )
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.infrastructure.durability import atomic_replace_bytes
+from neural_engine.infrastructure.json_decision_acceptance_repository import (
+    JsonDecisionAcceptanceRepository,
+)
+from neural_engine.infrastructure.json_decision_action_repository import (
+    JsonDecisionActionRepository,
+)
+from neural_engine.infrastructure.json_decision_outcome_repository import (
+    JsonDecisionOutcomeRepository,
+)
+from neural_engine.infrastructure.json_decision_repository import JsonDecisionRepository
+from neural_engine.infrastructure.json_decision_review_repository import (
+    JsonDecisionReviewRepository,
+)
+from neural_engine.infrastructure.json_evolution_proposal_repository import (
+    JsonEvolutionProposalRepository,
+)
+from neural_engine.infrastructure.json_experience_repository import JsonExperienceRepository
 from neural_engine.infrastructure.json_knowledge_repository import JsonKnowledgeRepository
+from neural_engine.infrastructure.json_observation_repository import JsonObservationRepository
+from neural_engine.infrastructure.json_playbook_evaluation_repository import (
+    JsonPlaybookEvaluationRepository,
+)
+from neural_engine.infrastructure.json_playbook_repository import JsonPlaybookRepository
+from neural_engine.infrastructure.json_playbook_revision_activation_repository import (
+    JsonPlaybookRevisionActivationRepository,
+)
+from neural_engine.infrastructure.json_playbook_revision_application_repository import (
+    JsonPlaybookRevisionApplicationRepository,
+)
 from neural_engine.infrastructure.json_playbook_revision_repository import (
     JsonPlaybookRevisionRepository,
 )
@@ -142,6 +170,8 @@ class LocalBrainTrustTransitionCoordinator:
     def recover_pending_knowledge_create(self) -> UUID:
         """Complete one valid supported single-record CREATE from N through N+1.
 
+        The historical method name is retained for CLI compatibility. The
+        bounded recovery slice covers every supported canonical JSON store.
         The marker contains no record payload. Therefore a missing target is
         deliberately rejected; recovery only verifies and completes S2-S4.
         """
@@ -334,6 +364,10 @@ class LocalBrainTrustTransitionCoordinator:
             raise BrainTrustUnsafeRecoveryError(
                 f"{store_name} target is not present in the current store"
             )
+        if getattr(stored, "id", None) != record_id:
+            raise BrainTrustUnsafeRecoveryError(
+                f"{store_name} target filename and payload identity do not match"
+            )
 
         return target_path, descriptor
 
@@ -342,7 +376,42 @@ class LocalBrainTrustTransitionCoordinator:
         relative: PurePosixPath,
     ) -> tuple[Path, _CurrentStoreReader, str] | None:
         stores: tuple[tuple[Path, _CurrentStoreReader, str], ...] = (
+            (
+                self._paths.OBSERVATIONS,
+                JsonObservationRepository(paths=self._paths),
+                "Observation",
+            ),
+            (
+                self._paths.EXPERIENCES,
+                JsonExperienceRepository(paths=self._paths),
+                "Experience",
+            ),
             (self._paths.KNOWLEDGE, JsonKnowledgeRepository(paths=self._paths), "Knowledge"),
+            (
+                self._paths.PLAYBOOKS,
+                JsonPlaybookRepository(paths=self._paths),
+                "Playbook",
+            ),
+            (
+                self._paths.PLAYBOOK_EVALUATIONS,
+                JsonPlaybookEvaluationRepository(paths=self._paths),
+                "PlaybookEvaluation",
+            ),
+            (
+                self._paths.EVOLUTION_PROPOSALS,
+                JsonEvolutionProposalRepository(paths=self._paths),
+                "EvolutionProposal",
+            ),
+            (
+                self._paths.PLAYBOOK_REVISION_ACTIVATIONS,
+                JsonPlaybookRevisionActivationRepository(paths=self._paths),
+                "PlaybookRevisionActivation",
+            ),
+            (
+                self._paths.PLAYBOOK_REVISION_APPLICATIONS,
+                JsonPlaybookRevisionApplicationRepository(paths=self._paths),
+                "PlaybookRevisionApplication",
+            ),
             (
                 self._paths.PLAYBOOK_RUNS,
                 JsonPlaybookRunRepository(paths=self._paths),
@@ -352,6 +421,27 @@ class LocalBrainTrustTransitionCoordinator:
                 self._paths.PLAYBOOK_REVISIONS,
                 JsonPlaybookRevisionRepository(paths=self._paths),
                 "PlaybookRevision",
+            ),
+            (self._paths.DECISIONS, JsonDecisionRepository(paths=self._paths), "Decision"),
+            (
+                self._paths.DECISION_ACCEPTANCES,
+                JsonDecisionAcceptanceRepository(paths=self._paths),
+                "DecisionAcceptance",
+            ),
+            (
+                self._paths.DECISION_ACTIONS,
+                JsonDecisionActionRepository(paths=self._paths),
+                "DecisionAction",
+            ),
+            (
+                self._paths.DECISION_OUTCOMES,
+                JsonDecisionOutcomeRepository(paths=self._paths),
+                "DecisionOutcome",
+            ),
+            (
+                self._paths.DECISION_REVIEWS,
+                JsonDecisionReviewRepository(paths=self._paths),
+                "DecisionReview",
             ),
         )
         for root, repository, name in stores:

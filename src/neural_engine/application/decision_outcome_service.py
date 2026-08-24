@@ -12,6 +12,10 @@ from neural_engine.domain import (
     EvidenceReference,
 )
 from neural_engine.domain.decision_outcome import DecisionOutcomeMetricValue
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.decision_acceptance_repository import (
     DecisionAcceptanceRepository,
 )
@@ -162,11 +166,19 @@ class DecisionOutcomeService:
         decision_repository: DecisionRepository,
         acceptance_repository: DecisionAcceptanceRepository,
         action_repository: DecisionActionRepository,
+        controlled_writer: ControlledCreateWriter[DecisionOutcome] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled DecisionOutcome writer and coordinator must be configured together."
+            )
         self._outcome_repository = outcome_repository
         self._decision_repository = decision_repository
         self._acceptance_repository = acceptance_repository
         self._action_repository = action_repository
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -230,7 +242,12 @@ class DecisionOutcomeService:
                 return existing
             raise DecisionOutcomeIdempotencyConflictError(decision_id, idempotency_key)
 
-        self._outcome_repository.save(candidate)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(candidate)
+            )
+        else:
+            self._outcome_repository.save(candidate)
         return candidate
 
     def list_for_decision(self, decision_id: UUID) -> list[DecisionOutcome]:

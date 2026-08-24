@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypeVar
 from uuid import UUID
 
 from neural_engine.core.brain_trust import TargetAction
+
+RecordT = TypeVar("RecordT", contravariant=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +19,12 @@ class ControlledMutationTarget:
     action: TargetAction
     after_bytes: bytes | None
     publish: Callable[[], None]
+
+
+class ControlledCreateWriter(Protocol[RecordT]):
+    """Prepare one validated single-record CREATE without publishing it."""
+
+    def controlled_create_target(self, record: RecordT) -> ControlledMutationTarget: ...
 
 
 class BrainTrustMutationCoordinator(Protocol):

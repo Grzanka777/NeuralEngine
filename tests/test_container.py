@@ -46,6 +46,9 @@ from neural_engine.infrastructure.json_evolution_proposal_repository import (
 from neural_engine.infrastructure.json_experience_repository import JsonExperienceRepository
 from neural_engine.infrastructure.json_knowledge_repository import JsonKnowledgeRepository
 from neural_engine.infrastructure.json_observation_repository import JsonObservationRepository
+from neural_engine.infrastructure.json_playbook_evaluation_repository import (
+    JsonPlaybookEvaluationRepository,
+)
 from neural_engine.infrastructure.json_playbook_repository import JsonPlaybookRepository
 from neural_engine.infrastructure.json_playbook_revision_activation_repository import (
     JsonPlaybookRevisionActivationRepository,
@@ -112,6 +115,8 @@ def test_container_wires_decision_service_with_json_repositories() -> None:
     assert isinstance(service, DecisionService)
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._observation_repository, JsonObservationRepository)
+    assert service._controlled_writer is service._decision_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_local_development_evidence_orchestration() -> None:
@@ -173,6 +178,8 @@ def test_container_wires_decision_acceptance_service_with_json_repositories() ->
     assert isinstance(service, DecisionAcceptanceService)
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
     assert isinstance(service._decision_repository, JsonDecisionRepository)
+    assert service._controlled_writer is service._acceptance_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_decision_action_repository() -> None:
@@ -190,6 +197,8 @@ def test_container_wires_decision_action_service_with_json_repositories() -> Non
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
     assert isinstance(service._playbook_run_repository, PlaybookRunService)
+    assert service._controlled_writer is service._action_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_decision_outcome_repository_and_service() -> None:
@@ -203,6 +212,8 @@ def test_container_wires_decision_outcome_repository_and_service() -> None:
     assert isinstance(service._action_repository, JsonDecisionActionRepository)
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
+    assert service._controlled_writer is service._outcome_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_canonical_decision_lifecycle_service() -> None:
@@ -227,6 +238,8 @@ def test_container_wires_decision_review_repository_and_service() -> None:
     assert isinstance(service._decision_repository, JsonDecisionRepository)
     assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
     assert isinstance(service._outcome_repository, JsonDecisionOutcomeRepository)
+    assert service._controlled_writer is service._review_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_experience_service_with_review_validation_boundary() -> None:
@@ -236,6 +249,8 @@ def test_container_wires_experience_service_with_review_validation_boundary() ->
     assert isinstance(service._experience_repository, JsonExperienceRepository)
     assert isinstance(service._observation_repository, JsonObservationRepository)
     assert isinstance(service._decision_review_service, DecisionReviewService)
+    assert service._controlled_writer is service._experience_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_knowledge_service_to_validated_experience_service() -> None:
@@ -254,6 +269,25 @@ def test_container_wires_playbook_service_without_playbook_revision_repository()
 
     assert isinstance(service, PlaybookService)
     assert not hasattr(service, "_revision_repository")
+    assert service._controlled_writer is not None
+    assert isinstance(service._controlled_writer, JsonPlaybookRepository)
+    assert service._mutation_coordinator is not None
+
+
+def test_container_wires_playbook_evaluation_service_with_controlled_writer() -> None:
+    service = Container().playbook_evaluation_service()
+
+    assert isinstance(service._evaluation_repository, JsonPlaybookEvaluationRepository)
+    assert service._controlled_writer is service._evaluation_repository
+    assert service._mutation_coordinator is not None
+
+
+def test_container_wires_evolution_proposal_service_with_controlled_writer() -> None:
+    service = Container().evolution_proposal_service()
+
+    assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)
+    assert service._controlled_writer is service._proposal_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_playbook_revision_activation_repository() -> None:
@@ -271,6 +305,8 @@ def test_container_wires_playbook_revision_activation_service_with_json_reposito
     assert isinstance(service._revision_repository, JsonPlaybookRevisionRepository)
     assert isinstance(service._playbook_repository, JsonPlaybookRepository)
     assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)
+    assert service._controlled_writer is service._activation_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_playbook_revision_application_repository() -> None:
@@ -310,3 +346,5 @@ def test_container_wires_playbook_revision_application_service_with_json_reposit
     assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)
     assert isinstance(service._activation_repository, JsonPlaybookRevisionActivationRepository)
     assert isinstance(service._activation_service, PlaybookRevisionActivationService)
+    assert service._controlled_writer is service._application_repository
+    assert service._mutation_coordinator is not None

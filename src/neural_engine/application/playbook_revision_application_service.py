@@ -7,6 +7,10 @@ from neural_engine.domain import (
     EvolutionProposalStatus,
     PlaybookRevisionApplication,
 )
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.evolution_proposal_repository import (
     EvolutionProposalRepository,
 )
@@ -171,13 +175,22 @@ class PlaybookRevisionApplicationService:
         proposal_repository: EvolutionProposalRepository,
         activation_repository: PlaybookRevisionActivationRepository,
         activation_service: PlaybookRevisionActivationService,
+        controlled_writer: ControlledCreateWriter[PlaybookRevisionApplication] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled PlaybookRevisionApplication writer and coordinator must be "
+                "configured together."
+            )
         self._application_repository = application_repository
         self._revision_repository = revision_repository
         self._playbook_repository = playbook_repository
         self._proposal_repository = proposal_repository
         self._activation_repository = activation_repository
         self._activation_service = activation_service
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -211,7 +224,12 @@ class PlaybookRevisionApplicationService:
             content_changed=False,
         )
 
-        self._application_repository.save(application)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(application)
+            )
+        else:
+            self._application_repository.save(application)
 
         return application
 
