@@ -4,6 +4,8 @@ import pytest
 from typer.testing import CliRunner
 
 import neural_engine.cli as cli
+from neural_engine.application.brain_trust_inspector import BrainTrustState
+from neural_engine.application.brain_trust_transition import BrainTrustMutationNotPermittedError
 from neural_engine.application.development_evidence_service import (
     DevelopmentEvidenceCandidate,
     DevelopmentEvidenceMismatchError,
@@ -37,6 +39,34 @@ class FakeContainer:
         self.service = service
 
     def development_evidence_service(self) -> RejectingService:
+        return self.service
+
+
+class ApplyingRejectingService:
+    def preview(
+        self,
+        request: DevelopmentEvidenceRequest,
+        records: DevelopmentEvidenceRecordInput,
+    ) -> DevelopmentEvidenceCandidate:
+        return DevelopmentEvidenceCandidate.model_construct()
+
+    def apply(
+        self,
+        candidate: DevelopmentEvidenceCandidate,
+        *,
+        authority_confirmed: bool,
+    ) -> object:
+        raise BrainTrustMutationNotPermittedError(
+            BrainTrustState.UNADOPTED,
+            ("fixture trust rejection",),
+        )
+
+
+class ApplyingFakeContainer:
+    def __init__(self) -> None:
+        self.service = ApplyingRejectingService()
+
+    def development_evidence_service(self) -> ApplyingRejectingService:
         return self.service
 
 
@@ -109,3 +139,33 @@ def test_development_evidence_surface_has_separate_preview_and_apply_modes() -> 
     assert result.exit_code == 0
     assert "preview" in result.stdout
     assert "apply" in result.stdout
+
+
+def test_development_evidence_apply_controls_brain_trust_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cli, "container", ApplyingFakeContainer())
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "development-evidence",
+            "apply",
+            "--repository-root",
+            "/tmp/NeuralEngine",
+            "--prompt-path",
+            ".agent-work/prompts/task.md",
+            "--review-path",
+            ".agent-work/reviews/review.md",
+            "--commit-sha",
+            "2" * 40,
+            "--records-json",
+            _records_json(),
+            "--confirm-authority",
+        ],
+    )
+
+    assert result.exit_code == 1
+    normalized = " ".join(result.stdout.split())
+    assert "fixture trust rejection" in normalized
+    assert "Traceback" not in normalized

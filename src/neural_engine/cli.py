@@ -536,7 +536,11 @@ def apply_development_evidence(
     console.print_json(candidate.model_dump_json())
     try:
         result = service.apply(candidate, authority_confirmed=authority_confirmed)
-    except (DevelopmentEvidenceError, LocalDevelopmentEvidenceSourceError) as error:
+    except (
+        BrainTrustMutationError,
+        DevelopmentEvidenceError,
+        LocalDevelopmentEvidenceSourceError,
+    ) as error:
         _exit_development_evidence_error(error)
     console.print_json(result.model_dump_json())
 
@@ -2933,7 +2937,7 @@ def _development_evidence_candidate(
 
 
 def _exit_development_evidence_error(
-    error: DevelopmentEvidenceError | LocalDevelopmentEvidenceSourceError,
+    error: BrainTrustMutationError | DevelopmentEvidenceError | LocalDevelopmentEvidenceSourceError,
 ) -> None:
     console.print(f"[red]{error}[/red]")
     raise typer.Exit(code=1) from error

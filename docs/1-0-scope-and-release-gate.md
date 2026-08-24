@@ -149,8 +149,9 @@ The following distinctions are part of the 1.0 contract:
 13. Preview plus fresh revalidation protects visibility and source freshness;
     it does not by itself provide transactionality or resumability.
 14. Safe retry after a partial apply depends on a duplicate-effect boundary at
-    every durable step. Adding a step without such a boundary invalidates a
-    safe-replay claim for the sequence.
+    every durable step. M23 uses the existing per-record service idempotency and
+    conflict boundaries; it does not claim group atomicity. Adding a step
+    without such a boundary invalidates a safe-replay claim for the sequence.
 15. Evidence references are bounded locators and hashes. Their presence does
     not prove external authenticity and does not authorize opening or executing
     the referenced material outside the owning use case.
@@ -185,9 +186,11 @@ cryptographic tamper evidence, or protection from direct filesystem mutation.
 Other UUID-addressed repositories do not inherit this contract by analogy.
 EvolutionProposal status replacement is a separate protected M12 use case: it
 publishes one exact JSON target with literal BEFORE/AFTER hashes and bounded
-forward-only recovery. M23 development-evidence apply remains outside the
-Brain Trust boundary. NeuralEngine 1.0 does not promise universal create-once
-persistence or cross-process uniqueness.
+forward-only recovery. M23 development-evidence apply uses the existing Brain
+Trust boundary through its protected component services, one generation per
+newly published record. This closes the supported writer path without
+promising universal create-once persistence, group transactionality, or
+cross-process uniqueness.
 
 ## Explicit 1.0 Non-Goals
 

@@ -52,7 +52,19 @@ The natural replay identity is `NeuralEngine:<full commit SHA>`. The orchestrati
 its service idempotency key; callers cannot override per-record keys. Equivalent replays
 return existing records. Changed source hashes or semantics conflict. An amended commit
 is a new identity. Apply is not transactional: after a partial failure, an exact rerun
-resumes through existing Decision-family idempotency.
+resumes through existing Decision-family idempotency. Each newly published record is one
+independently controlled Brain Trust generation: a successful step advances metadata and
+binding by exactly one and clears its own marker before the next step starts. A failure
+after `k` successful steps therefore leaves a durable valid prefix, not an all-or-nothing
+transaction. A pending Brain Trust transition remains fail-closed; development-evidence
+apply does not perform automatic recovery, and the explicit bounded recovery command remains
+the separate operational boundary.
+
+Under supported `Container` composition, Decision, DecisionAcceptance, DecisionAction,
+DecisionOutcome, DecisionReview, and optional Review-to-Experience promotion all call their
+existing protected single-record services. The orchestrator never saves a repository
+directly. Trust rejection is rendered as a controlled error before any later component
+publication.
 
 This flow creates or replays only Decision, DecisionAcceptance, DecisionAction,
 DecisionOutcome, DecisionReview, and optionally Experience via the existing explicit

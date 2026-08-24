@@ -310,11 +310,14 @@ Bounded REPLACE recovery is limited to `ordinary_mutation`, exactly one
 is still BEFORE because the marker contains hashes, not enough durable payload
 evidence to reconstruct AFTER; R2, R3, and R4 complete only the forward
 metadata/binding/marker suffix after exact AFTER and proposal identity checks.
-No generic REPLACE recovery exists. M23 development-evidence apply remains
-unprotected, and `WRITER_COVERAGE_BLOCKED` remains until that separate
-multi-record boundary is resolved. The bounded scope still excludes REMOVE,
-multi-target operations, adoption, restore, clone, rebind, Model B, a central
-repository guard, a generic transaction/recovery engine, and real Brain writes.
+No generic REPLACE recovery exists. M23 development-evidence apply composes the
+existing protected Decision-family and optional Experience services as
+independent single-record generations. A partial prefix is valid and exact
+retry reuses each component's existing idempotency/conflict boundary; M23 does
+not provide group atomicity or group recovery. The bounded scope still
+excludes REMOVE, grouped multi-target operations, adoption, restore, clone,
+rebind, Model B, a central repository guard, a generic transaction/recovery
+engine, and real Brain writes.
 
 Knowledge create-once and same-ID conflict semantics remain owned by
 `JsonKnowledgeRepository`.
