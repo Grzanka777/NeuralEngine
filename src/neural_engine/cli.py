@@ -277,7 +277,7 @@ def doctor() -> None:
 
 @brain_app.command("recover")
 def recover_brain() -> None:
-    """Complete one valid pending supported single-record CREATE suffix."""
+    """Complete one valid pending CREATE or bounded proposal REPLACE suffix."""
 
     try:
         transition_id = (
@@ -1755,6 +1755,9 @@ def set_proposal_status(
         proposal = service.set_status(proposal_id, status)
     except EvolutionProposalNotFoundError as error:
         console.print(f"[red]Evolution proposal not found: {error.proposal_id}[/red]")
+        raise typer.Exit(code=1) from error
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
 
     console.print(

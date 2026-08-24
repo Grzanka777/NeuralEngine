@@ -14,10 +14,12 @@ from neural_engine.application.brain_trust_inspector import (
     BrainTrustState,
 )
 from neural_engine.application.brain_trust_transition import (
+    BrainTrustMutationError,
     BrainTrustMutationNotPermittedError,
     BrainTrustNoRecoverableTransitionError,
     BrainTrustRecoveryError,
     BrainTrustRecoveryExecutionError,
+    BrainTrustStalePreimageError,
     BrainTrustTransitionExecutionError,
     BrainTrustUnsafeRecoveryError,
     BrainTrustUnsupportedRecoveryError,
@@ -31,6 +33,7 @@ from neural_engine.core.brain_trust import (
     TransitionOperationKind,
 )
 from neural_engine.core.paths import NeuralPaths
+from neural_engine.domain import EvolutionProposal
 from neural_engine.infrastructure.durability import atomic_replace_bytes
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
     JsonDecisionAcceptanceRepository,
@@ -140,6 +143,8 @@ class LocalBrainTrustTransitionCoordinator:
         try:
             self._persist_metadata(metadata.model_copy(update={"pending_transition": transition}))
 
+            if target.action is TargetAction.REPLACE:
+                self._verify_before(target_path, descriptor)
             target.publish()
 
             self._verify_target(target_path, descriptor)
@@ -165,15 +170,19 @@ class LocalBrainTrustTransitionCoordinator:
         except Exception as error:
             if isinstance(error, BrainTrustTransitionExecutionError):
                 raise
+            if isinstance(error, BrainTrustMutationError):
+                raise
             raise BrainTrustTransitionExecutionError(transition_id, error) from error
 
     def recover_pending_knowledge_create(self) -> UUID:
-        """Complete one valid supported single-record CREATE from N through N+1.
+        """Complete one valid bounded CREATE or proposal REPLACE suffix.
 
         The historical method name is retained for CLI compatibility. The
-        bounded recovery slice covers every supported canonical JSON store.
-        The marker contains no record payload. Therefore a missing target is
-        deliberately rejected; recovery only verifies and completes S2-S4.
+        CREATE recovery slice covers every canonical JSON store. The separate
+        REPLACE branch is limited to one ordinary evolution-proposal target.
+        The marker contains no record payload. Therefore a missing CREATE
+        target and an R1 proposal target are deliberately rejected; recovery
+        only verifies and completes forward S2-S4 suffixes.
         """
 
         try:
@@ -269,7 +278,7 @@ class LocalBrainTrustTransitionCoordinator:
             raise BrainTrustUnsupportedRecoveryError("exactly one target is required")
 
         descriptor = transition.targets[0]
-        if descriptor.action is not TargetAction.CREATE:
+        if descriptor.action is TargetAction.REMOVE:
             raise BrainTrustUnsupportedRecoveryError(
                 f"target action {descriptor.action.value} is outside this slice"
             )
@@ -296,10 +305,13 @@ class LocalBrainTrustTransitionCoordinator:
             raise BrainTrustUnsafeRecoveryError("binding is ahead of metadata")
 
         relative = PurePosixPath(descriptor.relative_path)
-        store = self._supported_create_store(relative)
+        if descriptor.action is TargetAction.CREATE:
+            store = self._supported_create_store(relative)
+        else:
+            store = self._supported_replace_store(relative)
         if store is None:
             raise BrainTrustUnsupportedRecoveryError(
-                "target path is not a supported single-record CREATE store"
+                "target path is not a supported single-record recovery store"
             )
         store_root, repository, store_name = store
         if relative.parent != PurePosixPath(store_root.relative_to(self._paths.BRAIN).as_posix()):
@@ -336,6 +348,10 @@ class LocalBrainTrustTransitionCoordinator:
         try:
             target_stat = target_path.lstat()
         except FileNotFoundError as error:
+            if descriptor.action is TargetAction.REPLACE:
+                raise BrainTrustUnsafeRecoveryError(
+                    "MISSING: replacement target bytes are absent"
+                ) from error
             raise BrainTrustUnsafeRecoveryError(
                 "S1_REJECTED_INSUFFICIENT_EVIDENCE: target bytes are absent and the marker "
                 "does not contain a record payload"
@@ -350,10 +366,28 @@ class LocalBrainTrustTransitionCoordinator:
             actual = target_path.read_bytes()
         except OSError as error:
             raise BrainTrustUnsafeRecoveryError(f"{store_name} target cannot be read") from error
-        if _sha256(actual) != descriptor.after_sha256:
+        actual_sha256 = _sha256(actual)
+        if descriptor.action is TargetAction.REPLACE:
+            self._validate_replacement_payload(actual, record_id, store_name)
+        if descriptor.action is TargetAction.REPLACE and actual_sha256 == descriptor.before_sha256:
+            if (
+                metadata.generation == transition.from_generation
+                and binding.accepted_generation == transition.from_generation
+            ):
+                raise BrainTrustUnsafeRecoveryError(
+                    "R1_REJECTED_INSUFFICIENT_EVIDENCE: exact replacement bytes cannot be "
+                    "reconstructed from the pending marker"
+                )
             raise BrainTrustUnsafeRecoveryError(
-                f"{store_name} target bytes do not match after hash"
+                "BEFORE: replacement target is before publication outside R1"
             )
+        if actual_sha256 != descriptor.after_sha256:
+            detail = (
+                "MISMATCH: target bytes do not match before or after hash"
+                if descriptor.action is TargetAction.REPLACE
+                else f"{store_name} target bytes do not match after hash"
+            )
+            raise BrainTrustUnsafeRecoveryError(detail)
         try:
             stored = repository.get_by_id(record_id)
         except Exception as error:
@@ -370,6 +404,29 @@ class LocalBrainTrustTransitionCoordinator:
             )
 
         return target_path, descriptor
+
+    def _supported_replace_store(
+        self,
+        relative: PurePosixPath,
+    ) -> tuple[Path, _CurrentStoreReader, str] | None:
+        root = self._paths.EVOLUTION_PROPOSALS
+        root_relative = PurePosixPath(root.relative_to(self._paths.BRAIN).as_posix())
+        if relative.parent != root_relative or relative.suffix != ".json":
+            return None
+        return root, JsonEvolutionProposalRepository(paths=self._paths), "EvolutionProposal"
+
+    @staticmethod
+    def _validate_replacement_payload(actual: bytes, record_id: UUID, store_name: str) -> None:
+        try:
+            proposal = EvolutionProposal.model_validate_json(actual)
+        except Exception as error:
+            raise BrainTrustUnsafeRecoveryError(
+                f"INVALID: {store_name} replacement payload is malformed"
+            ) from error
+        if proposal.id != record_id:
+            raise BrainTrustUnsafeRecoveryError(
+                f"IDENTITY_MISMATCH: {store_name} filename and payload IDs differ"
+            )
 
     def _supported_create_store(
         self,
@@ -571,6 +628,17 @@ class LocalBrainTrustTransitionCoordinator:
         if target.action is TargetAction.REMOVE and before_bytes is None:
             raise ValueError(f"Remove target is absent: {target.relative_path}")
 
+        before_sha256 = _sha256(before_bytes)
+        if target.action is TargetAction.REPLACE:
+            if target.before_sha256 is None:
+                raise ValueError("Replace target requires before bytes hash.")
+            if before_sha256 != target.before_sha256:
+                raise BrainTrustStalePreimageError(
+                    target.relative_path,
+                    target.before_sha256,
+                    before_sha256,
+                )
+
         if target.action is TargetAction.CREATE and target.after_bytes is None:
             raise ValueError("Create target requires after bytes.")
         if target.action is TargetAction.REPLACE and target.after_bytes is None:
@@ -579,9 +647,30 @@ class LocalBrainTrustTransitionCoordinator:
         return TargetDescriptor(
             relative_path=target.relative_path,
             action=target.action,
-            before_sha256=_sha256(before_bytes),
+            before_sha256=target.before_sha256
+            if target.action is TargetAction.REPLACE
+            else before_sha256,
             after_sha256=_sha256(target.after_bytes),
         )
+
+    def _verify_before(self, target_path: Path, descriptor: TargetDescriptor) -> None:
+        self._reject_symlink_components(target_path)
+        try:
+            target_stat = target_path.lstat()
+        except FileNotFoundError:
+            actual_sha256 = None
+        else:
+            if not stat.S_ISREG(target_stat.st_mode):
+                actual_sha256 = None
+            else:
+                actual_sha256 = _sha256(target_path.read_bytes())
+        expected_sha256 = descriptor.before_sha256
+        if expected_sha256 is None or actual_sha256 != expected_sha256:
+            raise BrainTrustStalePreimageError(
+                descriptor.relative_path,
+                expected_sha256 or "MISSING_EXPECTED_PREIMAGE",
+                actual_sha256,
+            )
 
     def _verify_target(self, target_path: Path, descriptor: TargetDescriptor) -> None:
         self._reject_symlink_components(target_path)

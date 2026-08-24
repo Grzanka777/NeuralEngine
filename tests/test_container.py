@@ -287,6 +287,7 @@ def test_container_wires_evolution_proposal_service_with_controlled_writer() -> 
 
     assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)
     assert service._controlled_writer is service._proposal_repository
+    assert isinstance(service._controlled_replace_writer, JsonEvolutionProposalRepository)
     assert service._mutation_coordinator is not None
 
 

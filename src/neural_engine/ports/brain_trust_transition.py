@@ -19,12 +19,23 @@ class ControlledMutationTarget:
     action: TargetAction
     after_bytes: bytes | None
     publish: Callable[[], None]
+    before_sha256: str | None = None
 
 
 class ControlledCreateWriter(Protocol[RecordT]):
     """Prepare one validated single-record CREATE without publishing it."""
 
     def controlled_create_target(self, record: RecordT) -> ControlledMutationTarget: ...
+
+
+class ControlledReplaceWriter(Protocol[RecordT]):
+    """Prepare one validated single-record REPLACE without publishing it."""
+
+    def controlled_replace_target(
+        self,
+        current: RecordT,
+        replacement: RecordT,
+    ) -> ControlledMutationTarget: ...
 
 
 class BrainTrustMutationCoordinator(Protocol):

@@ -1,10 +1,14 @@
 from uuid import UUID
 
+from neural_engine.application.brain_trust_transition import (
+    BrainTrustMutationPreparationError,
+)
 from neural_engine.application.playbook_run_service import PlaybookRunReader
 from neural_engine.domain import EvolutionProposal, EvolutionProposalStatus
 from neural_engine.ports.brain_trust_transition import (
     BrainTrustMutationCoordinator,
     ControlledCreateWriter,
+    ControlledReplaceWriter,
 )
 from neural_engine.ports.evolution_proposal_repository import (
     EvolutionProposalRepository,
@@ -93,17 +97,21 @@ class EvolutionProposalService:
         evaluation_repository: PlaybookEvaluationRepository,
         run_repository: PlaybookRunReader,
         controlled_writer: ControlledCreateWriter[EvolutionProposal] | None = None,
+        controlled_replace_writer: ControlledReplaceWriter[EvolutionProposal] | None = None,
         mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
-        if (controlled_writer is None) != (mutation_coordinator is None):
+        if (controlled_writer is None) != (mutation_coordinator is None) or (
+            controlled_replace_writer is not None and mutation_coordinator is None
+        ):
             raise ValueError(
-                "Controlled EvolutionProposal writer and coordinator must be configured together."
+                "Controlled EvolutionProposal writers and coordinator must be configured together."
             )
         self._proposal_repository = proposal_repository
         self._playbook_repository = playbook_repository
         self._evaluation_repository = evaluation_repository
         self._run_repository = run_repository
         self._controlled_writer = controlled_writer
+        self._controlled_replace_writer = controlled_replace_writer
         self._mutation_coordinator = mutation_coordinator
 
     def add(
@@ -151,13 +159,33 @@ class EvolutionProposalService:
         proposal_id: UUID,
         status: EvolutionProposalStatus,
     ) -> EvolutionProposal:
-        proposal = self._proposal_repository.get_by_id(proposal_id)
+        try:
+            proposal = self._proposal_repository.get_by_id(proposal_id)
+        except Exception as error:
+            if self._controlled_replace_writer is None:
+                raise
+            raise BrainTrustMutationPreparationError(
+                "current EvolutionProposal bytes cannot be validated"
+            ) from error
 
         if proposal is None:
             raise EvolutionProposalNotFoundError(proposal_id)
+        if self._controlled_replace_writer is not None and proposal.id != proposal_id:
+            raise BrainTrustMutationPreparationError(
+                "EvolutionProposal filename and payload IDs differ"
+            )
 
         updated = proposal.model_copy(update={"status": status})
-        self._proposal_repository.save(updated)
+        if self._controlled_replace_writer is None or self._mutation_coordinator is None:
+            self._proposal_repository.save(updated)
+            return updated
+
+        if proposal.status == status:
+            return updated
+
+        self._mutation_coordinator.execute(
+            self._controlled_replace_writer.controlled_replace_target(proposal, updated)
+        )
 
         return updated
 

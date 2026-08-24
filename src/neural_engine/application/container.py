@@ -252,6 +252,7 @@ class Container:
             JsonPlaybookEvaluationRepository(paths=paths),
             Container(paths).playbook_run_service(),
             controlled_writer=proposal_repository,
+            controlled_replace_writer=proposal_repository,
             mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
