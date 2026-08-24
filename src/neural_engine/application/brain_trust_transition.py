@@ -19,6 +19,28 @@ class BrainTrustMutationNotPermittedError(BrainTrustMutationError):
         super().__init__(f"Controlled Brain mutation is not permitted in state {state}: {detail}.")
 
 
+class BrainTrustStalePreimageError(BrainTrustMutationError):
+    """Raised when a REPLACE target no longer matches its recorded preimage."""
+
+    def __init__(self, relative_path: str, expected_sha256: str, actual_sha256: str | None) -> None:
+        self.relative_path = relative_path
+        self.expected_sha256 = expected_sha256
+        self.actual_sha256 = actual_sha256
+        actual = actual_sha256 or "MISSING"
+        super().__init__(
+            "Controlled Brain replacement rejected stale preimage for "
+            f"{relative_path}: expected {expected_sha256}, observed {actual}."
+        )
+
+
+class BrainTrustMutationPreparationError(BrainTrustMutationError):
+    """Raised when a controlled mutation target cannot be prepared safely."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"Controlled Brain mutation target is invalid: {detail}.")
+
+
 class BrainTrustTransitionExecutionError(BrainTrustMutationError):
     """Raised when a controlled transition fails and its state must be inspected."""
 

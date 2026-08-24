@@ -297,12 +297,24 @@ metadata, and binding evidence are verified. Recovery remains fail-closed for
 unsupported, malformed, foreign, stale, rollback, ahead, and other pending
 states, and never runs from status, doctor, startup, or ordinary retry.
 
-`WRITER_COVERAGE_BLOCKED` remains until `M12` proposal status (`REPLACE`) and
-`M23` development-evidence apply (multi-record) are resolved. The same
-bounded scope excludes REMOVE, multi-target operations,
-adoption, restore, clone, rebind, Model B, a central repository guard, a
-generic transaction/recovery engine, and real Brain writes. These exclusions
-are explicit scope boundaries, not unverified claims of CREATE parity.
+M12 now protects `neural proposal status` as one single-record `REPLACE` of
+the exact `evolution-proposals/<uuid>.json` target. The marker carries both
+the literal durable BEFORE hash and the exact replacement AFTER hash. The
+transition verifies BEFORE immediately after marker persistence, publishes
+the exact AFTER bytes, advances metadata, verifies, advances the binding,
+verifies, and clears the marker last. A stale preimage fails closed without
+overwriting the proposal or advancing metadata or binding.
+
+Bounded REPLACE recovery is limited to `ordinary_mutation`, exactly one
+`REPLACE`, and the `evolution-proposals` store. R1 is rejected when the target
+is still BEFORE because the marker contains hashes, not enough durable payload
+evidence to reconstruct AFTER; R2, R3, and R4 complete only the forward
+metadata/binding/marker suffix after exact AFTER and proposal identity checks.
+No generic REPLACE recovery exists. M23 development-evidence apply remains
+unprotected, and `WRITER_COVERAGE_BLOCKED` remains until that separate
+multi-record boundary is resolved. The bounded scope still excludes REMOVE,
+multi-target operations, adoption, restore, clone, rebind, Model B, a central
+repository guard, a generic transaction/recovery engine, and real Brain writes.
 
 Knowledge create-once and same-ID conflict semantics remain owned by
 `JsonKnowledgeRepository`.

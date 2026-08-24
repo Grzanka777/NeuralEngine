@@ -14,6 +14,7 @@ from neural_engine.application.brain_trust_inspector import BrainTrustState
 from neural_engine.application.brain_trust_transition import (
     BrainTrustMutationError,
     BrainTrustMutationNotPermittedError,
+    BrainTrustStalePreimageError,
 )
 from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
@@ -949,12 +950,14 @@ class FakeEvolutionProposalService:
         missing_evaluation_id: UUID | None = None,
         missing_run: tuple[UUID, UUID] | None = None,
         playbook_mismatch: tuple[UUID, UUID, UUID] | None = None,
+        mutation_error: BrainTrustMutationError | None = None,
     ) -> None:
         self.proposals = proposals
         self.missing_playbook_id = missing_playbook_id
         self.missing_evaluation_id = missing_evaluation_id
         self.missing_run = missing_run
         self.playbook_mismatch = playbook_mismatch
+        self.mutation_error = mutation_error
         self.add_calls: list[
             tuple[
                 UUID,
@@ -1067,6 +1070,9 @@ class FakeEvolutionProposalService:
         status: EvolutionProposalStatus,
     ) -> EvolutionProposal:
         self.set_status_calls.append((proposal_id, status))
+
+        if self.mutation_error is not None:
+            raise self.mutation_error
 
         for index, proposal in enumerate(self.proposals):
             if proposal.id == proposal_id:
@@ -5082,6 +5088,41 @@ def test_proposal_status_missing_proposal_returns_error(
     assert result.exit_code == 1
     assert service.set_status_calls == [(missing_id, EvolutionProposalStatus.ACCEPTED)]
     assert f"Evolution proposal not found: {missing_id}" in result.output
+
+
+def test_proposal_status_renders_controlled_stale_preimage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = EvolutionProposal(
+        playbook_id=UUID("34343434-3434-4343-8434-343434343434"),
+        evaluation_ids=[UUID("45454545-4545-4545-8454-454545454545")],
+        summary="Stale status proposal",
+        rationale="Manual status decision",
+        proposed_changes=["Change"],
+        expected_benefits=["Benefit"],
+    )
+    service = FakeEvolutionProposalService(
+        [proposal],
+        mutation_error=BrainTrustStalePreimageError(
+            f"evolution-proposals/{proposal.id}.json",
+            "a" * 64,
+            "b" * 64,
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "container",
+        FakeContainer(evolution_proposal_service=service),
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["proposal", "status", str(proposal.id), "--status", "accepted"],
+    )
+
+    assert result.exit_code == 1
+    assert "Controlled Brain replacement rejected stale preimage" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_proposal_status_invalid_status_returns_usage_error_without_calling_service(

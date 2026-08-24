@@ -183,9 +183,11 @@ This is not backup, migration, versioning, historical reconstruction,
 cryptographic tamper evidence, or protection from direct filesystem mutation.
 
 Other UUID-addressed repositories do not inherit this contract by analogy.
-EvolutionProposal deliberately supports replacing its persisted status through
-the explicit status use case. NeuralEngine 1.0 does not promise universal
-create-once persistence or cross-process uniqueness.
+EvolutionProposal status replacement is a separate protected M12 use case: it
+publishes one exact JSON target with literal BEFORE/AFTER hashes and bounded
+forward-only recovery. M23 development-evidence apply remains outside the
+Brain Trust boundary. NeuralEngine 1.0 does not promise universal create-once
+persistence or cross-process uniqueness.
 
 ## Explicit 1.0 Non-Goals
 
