@@ -14,9 +14,13 @@ The protected CREATE set covers observations, Experiences, playbooks,
 evaluations, proposals, revision activation/application records, and the
 Decision, acceptance, action, outcome, and review records. Recovery is bounded
 to the canonical JSON stores and valid S2-S4 suffixes; S1, replacement/status
-writers, multi-record apply, and adoption/restore/clone/rebind operations remain
-outside this boundary. Do not broaden this convention into a generic
-transaction or repository guard.
+writers, grouped multi-record transitions, and adoption/restore/clone/rebind
+operations remain outside this boundary. M23 development-evidence apply is
+supported as independently controlled per-record generations: it composes the
+protected component services in order, accepts a durable valid prefix, and
+relies on each service's existing idempotency/conflict semantics for exact
+retry. It is not a transaction and does not add a group recovery contract.
+Do not broaden this convention into a generic transaction or repository guard.
 
 ## M12 proposal status REPLACE
 
@@ -28,5 +32,6 @@ stale-preimage check immediately before publication. Recovery is bounded to
 this store, one ordinary single-target REPLACE, and forward R2/R3/R4 suffixes;
 R1 is rejected when AFTER cannot be reconstructed from authoritative evidence.
 There is no generic REPLACE recovery, no REMOVE, no adoption/restore/clone/
-rebind, and no M23 development-evidence protection. `WRITER_COVERAGE_BLOCKED`
-remains until M23 is separately resolved.
+rebind, and no grouped M23 recovery. M23's supported per-record path is
+covered by the existing single-record coordinator; no central repository guard
+is introduced.

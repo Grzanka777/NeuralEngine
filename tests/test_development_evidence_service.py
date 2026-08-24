@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from neural_engine.application.brain_trust_inspector import BrainTrustState
+from neural_engine.application.brain_trust_transition import BrainTrustMutationNotPermittedError
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_action_service import DecisionActionService
 from neural_engine.application.decision_outcome_service import DecisionOutcomeService
@@ -16,6 +18,7 @@ from neural_engine.application.development_evidence_service import (
     DevelopmentEvidenceRecordInput,
     DevelopmentEvidenceRequest,
     DevelopmentEvidenceService,
+    DevelopmentEvidenceTrustError,
     DevelopmentEvidenceUnauthorizedError,
     ValidationTreeStrength,
 )
@@ -303,6 +306,28 @@ def test_apply_requires_explicit_authority_and_writes_nothing(tmp_path: Path) ->
 
     with pytest.raises(DevelopmentEvidenceUnauthorizedError, match="Explicit"):
         service.apply(candidate, authority_confirmed=False)
+
+    assert not list(tmp_path.iterdir())
+
+
+def test_apply_converts_component_brain_trust_failure_to_controlled_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _ = _service(tmp_path)
+    candidate = service.preview(_request(), _records())
+    error = BrainTrustMutationNotPermittedError(
+        BrainTrustState.UNADOPTED,
+        ("fixture trust rejection",),
+    )
+
+    def reject(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr(service._decision_service, "add", reject)
+
+    with pytest.raises(DevelopmentEvidenceTrustError, match="fixture trust rejection"):
+        service.apply(candidate, authority_confirmed=True)
 
     assert not list(tmp_path.iterdir())
 

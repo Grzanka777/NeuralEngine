@@ -6,6 +6,7 @@ from uuid import UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from neural_engine.application.brain_trust_transition import BrainTrustMutationError
 from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceIdempotencyConflictError,
     DecisionAcceptanceService,
@@ -72,6 +73,10 @@ class DevelopmentEvidenceUnauthorizedError(DevelopmentEvidenceError):
 
 class DevelopmentEvidenceConflictError(DevelopmentEvidenceError):
     """A stale candidate or conflicting durable replay was detected."""
+
+
+class DevelopmentEvidenceTrustError(DevelopmentEvidenceError):
+    """A component publication was rejected or failed under Brain Trust."""
 
 
 class ValidationTreeStrength(StrEnum):
@@ -291,8 +296,10 @@ class DevelopmentEvidenceService:
             ),
             replay_identity=replay_identity,
             partial_apply_semantics=(
-                "Writes are not transactional; an exact rerun resumes through existing "
-                "record-service idempotency."
+                "Each record is one independently controlled generation; writes are not "
+                "transactional. An exact rerun resumes through record-service idempotency, "
+                "while a pending Brain Trust transition remains fail-closed for explicit "
+                "recovery."
             ),
         )
 
@@ -380,6 +387,8 @@ class DevelopmentEvidenceService:
                 tags=list(records.tags),
             )
             experience = self._promote(records.promotion, review, key)
+        except BrainTrustMutationError as error:
+            raise DevelopmentEvidenceTrustError(str(error)) from error
         except (
             DecisionIdempotencyConflictError,
             DecisionAcceptanceIdempotencyConflictError,
