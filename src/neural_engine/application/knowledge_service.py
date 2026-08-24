@@ -4,7 +4,17 @@ from typing import Protocol
 from uuid import UUID
 
 from neural_engine.domain import Experience, Knowledge, KnowledgeConfidence
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledMutationTarget,
+)
 from neural_engine.ports.knowledge_repository import KnowledgeRepository
+
+
+class ControlledKnowledgeWriter(Protocol):
+    """Prepare a Knowledge create without publishing it."""
+
+    def controlled_create_target(self, knowledge: Knowledge) -> ControlledMutationTarget: ...
 
 
 class ExperienceReader(Protocol):
@@ -35,9 +45,17 @@ class KnowledgeService:
         self,
         knowledge_repository: KnowledgeRepository,
         experience_reader: ExperienceReader,
+        controlled_writer: ControlledKnowledgeWriter | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled Knowledge writer and coordinator must be configured together."
+            )
         self._knowledge_repository = knowledge_repository
         self._experience_reader = experience_reader
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -57,7 +75,12 @@ class KnowledgeService:
             tags=tags or [],
         )
 
-        self._knowledge_repository.save(knowledge)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(knowledge)
+            )
+        else:
+            self._knowledge_repository.save(knowledge)
 
         return knowledge
 

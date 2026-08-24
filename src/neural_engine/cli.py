@@ -11,6 +11,7 @@ from rich.table import Table
 
 from neural_engine import APP_NAME, __version__
 from neural_engine.application.brain_trust_inspector import BrainTrustInspection
+from neural_engine.application.brain_trust_transition import BrainTrustMutationError
 from neural_engine.application.container import Container
 from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
@@ -1371,6 +1372,9 @@ def add_knowledge(
         _exit_experience_not_found(error)
     except (DecisionReviewError, DecisionReviewPromotionError) as error:
         _exit_decision_review_integrity_error(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
     except KnowledgeRepositoryError as error:
         _exit_knowledge_repository_error(error)
 

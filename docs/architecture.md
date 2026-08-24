@@ -252,6 +252,26 @@ decisions. The existing Playbook, Run, Evaluation, and Proposal records provide
 durable Playbook-scoped use and feedback; they do not provide
 Knowledge-specific causal attribution or demonstrated improvement.
 
+## Controlled Brain Mutation Boundary
+
+`neural knowledge add` is the first repository-backed mutation routed through
+the Brain Trust transition coordinator. The coordinator accepts only a
+`TRUSTED_CURRENT` Brain and performs one ordinary create using the frozen
+ordering: durable pending marker, exact Knowledge bytes, generation `N+1`
+metadata, bounded target and metadata verification, external binding `N+1`,
+and marker cleanup last. A pending transition therefore remains fail-closed;
+the next ordinary mutation does not retry or repair it implicitly.
+
+The protected target is one Knowledge JSON file under the Brain. The marker
+stores only the normalized relative path, action, and exact before/after
+SHA-256 evidence through the existing `TargetDescriptor` contract; it does not
+duplicate the record payload. Knowledge create-once and same-ID conflict
+semantics remain owned by `JsonKnowledgeRepository`.
+
+Writer coverage is partial. `knowledge add` is protected by this boundary;
+`knowledge from-experience`, other repository writers, adoption, restore,
+rebind, clone, and recovery are not yet migrated.
+
 `neural knowledge playbooks UUID` delegates to
 `PlaybookService.list_for_knowledge()`. The service verifies the knowledge item
 exists through the `KnowledgeRepository` port, loads playbooks through the
