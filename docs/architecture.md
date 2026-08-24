@@ -270,7 +270,17 @@ semantics remain owned by `JsonKnowledgeRepository`.
 
 Writer coverage is partial. `knowledge add` is protected by this boundary;
 `knowledge from-experience`, other repository writers, adoption, restore,
-rebind, clone, and recovery are not yet migrated.
+rebind, clone, and other recovery are not yet migrated. The explicit
+`neural brain recover` command is a bounded exception: it accepts only one
+valid pending ordinary `Knowledge CREATE` marker and completes suffixes S2,
+S3, or S4. It verifies the exact existing target before every durable step,
+advances metadata before the external binding, and clears the marker last.
+S1 is deliberately rejected with `S1_REJECTED_INSUFFICIENT_EVIDENCE`: the
+marker stores the target hash but not the Knowledge payload, so exact target
+bytes cannot be reconstructed after the initial publication step fails.
+Recovery is never called by `status`, `doctor`, startup, or ordinary retry;
+unsupported, malformed, foreign, stale, rollback, ahead, and other pending
+states fail closed without writes.
 
 `neural knowledge playbooks UUID` delegates to
 `PlaybookService.list_for_knowledge()`. The service verifies the knowledge item

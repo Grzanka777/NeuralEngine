@@ -78,6 +78,7 @@ from neural_engine.infrastructure.local_development_evidence_source import (
 )
 from neural_engine.infrastructure.local_neural_doctor_probe import LocalNeuralDoctorProbe
 from neural_engine.infrastructure.local_planner_context_readers import LocalPlannerContextReaders
+from neural_engine.ports.brain_trust_transition import BrainTrustRecoveryCoordinator
 
 
 class Container:
@@ -106,6 +107,9 @@ class Container:
     def brain_trust_transition_coordinator(self) -> LocalBrainTrustTransitionCoordinator:
         paths = self._resolved_paths()
         return LocalBrainTrustTransitionCoordinator(paths, self.brain_trust_inspector(paths))
+
+    def brain_trust_recovery_coordinator(self) -> BrainTrustRecoveryCoordinator:
+        return self.brain_trust_transition_coordinator()
 
     def development_evidence_service(self) -> DevelopmentEvidenceService:
         paths = self._resolved_paths()

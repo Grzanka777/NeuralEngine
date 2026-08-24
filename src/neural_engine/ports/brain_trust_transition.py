@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
 
 from neural_engine.core.brain_trust import TargetAction
 
@@ -23,6 +24,13 @@ class BrainTrustMutationCoordinator(Protocol):
 
     def execute(self, target: ControlledMutationTarget) -> None:
         """Execute one ordinary mutation using the frozen trust ordering."""
+
+
+class BrainTrustRecoveryCoordinator(Protocol):
+    """Application-facing port for the explicit bounded recovery command."""
+
+    def recover_pending_knowledge_create(self) -> UUID:
+        """Complete only a valid pending Knowledge CREATE suffix."""
 
 
 WriteBytes = Callable[[Path, bytes], None]

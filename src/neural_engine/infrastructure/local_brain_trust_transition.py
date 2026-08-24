@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -13,7 +14,12 @@ from neural_engine.application.brain_trust_inspector import (
 )
 from neural_engine.application.brain_trust_transition import (
     BrainTrustMutationNotPermittedError,
+    BrainTrustNoRecoverableTransitionError,
+    BrainTrustRecoveryError,
+    BrainTrustRecoveryExecutionError,
     BrainTrustTransitionExecutionError,
+    BrainTrustUnsafeRecoveryError,
+    BrainTrustUnsupportedRecoveryError,
 )
 from neural_engine.core.brain_trust import (
     BrainMetadata,
@@ -25,6 +31,7 @@ from neural_engine.core.brain_trust import (
 )
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.infrastructure.durability import atomic_replace_bytes
+from neural_engine.infrastructure.json_knowledge_repository import JsonKnowledgeRepository
 from neural_engine.ports.brain_trust_transition import (
     ControlledMutationTarget,
     WriteBytes,
@@ -36,6 +43,10 @@ class TransitionPersistence:
     """Durability dependency used by the coordinator and failure-injection tests."""
 
     write_bytes: WriteBytes = atomic_replace_bytes
+
+
+class _UnsafeTargetPathError(ValueError):
+    """A controlled target traverses a symbolic-link component."""
 
 
 class LocalBrainTrustTransitionCoordinator:
@@ -111,11 +122,55 @@ class LocalBrainTrustTransitionCoordinator:
             self._verify_binding(next_binding)
 
             self._persist_metadata(next_metadata.model_copy(update={"pending_transition": None}))
-            self._verify_final_state(transition)
+            self._verify_final_state(target_path, descriptor, transition)
         except Exception as error:
             if isinstance(error, BrainTrustTransitionExecutionError):
                 raise
             raise BrainTrustTransitionExecutionError(transition_id, error) from error
+
+    def recover_pending_knowledge_create(self) -> UUID:
+        """Complete a valid pending Knowledge CREATE from metadata N through N+1.
+
+        The marker contains no Knowledge payload.  Therefore a missing target is
+        deliberately rejected; recovery only verifies and completes S2-S4.
+        """
+
+        try:
+            metadata = self._read_metadata()
+        except Exception as error:
+            raise BrainTrustUnsafeRecoveryError("Brain metadata cannot be parsed") from error
+
+        transition = metadata.pending_transition
+        if transition is None:
+            raise BrainTrustNoRecoverableTransitionError
+
+        try:
+            binding = self._read_binding()
+        except Exception as error:
+            raise BrainTrustUnsafeRecoveryError(
+                "external trust binding cannot be parsed"
+            ) from error
+
+        target_path, descriptor = self._validate_recovery_evidence(
+            metadata,
+            binding,
+            transition,
+        )
+
+        try:
+            self._recover_suffix(
+                metadata,
+                binding,
+                transition,
+                target_path,
+                descriptor,
+            )
+        except BrainTrustRecoveryError:
+            raise
+        except Exception as error:
+            raise BrainTrustRecoveryExecutionError(transition.transition_id, error) from error
+
+        return transition.transition_id
 
     @staticmethod
     def _require_trusted_current(inspection: BrainTrustInspection) -> None:
@@ -142,7 +197,13 @@ class LocalBrainTrustTransitionCoordinator:
         if actual != expected:
             raise ValueError("Persisted external binding does not match the transition target.")
 
-    def _verify_final_state(self, transition: PendingTransition) -> None:
+    def _verify_final_state(
+        self,
+        target_path: Path,
+        descriptor: TargetDescriptor,
+        transition: PendingTransition,
+    ) -> None:
+        self._verify_target(target_path, descriptor)
         metadata = self._read_metadata()
         if (
             metadata.brain_id != transition.brain_id
@@ -152,6 +213,190 @@ class LocalBrainTrustTransitionCoordinator:
             raise ValueError("Final Brain metadata does not describe a completed transition.")
         inspection = self._inspector.inspect_paths(self._paths)
         self._require_trusted_current(inspection)
+
+    def _validate_recovery_evidence(
+        self,
+        metadata: BrainMetadata,
+        binding: ExternalTrustBinding,
+        transition: PendingTransition,
+    ) -> tuple[Path, TargetDescriptor]:
+        if transition.operation_kind is not TransitionOperationKind.ORDINARY_MUTATION:
+            raise BrainTrustUnsupportedRecoveryError(
+                f"operation kind {transition.operation_kind.value} is outside this slice"
+            )
+        if len(transition.targets) != 1:
+            raise BrainTrustUnsupportedRecoveryError("exactly one target is required")
+
+        descriptor = transition.targets[0]
+        if descriptor.action is not TargetAction.CREATE:
+            raise BrainTrustUnsupportedRecoveryError(
+                f"target action {descriptor.action.value} is outside this slice"
+            )
+
+        if transition.brain_id != metadata.brain_id:
+            raise BrainTrustUnsafeRecoveryError("pending transition identity differs from metadata")
+        if binding.expected_brain_id != metadata.brain_id:
+            raise BrainTrustUnsafeRecoveryError("binding identity differs from metadata")
+        if metadata.generation not in {
+            transition.from_generation,
+            transition.to_generation,
+        }:
+            raise BrainTrustUnsafeRecoveryError(
+                "metadata generation is outside the pending transition suffix"
+            )
+        if binding.accepted_generation not in {
+            transition.from_generation,
+            transition.to_generation,
+        }:
+            raise BrainTrustUnsafeRecoveryError(
+                "binding generation is outside the pending transition suffix"
+            )
+        if binding.accepted_generation > metadata.generation:
+            raise BrainTrustUnsafeRecoveryError("binding is ahead of metadata")
+
+        relative = PurePosixPath(descriptor.relative_path)
+        knowledge_root = PurePosixPath(
+            self._paths.KNOWLEDGE.relative_to(self._paths.BRAIN).as_posix()
+        )
+        if relative.parent != knowledge_root or relative.suffix != ".json":
+            raise BrainTrustUnsupportedRecoveryError(
+                "target path is not the current Knowledge JSON shape"
+            )
+        try:
+            knowledge_id = UUID(relative.stem)
+        except ValueError as error:
+            raise BrainTrustUnsupportedRecoveryError(
+                "Knowledge target filename is not a UUID"
+            ) from error
+        if relative.name != f"{knowledge_id}.json":
+            raise BrainTrustUnsupportedRecoveryError("Knowledge target filename is not normalized")
+
+        try:
+            target_path = self._target_path(descriptor.relative_path)
+        except _UnsafeTargetPathError as error:
+            raise BrainTrustUnsafeRecoveryError(
+                "Knowledge target path traverses a symbolic link"
+            ) from error
+        except Exception as error:
+            raise BrainTrustUnsupportedRecoveryError(
+                "target path cannot be safely resolved below Brain"
+            ) from error
+        expected_path = self._paths.KNOWLEDGE / f"{knowledge_id}.json"
+        if target_path != expected_path:
+            raise BrainTrustUnsupportedRecoveryError(
+                "target path does not match the current Knowledge store"
+            )
+
+        try:
+            target_stat = target_path.lstat()
+        except FileNotFoundError as error:
+            raise BrainTrustUnsafeRecoveryError(
+                "S1_REJECTED_INSUFFICIENT_EVIDENCE: target bytes are absent and the marker "
+                "does not contain a Knowledge payload"
+            ) from error
+        except OSError as error:
+            raise BrainTrustUnsafeRecoveryError("Knowledge target cannot be inspected") from error
+        if not stat.S_ISREG(target_stat.st_mode):
+            raise BrainTrustUnsafeRecoveryError("Knowledge target is not a regular file")
+        try:
+            actual = target_path.read_bytes()
+        except OSError as error:
+            raise BrainTrustUnsafeRecoveryError("Knowledge target cannot be read") from error
+        if _sha256(actual) != descriptor.after_sha256:
+            raise BrainTrustUnsafeRecoveryError("Knowledge target bytes do not match after hash")
+        try:
+            stored = JsonKnowledgeRepository(paths=self._paths).get_by_id(knowledge_id)
+        except Exception as error:
+            raise BrainTrustUnsafeRecoveryError(
+                "Knowledge target is not valid current-store data"
+            ) from error
+        if stored is None:
+            raise BrainTrustUnsafeRecoveryError(
+                "Knowledge target is not present in the current store"
+            )
+
+        return target_path, descriptor
+
+    def _recover_suffix(
+        self,
+        metadata: BrainMetadata,
+        binding: ExternalTrustBinding,
+        transition: PendingTransition,
+        target_path: Path,
+        descriptor: TargetDescriptor,
+    ) -> None:
+        next_metadata = metadata.model_copy(
+            update={
+                "generation": transition.to_generation,
+                "pending_transition": transition,
+            }
+        )
+        if metadata.generation == transition.from_generation:
+            self._verify_recovery_checkpoint(
+                target_path,
+                descriptor,
+                transition,
+                metadata_generation=transition.from_generation,
+                binding_generation=transition.from_generation,
+            )
+            self._persist_metadata(next_metadata)
+            self._verify_recovery_checkpoint(
+                target_path,
+                descriptor,
+                transition,
+                metadata_generation=transition.to_generation,
+                binding_generation=transition.from_generation,
+            )
+            if self._post_write_verifier is not None:
+                self._post_write_verifier()
+
+        if binding.accepted_generation == transition.from_generation:
+            self._verify_recovery_checkpoint(
+                target_path,
+                descriptor,
+                transition,
+                metadata_generation=transition.to_generation,
+                binding_generation=transition.from_generation,
+            )
+            next_binding = binding.model_copy(
+                update={"accepted_generation": transition.to_generation}
+            )
+            self._persist_binding(next_binding)
+            self._verify_binding(next_binding)
+
+        self._verify_recovery_checkpoint(
+            target_path,
+            descriptor,
+            transition,
+            metadata_generation=transition.to_generation,
+            binding_generation=transition.to_generation,
+        )
+        self._persist_metadata(next_metadata.model_copy(update={"pending_transition": None}))
+        self._verify_final_state(target_path, descriptor, transition)
+
+    def _verify_recovery_checkpoint(
+        self,
+        target_path: Path,
+        descriptor: TargetDescriptor,
+        transition: PendingTransition,
+        *,
+        metadata_generation: int,
+        binding_generation: int,
+    ) -> None:
+        self._verify_target(target_path, descriptor)
+        metadata = self._read_metadata()
+        binding = self._read_binding()
+        if (
+            metadata.brain_id != transition.brain_id
+            or metadata.generation != metadata_generation
+            or metadata.pending_transition != transition
+        ):
+            raise ValueError("Persisted metadata does not match the recovery checkpoint.")
+        if (
+            binding.expected_brain_id != transition.brain_id
+            or binding.accepted_generation != binding_generation
+        ):
+            raise ValueError("Persisted binding does not match the recovery checkpoint.")
 
     def _verify_transition_state(
         self,
@@ -174,8 +419,13 @@ class LocalBrainTrustTransitionCoordinator:
         target_path: Path,
     ) -> TargetDescriptor:
         before_bytes: bytes | None
-        if target_path.exists():
-            if not target_path.is_file():
+        self._reject_symlink_components(target_path)
+        try:
+            target_stat = target_path.lstat()
+        except FileNotFoundError:
+            target_stat = None
+        if target_stat is not None:
+            if not stat.S_ISREG(target_stat.st_mode):
                 raise ValueError(f"Controlled target is not a regular file: {target.relative_path}")
             before_bytes = target_path.read_bytes()
         else:
@@ -201,13 +451,17 @@ class LocalBrainTrustTransitionCoordinator:
         )
 
     def _verify_target(self, target_path: Path, descriptor: TargetDescriptor) -> None:
-        exists = target_path.exists()
+        self._reject_symlink_components(target_path)
+        try:
+            target_stat = target_path.lstat()
+        except FileNotFoundError:
+            target_stat = None
         if descriptor.action is TargetAction.REMOVE:
-            if exists:
+            if target_stat is not None:
                 raise ValueError(f"Removed target still exists: {descriptor.relative_path}")
             return
 
-        if not exists or not target_path.is_file():
+        if target_stat is None or not stat.S_ISREG(target_stat.st_mode):
             raise ValueError(f"Target is absent or not a regular file: {descriptor.relative_path}")
         actual = target_path.read_bytes()
         if _sha256(actual) != descriptor.after_sha256:
@@ -221,11 +475,24 @@ class LocalBrainTrustTransitionCoordinator:
         )
         relative = PurePosixPath(descriptor.relative_path)
         path = self._paths.BRAIN.joinpath(*relative.parts)
+        self._reject_symlink_components(path)
         brain_root = self._paths.BRAIN.resolve()
         resolved = path.resolve(strict=False)
         if resolved != brain_root and brain_root not in resolved.parents:
             raise ValueError("Controlled target must remain below the Brain directory.")
         return path
+
+    def _reject_symlink_components(self, target_path: Path) -> None:
+        relative = target_path.relative_to(self._paths.BRAIN)
+        current = self._paths.BRAIN
+        for component in relative.parts:
+            current /= component
+            try:
+                mode = current.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(mode):
+                raise _UnsafeTargetPathError("Controlled target must not traverse symbolic links.")
 
 
 def _model_bytes(model: BrainMetadata | ExternalTrustBinding) -> bytes:
