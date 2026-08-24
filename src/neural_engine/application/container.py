@@ -131,11 +131,14 @@ class Container:
 
     def decision_action_service(self) -> DecisionActionService:
         paths = self._resolved_paths()
+        action_repository = JsonDecisionActionRepository(paths=paths)
         return DecisionActionService(
-            JsonDecisionActionRepository(paths=paths),
+            action_repository,
             JsonDecisionRepository(paths=paths),
             JsonDecisionAcceptanceRepository(paths=paths),
             Container(paths).playbook_run_service(),
+            controlled_writer=action_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def decision_lifecycle_service(self) -> DecisionLifecycleService:
@@ -149,39 +152,54 @@ class Container:
 
     def decision_outcome_service(self) -> DecisionOutcomeService:
         paths = self._resolved_paths()
+        outcome_repository = JsonDecisionOutcomeRepository(paths=paths)
         return DecisionOutcomeService(
-            JsonDecisionOutcomeRepository(paths=paths),
+            outcome_repository,
             JsonDecisionRepository(paths=paths),
             JsonDecisionAcceptanceRepository(paths=paths),
             JsonDecisionActionRepository(paths=paths),
+            controlled_writer=outcome_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def decision_acceptance_service(self) -> DecisionAcceptanceService:
         paths = self._resolved_paths()
+        acceptance_repository = JsonDecisionAcceptanceRepository(paths=paths)
         return DecisionAcceptanceService(
-            JsonDecisionAcceptanceRepository(paths=paths),
+            acceptance_repository,
             JsonDecisionRepository(paths=paths),
+            controlled_writer=acceptance_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def decision_service(self) -> DecisionService:
         paths = self._resolved_paths()
+        decision_repository = JsonDecisionRepository(paths=paths)
         return DecisionService(
-            JsonDecisionRepository(paths=paths),
+            decision_repository,
             JsonObservationRepository(paths=paths),
+            controlled_writer=decision_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def observation_service(self) -> ObservationService:
         paths = self._resolved_paths()
+        observation_repository = JsonObservationRepository(paths=paths)
         return ObservationService(
-            JsonObservationRepository(paths=paths),
+            observation_repository,
+            controlled_writer=observation_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def experience_service(self) -> ExperienceService:
         paths = self._resolved_paths()
+        experience_repository = JsonExperienceRepository(paths=paths)
         return ExperienceService(
-            JsonExperienceRepository(paths=paths),
+            experience_repository,
             JsonObservationRepository(paths=paths),
             Container(paths).decision_review_service(),
+            controlled_writer=experience_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def knowledge_service(self) -> KnowledgeService:
@@ -196,9 +214,12 @@ class Container:
 
     def playbook_service(self) -> PlaybookService:
         paths = self._resolved_paths()
+        playbook_repository = JsonPlaybookRepository(paths=paths)
         return PlaybookService(
-            JsonPlaybookRepository(paths=paths),
+            playbook_repository,
             JsonKnowledgeRepository(paths=paths),
+            controlled_writer=playbook_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def playbook_run_service(self) -> PlaybookRunService:
@@ -214,18 +235,24 @@ class Container:
 
     def playbook_evaluation_service(self) -> PlaybookEvaluationService:
         paths = self._resolved_paths()
+        evaluation_repository = JsonPlaybookEvaluationRepository(paths=paths)
         return PlaybookEvaluationService(
-            JsonPlaybookEvaluationRepository(paths=paths),
+            evaluation_repository,
             Container(paths).playbook_run_service(),
+            controlled_writer=evaluation_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def evolution_proposal_service(self) -> EvolutionProposalService:
         paths = self._resolved_paths()
+        proposal_repository = JsonEvolutionProposalRepository(paths=paths)
         return EvolutionProposalService(
-            JsonEvolutionProposalRepository(paths=paths),
+            proposal_repository,
             JsonPlaybookRepository(paths=paths),
             JsonPlaybookEvaluationRepository(paths=paths),
             Container(paths).playbook_run_service(),
+            controlled_writer=proposal_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def playbook_revision_service(self) -> PlaybookRevisionService:
@@ -242,22 +269,28 @@ class Container:
 
     def playbook_revision_activation_service(self) -> PlaybookRevisionActivationService:
         paths = self._resolved_paths()
+        activation_repository = JsonPlaybookRevisionActivationRepository(paths=paths)
         return PlaybookRevisionActivationService(
-            JsonPlaybookRevisionActivationRepository(paths=paths),
+            activation_repository,
             JsonPlaybookRevisionRepository(paths=paths),
             JsonPlaybookRepository(paths=paths),
             JsonEvolutionProposalRepository(paths=paths),
+            controlled_writer=activation_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def playbook_revision_application_service(self) -> PlaybookRevisionApplicationService:
         paths = self._resolved_paths()
+        application_repository = JsonPlaybookRevisionApplicationRepository(paths=paths)
         return PlaybookRevisionApplicationService(
-            JsonPlaybookRevisionApplicationRepository(paths=paths),
+            application_repository,
             JsonPlaybookRevisionRepository(paths=paths),
             JsonPlaybookRepository(paths=paths),
             JsonEvolutionProposalRepository(paths=paths),
             JsonPlaybookRevisionActivationRepository(paths=paths),
             Container(paths).playbook_revision_activation_service(),
+            controlled_writer=application_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def playbook_revision_activation_repository(
@@ -287,9 +320,12 @@ class Container:
 
     def decision_review_service(self) -> DecisionReviewService:
         paths = self._resolved_paths()
+        review_repository = JsonDecisionReviewRepository(paths=paths)
         return DecisionReviewService(
-            JsonDecisionReviewRepository(paths=paths),
+            review_repository,
             JsonDecisionRepository(paths=paths),
             JsonDecisionAcceptanceRepository(paths=paths),
             JsonDecisionOutcomeRepository(paths=paths),
+            controlled_writer=review_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )

@@ -5,6 +5,10 @@ from neural_engine.domain import (
     PlaybookRevisionActivation,
     PlaybookRevisionActivationDecision,
 )
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.evolution_proposal_repository import (
     EvolutionProposalRepository,
 )
@@ -136,11 +140,20 @@ class PlaybookRevisionActivationService:
         revision_repository: PlaybookRevisionRepository,
         playbook_repository: PlaybookRepository,
         proposal_repository: EvolutionProposalRepository,
+        controlled_writer: ControlledCreateWriter[PlaybookRevisionActivation] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled PlaybookRevisionActivation writer and coordinator must be "
+                "configured together."
+            )
         self._activation_repository = activation_repository
         self._revision_repository = revision_repository
         self._playbook_repository = playbook_repository
         self._proposal_repository = proposal_repository
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -174,7 +187,12 @@ class PlaybookRevisionActivationService:
             tags=tags or [],
         )
 
-        self._activation_repository.save(activation)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(activation)
+            )
+        else:
+            self._activation_repository.save(activation)
 
         return activation
 

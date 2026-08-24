@@ -3,6 +3,10 @@ from uuid import UUID
 
 from neural_engine.application.playbook_run_service import PlaybookRunReader
 from neural_engine.domain import DecisionAction, EvidenceReference
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.decision_acceptance_repository import (
     DecisionAcceptanceRepository,
 )
@@ -73,11 +77,19 @@ class DecisionActionService:
         decision_repository: DecisionRepository,
         acceptance_repository: DecisionAcceptanceRepository,
         playbook_run_repository: PlaybookRunReader,
+        controlled_writer: ControlledCreateWriter[DecisionAction] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled DecisionAction writer and coordinator must be configured together."
+            )
         self._action_repository = action_repository
         self._decision_repository = decision_repository
         self._acceptance_repository = acceptance_repository
         self._playbook_run_repository = playbook_run_repository
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -137,7 +149,12 @@ class DecisionActionService:
                 idempotency_key=candidate.idempotency_key,
             )
 
-        self._action_repository.save(candidate)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(candidate)
+            )
+        else:
+            self._action_repository.save(candidate)
         return candidate
 
     def list_for_decision(self, decision_id: UUID) -> list[DecisionAction]:

@@ -2,6 +2,10 @@ from uuid import UUID
 
 from neural_engine.application.playbook_run_service import PlaybookRunReader
 from neural_engine.domain import EvolutionProposal, EvolutionProposalStatus
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.evolution_proposal_repository import (
     EvolutionProposalRepository,
 )
@@ -88,11 +92,19 @@ class EvolutionProposalService:
         playbook_repository: PlaybookRepository,
         evaluation_repository: PlaybookEvaluationRepository,
         run_repository: PlaybookRunReader,
+        controlled_writer: ControlledCreateWriter[EvolutionProposal] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled EvolutionProposal writer and coordinator must be configured together."
+            )
         self._proposal_repository = proposal_repository
         self._playbook_repository = playbook_repository
         self._evaluation_repository = evaluation_repository
         self._run_repository = run_repository
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -122,7 +134,12 @@ class EvolutionProposalService:
             tags=tags or [],
         )
 
-        self._proposal_repository.save(proposal)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(proposal)
+            )
+        else:
+            self._proposal_repository.save(proposal)
 
         return proposal
 

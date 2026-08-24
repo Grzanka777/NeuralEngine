@@ -8,6 +8,10 @@ from neural_engine.domain import (
     DecisionReviewConfidence,
     EvidenceReference,
 )
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.decision_acceptance_repository import (
     DecisionAcceptanceRepository,
 )
@@ -123,11 +127,19 @@ class DecisionReviewService:
         decision_repository: DecisionRepository,
         acceptance_repository: DecisionAcceptanceRepository,
         outcome_repository: DecisionOutcomeRepository,
+        controlled_writer: ControlledCreateWriter[DecisionReview] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled DecisionReview writer and coordinator must be configured together."
+            )
         self._review_repository = review_repository
         self._decision_repository = decision_repository
         self._acceptance_repository = acceptance_repository
         self._outcome_repository = outcome_repository
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -181,7 +193,12 @@ class DecisionReviewService:
                 candidate.decision_id, candidate.idempotency_key
             )
 
-        self._review_repository.save(candidate)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(candidate)
+            )
+        else:
+            self._review_repository.save(candidate)
         return candidate
 
     def list_for_decision(self, decision_id: UUID) -> list[DecisionReview]:

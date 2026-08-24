@@ -602,6 +602,9 @@ def add_decision(
             f"project {error.project_key!r} with a different payload.[/red]"
         )
         raise typer.Exit(code=1) from error
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(f"[green]Decision stored.[/green] ID: [cyan]{decision.id}[/cyan]")
 
@@ -700,6 +703,9 @@ def accept_decision(
             f"[red]Decision acceptance idempotency key {error.idempotency_key!r} already "
             f"exists for Decision {error.decision_id} with a different payload.[/red]"
         )
+        raise typer.Exit(code=1) from error
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
 
     console.print(f"[green]Decision acceptance stored.[/green] ID: [cyan]{acceptance.id}[/cyan]")
@@ -807,6 +813,9 @@ def add_decision_action(
             f"exists for Decision {error.decision_id} with a different payload.[/red]"
         )
         raise typer.Exit(code=1) from error
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(f"[green]Decision action stored.[/green] ID: [cyan]{action.id}[/cyan]")
 
@@ -899,6 +908,9 @@ def add_decision_outcome(
         console.print(f"[red]{error.errors()[0]['msg']}[/red]")
         raise typer.Exit(code=1) from error
     except (ValueError, DecisionOutcomeError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    except BrainTrustMutationError as error:
         console.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
 
@@ -1049,6 +1061,9 @@ def add_decision_review(
     except (ValueError, DecisionReviewError) as error:
         console.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(f"[green]Decision review stored.[/green] ID: [cyan]{review.id}[/cyan]")
     _print_decision_review(review)
@@ -1109,7 +1124,11 @@ def observe(
     """Store a new observation."""
 
     service = container.observation_service()
-    result = service.add(content, tags)
+    try:
+        result = service.add(content, tags)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print("[green]Observation stored.[/green]")
 
@@ -1195,6 +1214,9 @@ def add_experience(
         )
     except ObservationNotFoundError as error:
         _exit_observation_not_found(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(f"[green]Experience stored.[/green] ID: [cyan]{experience.id}[/cyan]")
 
@@ -1222,6 +1244,9 @@ def add_experience_from_observation(
         )
     except ObservationNotFoundError as error:
         _exit_observation_not_found(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(
         f"[green]Experience stored from observation.[/green] ID: [cyan]{experience.id}[/cyan]"
@@ -1278,6 +1303,9 @@ def add_experience_from_review(
         raise typer.Exit(code=1) from error
     except ObservationNotFoundError as error:
         _exit_observation_not_found(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(
         f"[green]Experience stored from Decision review.[/green] ID: [cyan]{experience.id}[/cyan]"
@@ -1574,6 +1602,9 @@ def add_evaluation(
         _exit_playbook_run_revision_error(error)
     except PlaybookRevisionRepositoryError as error:
         _exit_playbook_revision_repository_error(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(f"[green]Playbook evaluation stored.[/green] ID: [cyan]{evaluation.id}[/cyan]")
 
@@ -1689,6 +1720,9 @@ def add_proposal(
         _exit_playbook_run_revision_error(error)
     except PlaybookRevisionRepositoryError as error:
         _exit_playbook_revision_repository_error(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(f"[green]Evolution proposal stored.[/green] ID: [cyan]{proposal.id}[/cyan]")
 
@@ -2061,6 +2095,9 @@ def add_playbook(
         raise typer.Exit(code=1) from error
     except KnowledgeNotFoundError as error:
         _exit_knowledge_not_found(error)
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
 
     console.print(f"[green]Playbook stored.[/green] ID: [cyan]{playbook.id}[/cyan]")
 
@@ -2756,6 +2793,9 @@ def _record_playbook_revision_activation(
         raise typer.Exit(code=1) from error
     except ValidationError as error:
         console.print(f"[red]{error.errors()[0]['msg']}[/red]")
+        raise typer.Exit(code=1) from error
+    except BrainTrustMutationError as error:
+        console.print(f"[red]{error}[/red]")
         raise typer.Exit(code=1) from error
     except PlaybookRevisionRepositoryError as error:
         _exit_playbook_revision_repository_error(error)

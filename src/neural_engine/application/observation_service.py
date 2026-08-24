@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from neural_engine.domain import Observation
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.observation_repository import ObservationRepository
 
 
@@ -21,8 +25,16 @@ class ObservationService:
     def __init__(
         self,
         repository: ObservationRepository,
+        controlled_writer: ControlledCreateWriter[Observation] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled Observation writer and coordinator must be configured together."
+            )
         self._repository = repository
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -41,7 +53,12 @@ class ObservationService:
             tags=tags or [],
         )
 
-        self._repository.save(observation)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(observation)
+            )
+        else:
+            self._repository.save(observation)
 
         return AddObservationResult(
             observation=observation,

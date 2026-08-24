@@ -254,41 +254,58 @@ Knowledge-specific causal attribution or demonstrated improvement.
 
 ## Controlled Brain Mutation Boundary
 
-`neural knowledge add`, `neural knowledge from-experience`, `neural run add`,
-and `neural revision add` are the supported paths-backed mutations routed
-through the Brain Trust transition coordinator. The composition root supplies
-each service with its JSON adapter as a controlled-target writer and the one
-existing coordinator; direct repository construction remains a local/test
-adapter capability, not the supported production writer boundary. The
-coordinator accepts only a
+The supported paths-backed single-record CREATE mutations are routed through
+the Brain Trust transition coordinator. Package 1 covers `neural knowledge
+add`, `neural knowledge from-experience`, `neural run add`, and `neural
+revision add`. The remaining protected paths are `neural observe`,
+`neural experience add`, `neural experience from-observation`, `neural
+experience from-review`, `neural playbook add`, `neural evaluation add`,
+`neural proposal add`, `neural revision activate`, `neural revision supersede`,
+`neural revision reject`, the `PlaybookRevisionApplicationService.add()`
+writer path, and the Decision family commands `decision add`, `decision
+accept`, `decision action add`, `decision outcome add`, and `decision review
+add`. Activation, supersession, and rejection append to the same activation
+store; the three Experience paths append to the same Experience store.
+
+The composition root supplies every listed service with its JSON adapter as a
+controlled-target writer and the one existing coordinator; direct repository
+construction remains a local/test adapter capability, not the supported
+production writer boundary. The coordinator accepts only a
 `TRUSTED_CURRENT` Brain and performs one ordinary create using the frozen
 ordering: durable pending marker, exact target bytes, generation `N+1`
 metadata, bounded target and metadata verification, external binding `N+1`,
 and marker cleanup last. A pending transition therefore remains fail-closed;
 the next ordinary mutation does not retry or repair it implicitly.
 
-The protected target is one Knowledge, PlaybookRun, or PlaybookRevision JSON
-file under the Brain. The marker
-stores only the normalized relative path, action, and exact before/after
-SHA-256 evidence through the existing `TargetDescriptor` contract; it does not
-duplicate the record payload. Knowledge create-once and same-ID conflict
-semantics remain owned by `JsonKnowledgeRepository`.
+Each listed writer publishes exactly one authoritative Brain-relative JSON
+file with `CREATE`, no before hash, and the SHA-256 of the validated exact
+durable bytes. Repository-owned filename/payload identity, relation checks,
+duplicate/replay behavior, and conflict errors remain in force; a conflicting
+file is never silently replaced and no secondary authoritative write is
+introduced. The marker stores only the normalized relative path, action, and
+exact before/after SHA-256 evidence through the existing `TargetDescriptor`
+contract; it does not duplicate the record payload.
 
-Writer coverage is partial. The four listed single-record CREATE paths are
-protected by this boundary; observations, experiences, playbooks, evaluations,
-proposals, revision lifecycle/application records, the Decision family,
-development-evidence apply, adoption, restore, rebind, clone, and other
-writers are not yet migrated. The explicit `neural brain recover` command is
-a bounded exception: it accepts only one valid pending ordinary CREATE marker
-for the three supported stores and completes suffixes S2, S3, or S4. It
-verifies the exact existing target before every durable step,
-advances metadata before the external binding, and clears the marker last.
-S1 is deliberately rejected with `S1_REJECTED_INSUFFICIENT_EVIDENCE`: the
-marker stores the target hash but not the record payload, so exact target
-bytes cannot be reconstructed after the initial publication step fails.
-Recovery is never called by `status`, `doctor`, startup, or ordinary retry;
+Bounded `neural brain recover` supports the same S1-S4 evidence contract for
+all 15 canonical JSON stores: observations, experiences, knowledge, playbooks,
+playbook evaluations, evolution proposals, revision activations, revision
+applications, playbook runs, playbook revisions, decisions, decision
+acceptances, decision actions, decision outcomes, and decision reviews. S1 is
+deliberately rejected with `S1_REJECTED_INSUFFICIENT_EVIDENCE`; S2, S3, and S4
+are completed only after exact target bytes, current payload/path identity,
+metadata, and binding evidence are verified. Recovery remains fail-closed for
 unsupported, malformed, foreign, stale, rollback, ahead, and other pending
-states fail closed without writes.
+states, and never runs from status, doctor, startup, or ordinary retry.
+
+`WRITER_COVERAGE_BLOCKED` remains until `M12` proposal status (`REPLACE`) and
+`M23` development-evidence apply (multi-record) are resolved. The same
+bounded scope excludes REMOVE, multi-target operations,
+adoption, restore, clone, rebind, Model B, a central repository guard, a
+generic transaction/recovery engine, and real Brain writes. These exclusions
+are explicit scope boundaries, not unverified claims of CREATE parity.
+
+Knowledge create-once and same-ID conflict semantics remain owned by
+`JsonKnowledgeRepository`.
 
 `neural knowledge playbooks UUID` delegates to
 `PlaybookService.list_for_knowledge()`. The service verifies the knowledge item

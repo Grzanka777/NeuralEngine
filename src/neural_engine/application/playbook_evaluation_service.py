@@ -2,6 +2,10 @@ from uuid import UUID
 
 from neural_engine.application.playbook_run_service import PlaybookRunReader
 from neural_engine.domain import PlaybookEffectiveness, PlaybookEvaluation
+from neural_engine.ports.brain_trust_transition import (
+    BrainTrustMutationCoordinator,
+    ControlledCreateWriter,
+)
 from neural_engine.ports.playbook_evaluation_repository import (
     PlaybookEvaluationRepository,
 )
@@ -29,9 +33,17 @@ class PlaybookEvaluationService:
         self,
         evaluation_repository: PlaybookEvaluationRepository,
         run_repository: PlaybookRunReader,
+        controlled_writer: ControlledCreateWriter[PlaybookEvaluation] | None = None,
+        mutation_coordinator: BrainTrustMutationCoordinator | None = None,
     ) -> None:
+        if (controlled_writer is None) != (mutation_coordinator is None):
+            raise ValueError(
+                "Controlled PlaybookEvaluation writer and coordinator must be configured together."
+            )
         self._evaluation_repository = evaluation_repository
         self._run_repository = run_repository
+        self._controlled_writer = controlled_writer
+        self._mutation_coordinator = mutation_coordinator
 
     def add(
         self,
@@ -55,7 +67,12 @@ class PlaybookEvaluationService:
             tags=tags or [],
         )
 
-        self._evaluation_repository.save(evaluation)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(evaluation)
+            )
+        else:
+            self._evaluation_repository.save(evaluation)
 
         return evaluation
 

@@ -1,8 +1,9 @@
 import hashlib
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import NoReturn, Protocol
 from uuid import UUID
 
 import pytest
@@ -2315,6 +2316,144 @@ def test_knowledge_from_experience_run_add_revision_add_render_brain_trust_error
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
     assert not isinstance(result.exception, BrainTrustMutationError)
+    assert " ".join(str(error).split()) in " ".join(result.output.split())
+    assert "Traceback" not in result.output
+    assert "recovered" not in result.output.lower()
+
+
+class RaisingCliMutationService:
+    def __init__(self, error: BrainTrustMutationError) -> None:
+        self.error = error
+        self.calls: list[str] = []
+
+    def __getattr__(self, name: str) -> Callable[..., NoReturn]:
+        def raise_error(*args: object, **kwargs: object) -> NoReturn:
+            del args, kwargs
+            self.calls.append(name)
+            raise self.error
+
+        return raise_error
+
+
+class RaisingCliMutationContainer:
+    def __init__(self, service: RaisingCliMutationService) -> None:
+        self.service = service
+
+    def __getattr__(self, name: str) -> Callable[[], RaisingCliMutationService]:
+        del name
+        return lambda: self.service
+
+
+@pytest.mark.parametrize(
+    ("command_text", "service_method"),
+    [
+        ("observe failure", "add"),
+        (
+            "experience add --title title --context context --action action "
+            "--outcome outcome --result success",
+            "add",
+        ),
+        (
+            "experience from-observation 11111111-1111-1111-1111-111111111111 "
+            "--title title --action action --outcome outcome --result success",
+            "add_from_observation",
+        ),
+        (
+            "experience from-review 11111111-1111-1111-1111-111111111111 "
+            "--source finding:1 --promoted-by agent --promotion-reason reason "
+            "--idempotency-key promotion-1 --title title --context context "
+            "--action action --outcome outcome --result success",
+            "add_from_decision_review",
+        ),
+        (
+            "playbook add --title title --situation situation --objective objective "
+            "--success-criterion criterion",
+            "add",
+        ),
+        (
+            "evaluation add --run-id 11111111-1111-1111-1111-111111111111 "
+            "--effectiveness effective",
+            "add",
+        ),
+        (
+            "proposal add --playbook-id 11111111-1111-1111-1111-111111111111 "
+            "--summary summary --rationale rationale --benefit benefit",
+            "add",
+        ),
+        (
+            "revision activate 11111111-1111-1111-1111-111111111111 "
+            "--playbook 22222222-2222-2222-2222-222222222222 "
+            "--proposal 33333333-3333-3333-3333-333333333333 --reason reason",
+            "add",
+        ),
+        (
+            "revision supersede 11111111-1111-1111-1111-111111111111 "
+            "--playbook 22222222-2222-2222-2222-222222222222 "
+            "--proposal 33333333-3333-3333-3333-333333333333 "
+            "--previous-revision 44444444-4444-4444-4444-444444444444 --reason reason",
+            "add",
+        ),
+        (
+            "revision reject 11111111-1111-1111-1111-111111111111 "
+            "--playbook 22222222-2222-2222-2222-222222222222 "
+            "--proposal 33333333-3333-3333-3333-333333333333 --reason reason",
+            "add",
+        ),
+        (
+            "decision add --project-key project --title title --objective objective "
+            "--context-summary context --alternative alternative --proposed-option option "
+            "--rationale rationale --proposed-by agent --idempotency-key decision-1",
+            "add",
+        ),
+        (
+            "decision accept 11111111-1111-1111-1111-111111111111 "
+            "--accepted-by agent --reason reason --idempotency-key acceptance-1",
+            "accept",
+        ),
+        (
+            "decision action add 11111111-1111-1111-1111-111111111111 "
+            "--acceptance-id 22222222-2222-2222-2222-222222222222 "
+            "--action-type implementation --summary summary --performed-by agent "
+            "--started-at 2026-08-24T12:00:00+00:00 --idempotency-key action-1",
+            "add",
+        ),
+        (
+            "decision outcome add 11111111-1111-1111-1111-111111111111 "
+            "--acceptance-id 22222222-2222-2222-2222-222222222222 "
+            "--action-id 33333333-3333-3333-3333-333333333333 --result succeeded "
+            "--summary summary --validated-by agent --validated-at "
+            "2026-08-24T12:00:00+00:00 --idempotency-key outcome-1",
+            "add",
+        ),
+        (
+            "decision review add 11111111-1111-1111-1111-111111111111 "
+            "--acceptance-id 22222222-2222-2222-2222-222222222222 "
+            "--outcome-id 33333333-3333-3333-3333-333333333333 --reviewed-by agent "
+            "--reviewed-at 2026-08-24T12:00:00+00:00 --assessment sound "
+            "--summary summary --finding finding --confidence high "
+            "--idempotency-key review-1",
+            "add",
+        ),
+    ],
+)
+def test_newly_protected_cli_writers_render_brain_trust_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    command_text: str,
+    service_method: str,
+) -> None:
+    error = BrainTrustMutationNotPermittedError(
+        BrainTrustState.UNADOPTED,
+        ("controlled test failure",),
+    )
+    service = RaisingCliMutationService(error)
+    monkeypatch.setattr(cli, "container", RaisingCliMutationContainer(service))
+
+    result = CliRunner().invoke(cli.app, command_text.split())
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert not isinstance(result.exception, BrainTrustMutationError)
+    assert service.calls == [service_method]
     assert " ".join(str(error).split()) in " ".join(result.output.split())
     assert "Traceback" not in result.output
     assert "recovered" not in result.output.lower()
