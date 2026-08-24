@@ -254,29 +254,37 @@ Knowledge-specific causal attribution or demonstrated improvement.
 
 ## Controlled Brain Mutation Boundary
 
-`neural knowledge add` is the first repository-backed mutation routed through
-the Brain Trust transition coordinator. The coordinator accepts only a
+`neural knowledge add`, `neural knowledge from-experience`, `neural run add`,
+and `neural revision add` are the supported paths-backed mutations routed
+through the Brain Trust transition coordinator. The composition root supplies
+each service with its JSON adapter as a controlled-target writer and the one
+existing coordinator; direct repository construction remains a local/test
+adapter capability, not the supported production writer boundary. The
+coordinator accepts only a
 `TRUSTED_CURRENT` Brain and performs one ordinary create using the frozen
-ordering: durable pending marker, exact Knowledge bytes, generation `N+1`
+ordering: durable pending marker, exact target bytes, generation `N+1`
 metadata, bounded target and metadata verification, external binding `N+1`,
 and marker cleanup last. A pending transition therefore remains fail-closed;
 the next ordinary mutation does not retry or repair it implicitly.
 
-The protected target is one Knowledge JSON file under the Brain. The marker
+The protected target is one Knowledge, PlaybookRun, or PlaybookRevision JSON
+file under the Brain. The marker
 stores only the normalized relative path, action, and exact before/after
 SHA-256 evidence through the existing `TargetDescriptor` contract; it does not
 duplicate the record payload. Knowledge create-once and same-ID conflict
 semantics remain owned by `JsonKnowledgeRepository`.
 
-Writer coverage is partial. `knowledge add` is protected by this boundary;
-`knowledge from-experience`, other repository writers, adoption, restore,
-rebind, clone, and other recovery are not yet migrated. The explicit
-`neural brain recover` command is a bounded exception: it accepts only one
-valid pending ordinary `Knowledge CREATE` marker and completes suffixes S2,
-S3, or S4. It verifies the exact existing target before every durable step,
+Writer coverage is partial. The four listed single-record CREATE paths are
+protected by this boundary; observations, experiences, playbooks, evaluations,
+proposals, revision lifecycle/application records, the Decision family,
+development-evidence apply, adoption, restore, rebind, clone, and other
+writers are not yet migrated. The explicit `neural brain recover` command is
+a bounded exception: it accepts only one valid pending ordinary CREATE marker
+for the three supported stores and completes suffixes S2, S3, or S4. It
+verifies the exact existing target before every durable step,
 advances metadata before the external binding, and clears the marker last.
 S1 is deliberately rejected with `S1_REJECTED_INSUFFICIENT_EVIDENCE`: the
-marker stores the target hash but not the Knowledge payload, so exact target
+marker stores the target hash but not the record payload, so exact target
 bytes cannot be reconstructed after the initial publication step fails.
 Recovery is never called by `status`, `doctor`, startup, or ordinary retry;
 unsupported, malformed, foreign, stale, rollback, ahead, and other pending

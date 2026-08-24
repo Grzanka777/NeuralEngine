@@ -34,9 +34,20 @@ from neural_engine.core.brain_trust import (
     TransitionOperationKind,
 )
 from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
-from neural_engine.domain import Experience, ExperienceResult, Knowledge, KnowledgeConfidence
+from neural_engine.domain import (
+    Experience,
+    ExperienceResult,
+    Knowledge,
+    KnowledgeConfidence,
+    PlaybookRevision,
+    PlaybookRun,
+)
 from neural_engine.infrastructure.durability import atomic_replace_bytes
 from neural_engine.infrastructure.json_knowledge_repository import JsonKnowledgeRepository
+from neural_engine.infrastructure.json_playbook_revision_repository import (
+    JsonPlaybookRevisionRepository,
+)
+from neural_engine.infrastructure.json_playbook_run_repository import JsonPlaybookRunRepository
 from neural_engine.infrastructure.local_brain_trust_probe import LocalBrainTrustProbe
 from neural_engine.infrastructure.local_brain_trust_transition import (
     LocalBrainTrustTransitionCoordinator,
@@ -154,6 +165,45 @@ def _target(
     return repository, knowledge, repository.controlled_create_target(knowledge)
 
 
+def _package_target(
+    fixture: TrustFixture,
+    store: str,
+) -> tuple[ControlledMutationTarget, Path]:
+    if store == "knowledge":
+        _repository, knowledge, target = _target(fixture)
+        return target, _target_path(fixture, knowledge)
+    if store == "run":
+        run = PlaybookRun(
+            id=UUID("77777777-7777-4777-8777-777777777777"),
+            playbook_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            situation="Controlled Run",
+            actions_taken=["Recorded one action"],
+            outcome="Recorded",
+            success=True,
+        )
+        run_repository = JsonPlaybookRunRepository(paths=fixture.paths)
+        return (
+            run_repository.controlled_create_target(run),
+            fixture.paths.PLAYBOOK_RUNS / f"{run.id}.json",
+        )
+    revision = PlaybookRevision(
+        id=UUID("99999999-9999-4999-8999-999999999999"),
+        playbook_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        proposal_id=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        title="Controlled Revision",
+        situation="Controlled situation",
+        objective="Controlled objective",
+        steps=["Record the revision"],
+        success_criteria=["The revision is stored"],
+        knowledge_ids=[UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")],
+    )
+    revision_repository = JsonPlaybookRevisionRepository(paths=fixture.paths)
+    return (
+        revision_repository.controlled_create_target(revision),
+        fixture.paths.PLAYBOOK_REVISIONS / f"{revision.id}.json",
+    )
+
+
 def _read_metadata(fixture: TrustFixture) -> BrainMetadata:
     return BrainMetadata.model_validate_json(fixture.paths.BRAIN_METADATA.read_bytes())
 
@@ -260,6 +310,37 @@ def test_knowledge_add_uses_controlled_transition_and_clears_marker_last(
         if relative_path not in expected_changed_files:
             assert after_files[relative_path] == before_bytes
     assert fixture.binding_path.read_bytes() != before_binding
+
+
+def test_knowledge_from_experience_uses_controlled_transition(tmp_path: Path) -> None:
+    fixture = _trusted_fixture(tmp_path)
+    repository = JsonKnowledgeRepository(paths=fixture.paths)
+    experience = Experience(
+        id=EXPERIENCE_ID,
+        title="Evidence",
+        context="Context",
+        action="Action",
+        outcome="Outcome",
+        result=ExperienceResult.SUCCESS,
+    )
+    service = KnowledgeService(
+        repository,
+        StaticExperienceReader(experience),
+        controlled_writer=repository,
+        mutation_coordinator=_coordinator(fixture),
+    )
+
+    knowledge = service.add_from_experience(
+        EXPERIENCE_ID,
+        "Derived knowledge",
+        "The controlled transition is reused.",
+        KnowledgeConfidence.MEDIUM,
+    )
+
+    assert _target_path(fixture, knowledge).exists()
+    assert _read_metadata(fixture).generation == 2
+    assert _read_binding(fixture).accepted_generation == 2
+    assert _inspector(fixture).inspect().state is BrainTrustState.TRUSTED_CURRENT
 
 
 @pytest.mark.parametrize(
@@ -478,6 +559,71 @@ def _seed_recovery_state(
 def _recovery_snapshot(fixture: TrustFixture) -> tuple[dict[str, bytes], bytes | None]:
     binding = fixture.binding_path.read_bytes() if fixture.binding_path.exists() else None
     return _file_snapshot(fixture.paths.HOME), binding
+
+
+@pytest.mark.parametrize("store", ["knowledge", "run", "revision"])
+@pytest.mark.parametrize(
+    ("metadata_generation", "binding_generation"),
+    [(1, 1), (2, 1), (2, 2)],
+)
+def test_recovery_completes_supported_single_create_store_suffixes(
+    tmp_path: Path,
+    store: str,
+    metadata_generation: int,
+    binding_generation: int,
+) -> None:
+    fixture = _trusted_fixture(tmp_path)
+    target, target_path = _package_target(fixture, store)
+    marker = _seed_recovery_state(
+        fixture,
+        target,
+        metadata_generation=metadata_generation,
+        binding_generation=binding_generation,
+    )
+
+    recovered = _coordinator(fixture).recover_pending_knowledge_create()
+
+    assert recovered == marker.transition_id
+    assert target_path.read_bytes() == target.after_bytes
+    assert _read_metadata(fixture).generation == 2
+    assert _read_metadata(fixture).pending_transition is None
+    assert _read_binding(fixture).accepted_generation == 2
+    assert _inspector(fixture).inspect().state is BrainTrustState.TRUSTED_CURRENT
+
+
+@pytest.mark.parametrize("store", ["run", "revision"])
+def test_recovery_rejects_supported_store_s1_without_any_write(
+    tmp_path: Path,
+    store: str,
+) -> None:
+    fixture = _trusted_fixture(tmp_path)
+    target, _target_path = _package_target(fixture, store)
+    _seed_recovery_state(fixture, target, target_exists=False)
+    before = _recovery_snapshot(fixture)
+
+    with pytest.raises(BrainTrustUnsafeRecoveryError, match="S1_REJECTED_INSUFFICIENT_EVIDENCE"):
+        _coordinator(fixture).recover_pending_knowledge_create()
+
+    assert _recovery_snapshot(fixture) == before
+
+
+@pytest.mark.parametrize("store", ["run", "revision"])
+def test_recovery_rejects_supported_store_target_symlink_without_any_write(
+    tmp_path: Path,
+    store: str,
+) -> None:
+    fixture = _trusted_fixture(tmp_path)
+    target, target_path = _package_target(fixture, store)
+    _seed_recovery_state(fixture, target)
+    alias_path = target_path.with_name("alias.json")
+    alias_path.write_bytes(target.after_bytes or b"")
+    _replace_target_with_symlink(target_path, alias_path)
+    before = _recovery_snapshot(fixture)
+
+    with pytest.raises(BrainTrustUnsafeRecoveryError, match="symbolic link"):
+        _coordinator(fixture).recover_pending_knowledge_create()
+
+    assert _recovery_snapshot(fixture) == before
 
 
 def _replace_target_with_symlink(target_path: Path, destination: Path) -> None:

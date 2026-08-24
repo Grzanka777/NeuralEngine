@@ -203,10 +203,13 @@ class Container:
 
     def playbook_run_service(self) -> PlaybookRunService:
         paths = self._resolved_paths()
+        run_repository = JsonPlaybookRunRepository(paths=paths)
         return PlaybookRunService(
-            JsonPlaybookRunRepository(paths=paths),
+            run_repository,
             JsonPlaybookRepository(paths=paths),
             JsonPlaybookRevisionRepository(paths=paths),
+            controlled_writer=run_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def playbook_evaluation_service(self) -> PlaybookEvaluationService:
@@ -227,11 +230,14 @@ class Container:
 
     def playbook_revision_service(self) -> PlaybookRevisionService:
         paths = self._resolved_paths()
+        revision_repository = JsonPlaybookRevisionRepository(paths=paths)
         return PlaybookRevisionService(
-            JsonPlaybookRevisionRepository(paths=paths),
+            revision_repository,
             JsonPlaybookRepository(paths=paths),
             JsonEvolutionProposalRepository(paths=paths),
             JsonKnowledgeRepository(paths=paths),
+            controlled_writer=revision_repository,
+            mutation_coordinator=Container(paths).brain_trust_transition_coordinator(),
         )
 
     def playbook_revision_activation_service(self) -> PlaybookRevisionActivationService:

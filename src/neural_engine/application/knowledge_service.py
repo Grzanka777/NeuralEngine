@@ -102,7 +102,12 @@ class KnowledgeService:
             tags=tags or [],
         )
 
-        self._knowledge_repository.save(knowledge)
+        if self._controlled_writer is not None and self._mutation_coordinator is not None:
+            self._mutation_coordinator.execute(
+                self._controlled_writer.controlled_create_target(knowledge)
+            )
+        else:
+            self._knowledge_repository.save(knowledge)
 
         return knowledge
 

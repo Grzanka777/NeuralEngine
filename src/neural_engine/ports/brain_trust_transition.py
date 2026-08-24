@@ -30,7 +30,7 @@ class BrainTrustRecoveryCoordinator(Protocol):
     """Application-facing port for the explicit bounded recovery command."""
 
     def recover_pending_knowledge_create(self) -> UUID:
-        """Complete only a valid pending Knowledge CREATE suffix."""
+        """Complete only a valid pending supported single-record CREATE suffix."""
 
 
 WriteBytes = Callable[[Path, bytes], None]

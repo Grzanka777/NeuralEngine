@@ -5,6 +5,7 @@ import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Protocol
 from uuid import UUID, uuid4
 
 from neural_engine.application.brain_trust_inspector import (
@@ -32,6 +33,10 @@ from neural_engine.core.brain_trust import (
 from neural_engine.core.paths import NeuralPaths
 from neural_engine.infrastructure.durability import atomic_replace_bytes
 from neural_engine.infrastructure.json_knowledge_repository import JsonKnowledgeRepository
+from neural_engine.infrastructure.json_playbook_revision_repository import (
+    JsonPlaybookRevisionRepository,
+)
+from neural_engine.infrastructure.json_playbook_run_repository import JsonPlaybookRunRepository
 from neural_engine.ports.brain_trust_transition import (
     ControlledMutationTarget,
     WriteBytes,
@@ -47,6 +52,12 @@ class TransitionPersistence:
 
 class _UnsafeTargetPathError(ValueError):
     """A controlled target traverses a symbolic-link component."""
+
+
+class _CurrentStoreReader(Protocol):
+    """Read one validated record from a supported recovery store."""
+
+    def get_by_id(self, record_id: UUID) -> object | None: ...
 
 
 class LocalBrainTrustTransitionCoordinator:
@@ -129,9 +140,9 @@ class LocalBrainTrustTransitionCoordinator:
             raise BrainTrustTransitionExecutionError(transition_id, error) from error
 
     def recover_pending_knowledge_create(self) -> UUID:
-        """Complete a valid pending Knowledge CREATE from metadata N through N+1.
+        """Complete one valid supported single-record CREATE from N through N+1.
 
-        The marker contains no Knowledge payload.  Therefore a missing target is
+        The marker contains no record payload. Therefore a missing target is
         deliberately rejected; recovery only verifies and completes S2-S4.
         """
 
@@ -255,36 +266,41 @@ class LocalBrainTrustTransitionCoordinator:
             raise BrainTrustUnsafeRecoveryError("binding is ahead of metadata")
 
         relative = PurePosixPath(descriptor.relative_path)
-        knowledge_root = PurePosixPath(
-            self._paths.KNOWLEDGE.relative_to(self._paths.BRAIN).as_posix()
-        )
-        if relative.parent != knowledge_root or relative.suffix != ".json":
+        store = self._supported_create_store(relative)
+        if store is None:
             raise BrainTrustUnsupportedRecoveryError(
-                "target path is not the current Knowledge JSON shape"
+                "target path is not a supported single-record CREATE store"
+            )
+        store_root, repository, store_name = store
+        if relative.parent != PurePosixPath(store_root.relative_to(self._paths.BRAIN).as_posix()):
+            raise BrainTrustUnsupportedRecoveryError(
+                "target path is not the current supported store shape"
             )
         try:
-            knowledge_id = UUID(relative.stem)
+            record_id = UUID(relative.stem)
         except ValueError as error:
             raise BrainTrustUnsupportedRecoveryError(
-                "Knowledge target filename is not a UUID"
+                f"{store_name} target filename is not a UUID"
             ) from error
-        if relative.name != f"{knowledge_id}.json":
-            raise BrainTrustUnsupportedRecoveryError("Knowledge target filename is not normalized")
+        if relative.name != f"{record_id}.json":
+            raise BrainTrustUnsupportedRecoveryError(
+                f"{store_name} target filename is not normalized"
+            )
 
         try:
             target_path = self._target_path(descriptor.relative_path)
         except _UnsafeTargetPathError as error:
             raise BrainTrustUnsafeRecoveryError(
-                "Knowledge target path traverses a symbolic link"
+                f"{store_name} target path traverses a symbolic link"
             ) from error
         except Exception as error:
             raise BrainTrustUnsupportedRecoveryError(
                 "target path cannot be safely resolved below Brain"
             ) from error
-        expected_path = self._paths.KNOWLEDGE / f"{knowledge_id}.json"
+        expected_path = store_root / f"{record_id}.json"
         if target_path != expected_path:
             raise BrainTrustUnsupportedRecoveryError(
-                "target path does not match the current Knowledge store"
+                "target path does not match the current supported store"
             )
 
         try:
@@ -292,30 +308,57 @@ class LocalBrainTrustTransitionCoordinator:
         except FileNotFoundError as error:
             raise BrainTrustUnsafeRecoveryError(
                 "S1_REJECTED_INSUFFICIENT_EVIDENCE: target bytes are absent and the marker "
-                "does not contain a Knowledge payload"
+                "does not contain a record payload"
             ) from error
         except OSError as error:
-            raise BrainTrustUnsafeRecoveryError("Knowledge target cannot be inspected") from error
+            raise BrainTrustUnsafeRecoveryError(
+                f"{store_name} target cannot be inspected"
+            ) from error
         if not stat.S_ISREG(target_stat.st_mode):
-            raise BrainTrustUnsafeRecoveryError("Knowledge target is not a regular file")
+            raise BrainTrustUnsafeRecoveryError(f"{store_name} target is not a regular file")
         try:
             actual = target_path.read_bytes()
         except OSError as error:
-            raise BrainTrustUnsafeRecoveryError("Knowledge target cannot be read") from error
+            raise BrainTrustUnsafeRecoveryError(f"{store_name} target cannot be read") from error
         if _sha256(actual) != descriptor.after_sha256:
-            raise BrainTrustUnsafeRecoveryError("Knowledge target bytes do not match after hash")
+            raise BrainTrustUnsafeRecoveryError(
+                f"{store_name} target bytes do not match after hash"
+            )
         try:
-            stored = JsonKnowledgeRepository(paths=self._paths).get_by_id(knowledge_id)
+            stored = repository.get_by_id(record_id)
         except Exception as error:
             raise BrainTrustUnsafeRecoveryError(
-                "Knowledge target is not valid current-store data"
+                f"{store_name} target is not valid current-store data"
             ) from error
         if stored is None:
             raise BrainTrustUnsafeRecoveryError(
-                "Knowledge target is not present in the current store"
+                f"{store_name} target is not present in the current store"
             )
 
         return target_path, descriptor
+
+    def _supported_create_store(
+        self,
+        relative: PurePosixPath,
+    ) -> tuple[Path, _CurrentStoreReader, str] | None:
+        stores: tuple[tuple[Path, _CurrentStoreReader, str], ...] = (
+            (self._paths.KNOWLEDGE, JsonKnowledgeRepository(paths=self._paths), "Knowledge"),
+            (
+                self._paths.PLAYBOOK_RUNS,
+                JsonPlaybookRunRepository(paths=self._paths),
+                "PlaybookRun",
+            ),
+            (
+                self._paths.PLAYBOOK_REVISIONS,
+                JsonPlaybookRevisionRepository(paths=self._paths),
+                "PlaybookRevision",
+            ),
+        )
+        for root, repository, name in stores:
+            root_relative = PurePosixPath(root.relative_to(self._paths.BRAIN).as_posix())
+            if relative.parent == root_relative and relative.suffix == ".json":
+                return root, repository, name
+        return None
 
     def _recover_suffix(
         self,

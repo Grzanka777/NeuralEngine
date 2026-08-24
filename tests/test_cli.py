@@ -9,6 +9,11 @@ import pytest
 from typer.testing import CliRunner
 
 import neural_engine.cli as cli
+from neural_engine.application.brain_trust_inspector import BrainTrustState
+from neural_engine.application.brain_trust_transition import (
+    BrainTrustMutationError,
+    BrainTrustMutationNotPermittedError,
+)
 from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
     DecisionAcceptanceIdempotencyConflictError,
@@ -527,10 +532,12 @@ class FakeKnowledgeService:
         knowledge_items: list[Knowledge],
         missing_experience_id: UUID | None = None,
         integrity_error: Exception | None = None,
+        mutation_error: BrainTrustMutationError | None = None,
     ) -> None:
         self.knowledge_items = knowledge_items
         self.missing_experience_id = missing_experience_id
         self.integrity_error = integrity_error
+        self.mutation_error = mutation_error
         self.add_calls: list[
             tuple[str, str, KnowledgeConfidence, list[UUID], list[str] | None]
         ] = []
@@ -586,6 +593,8 @@ class FakeKnowledgeService:
             raise ExperienceNotFoundError(self.missing_experience_id)
         if self.integrity_error is not None:
             raise self.integrity_error
+        if self.mutation_error is not None:
+            raise self.mutation_error
 
         knowledge = Knowledge(
             statement=statement,
@@ -742,11 +751,13 @@ class FakePlaybookRunService:
         read_error: PlaybookRevisionNotFoundError
         | PlaybookRunRevisionPlaybookMismatchError
         | None = None,
+        mutation_error: BrainTrustMutationError | None = None,
     ) -> None:
         self.runs = runs
         self.missing_playbook_id = missing_playbook_id
         self.missing_revision_id = missing_revision_id
         self.read_error = read_error
+        self.mutation_error = mutation_error
         self.add_calls: list[
             tuple[
                 UUID,
@@ -797,6 +808,8 @@ class FakePlaybookRunService:
 
         if self.missing_revision_id is not None:
             raise PlaybookRevisionNotFoundError(self.missing_revision_id)
+        if self.mutation_error is not None:
+            raise self.mutation_error
 
         run = PlaybookRun(
             playbook_id=playbook_id,
@@ -1082,6 +1095,7 @@ class FakePlaybookRevisionService:
         missing_playbook_id: UUID | None = None,
         missing_knowledge_id: UUID | None = None,
         integrity_error: PlaybookRevisionRepositoryError | None = None,
+        mutation_error: BrainTrustMutationError | None = None,
     ) -> None:
         self.revisions = revisions
         self.missing_proposal_id = missing_proposal_id
@@ -1090,6 +1104,7 @@ class FakePlaybookRevisionService:
         self.missing_playbook_id = missing_playbook_id
         self.missing_knowledge_id = missing_knowledge_id
         self.integrity_error = integrity_error
+        self.mutation_error = mutation_error
         self.add_calls: list[
             tuple[
                 UUID,
@@ -1167,6 +1182,8 @@ class FakePlaybookRevisionService:
 
         if self.integrity_error is not None:
             raise self.integrity_error
+        if self.mutation_error is not None:
+            raise self.mutation_error
 
         revision = PlaybookRevision(
             playbook_id=playbook_id,
@@ -2201,6 +2218,106 @@ def test_knowledge_from_experience_handles_missing_experience_without_storing(
     assert len(service.add_from_experience_calls) == 1
     assert service.knowledge_items == []
     assert f"Experience not found: {missing_id}" in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "service_kind"),
+    [
+        (
+            [
+                "knowledge",
+                "from-experience",
+                "11111111-1111-1111-1111-111111111111",
+                "--statement",
+                "Controlled trust failure",
+                "--rationale",
+                "The Brain is not trusted.",
+                "--confidence",
+                "medium",
+            ],
+            "knowledge",
+        ),
+        (
+            [
+                "run",
+                "add",
+                "--playbook-id",
+                "22222222-2222-2222-2222-222222222222",
+                "--situation",
+                "Controlled trust failure",
+                "--action",
+                "Do not publish",
+                "--outcome",
+                "No record",
+                "--success",
+                "false",
+            ],
+            "run",
+        ),
+        (
+            [
+                "revision",
+                "add",
+                "--playbook-id",
+                "33333333-3333-3333-3333-333333333333",
+                "--proposal-id",
+                "44444444-4444-4444-4444-444444444444",
+                "--title",
+                "Controlled trust failure",
+                "--situation",
+                "No trusted Brain",
+                "--objective",
+                "Do not publish",
+                "--step",
+                "Stop",
+                "--success-criterion",
+                "No record",
+            ],
+            "revision",
+        ),
+    ],
+    ids=["knowledge-from-experience", "run-add", "revision-add"],
+)
+def test_knowledge_from_experience_run_add_revision_add_render_brain_trust_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+    service_kind: str,
+) -> None:
+    error = BrainTrustMutationNotPermittedError(
+        BrainTrustState.UNADOPTED,
+        ("controlled test failure",),
+    )
+
+    if service_kind == "knowledge":
+        knowledge_service = FakeKnowledgeService([], mutation_error=error)
+        monkeypatch.setattr(
+            cli,
+            "container",
+            FakeContainer(knowledge_service=knowledge_service),
+        )
+    elif service_kind == "run":
+        run_service = FakePlaybookRunService([], mutation_error=error)
+        monkeypatch.setattr(
+            cli,
+            "container",
+            FakeContainer(playbook_run_service=run_service),
+        )
+    else:
+        revision_service = FakePlaybookRevisionService([], mutation_error=error)
+        monkeypatch.setattr(
+            cli,
+            "container",
+            FakeContainer(playbook_revision_service=revision_service),
+        )
+
+    result = CliRunner().invoke(cli.app, command)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert not isinstance(result.exception, BrainTrustMutationError)
+    assert " ".join(str(error).split()) in " ".join(result.output.split())
+    assert "Traceback" not in result.output
+    assert "recovered" not in result.output.lower()
 
 
 def test_knowledge_list_displays_knowledge(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -72,6 +72,8 @@ def test_container_wires_playbook_revision_service_with_json_repositories() -> N
     assert isinstance(service._playbook_repository, JsonPlaybookRepository)
     assert isinstance(service._proposal_repository, JsonEvolutionProposalRepository)
     assert isinstance(service._knowledge_repository, JsonKnowledgeRepository)
+    assert service._controlled_writer is service._revision_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_playbook_run_service_without_lifecycle_dependencies() -> None:
@@ -81,6 +83,8 @@ def test_container_wires_playbook_run_service_without_lifecycle_dependencies() -
     assert isinstance(service._run_repository, JsonPlaybookRunRepository)
     assert isinstance(service._playbook_repository, JsonPlaybookRepository)
     assert isinstance(service._revision_repository, JsonPlaybookRevisionRepository)
+    assert service._controlled_writer is service._run_repository
+    assert service._mutation_coordinator is not None
     assert not hasattr(service, "_activation_service")
     assert not hasattr(service, "_application_repository")
 
@@ -241,6 +245,8 @@ def test_container_wires_knowledge_service_to_validated_experience_service() -> 
     assert isinstance(service._knowledge_repository, JsonKnowledgeRepository)
     assert isinstance(service._experience_reader, ExperienceService)
     assert not isinstance(service._experience_reader, JsonExperienceRepository)
+    assert service._controlled_writer is service._knowledge_repository
+    assert service._mutation_coordinator is not None
 
 
 def test_container_wires_playbook_service_without_playbook_revision_repository() -> None:
