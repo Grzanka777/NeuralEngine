@@ -1,3 +1,4 @@
+import hashlib
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -100,6 +101,10 @@ from neural_engine.core.brain_trust import (
     BRAIN_TRUST_METADATA_FORMAT,
     BrainMetadata,
     ExternalTrustBinding,
+    PendingTransition,
+    TargetAction,
+    TargetDescriptor,
+    TransitionOperationKind,
 )
 from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
 from neural_engine.domain import (
@@ -125,6 +130,7 @@ from neural_engine.domain import (
     PlaybookRevisionActivationDecision,
     PlaybookRun,
 )
+from neural_engine.infrastructure.json_knowledge_repository import JsonKnowledgeRepository
 from neural_engine.ports.knowledge_repository import KnowledgePersistenceConflictError
 from neural_engine.ports.playbook_revision_repository import (
     PlaybookRevisionIdentityMismatchError,
@@ -8345,3 +8351,82 @@ def test_status_and_doctor_remain_separate_commands(
     assert "Readiness" not in status_result.output
     assert "Readiness" in doctor_result.output
     assert "Brain state" not in doctor_result.output
+
+
+def test_brain_recover_is_explicit_and_completes_existing_knowledge_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_home = tmp_path / "isolated"
+    configured = tmp_path / "portable"
+    isolated_home.mkdir()
+    configured.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
+    monkeypatch.setenv("NEURAL_HOME", str(configured))
+    paths = resolve_neural_paths()
+    Brain(paths).initialize()
+    brain_id = UUID("11111111-1111-4111-8111-111111111111")
+    knowledge = Knowledge(
+        id=UUID("55555555-5555-4555-8555-555555555555"),
+        statement="Recovered knowledge",
+        rationale="The exact target already exists.",
+        confidence=KnowledgeConfidence.MEDIUM,
+        experience_ids=[],
+    )
+    repository = JsonKnowledgeRepository(paths=paths)
+    target = repository.controlled_create_target(knowledge)
+    target.publish()
+    descriptor = TargetDescriptor(
+        relative_path=target.relative_path,
+        action=TargetAction.CREATE,
+        before_sha256=None,
+        after_sha256=hashlib.sha256(target.after_bytes or b"").hexdigest(),
+    )
+    marker = PendingTransition(
+        transition_id=UUID("88888888-8888-4888-8888-888888888888"),
+        brain_id=brain_id,
+        from_generation=1,
+        to_generation=2,
+        operation_kind=TransitionOperationKind.ORDINARY_MUTATION,
+        targets=(descriptor,),
+    )
+    paths.BRAIN_METADATA.write_text(
+        BrainMetadata(
+            metadata_format=BRAIN_TRUST_METADATA_FORMAT,
+            brain_id=brain_id,
+            generation=2,
+            pending_transition=marker,
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    paths.TRUST_BINDING.parent.mkdir(parents=True, exist_ok=True)
+    paths.TRUST_BINDING.write_text(
+        ExternalTrustBinding(
+            binding_format=BRAIN_TRUST_BINDING_FORMAT,
+            expected_brain_id=brain_id,
+            accepted_generation=1,
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+
+    pending_before_status = paths.BRAIN_METADATA.read_bytes()
+    runner = CliRunner()
+    status_result = runner.invoke(cli.app, ["status"])
+    assert status_result.exit_code == 0
+    assert "Brain Trust state        : TRANSITION_PENDING" in status_result.output
+    assert paths.BRAIN_METADATA.read_bytes() == pending_before_status
+
+    result = runner.invoke(cli.app, ["brain", "recover"])
+
+    assert result.exit_code == 0
+    assert "Brain Trust transition recovered" in result.output
+    assert (
+        BrainMetadata.model_validate_json(paths.BRAIN_METADATA.read_bytes()).pending_transition
+        is None
+    )
+    assert (
+        ExternalTrustBinding.model_validate_json(
+            paths.TRUST_BINDING.read_bytes()
+        ).accepted_generation
+        == 2
+    )

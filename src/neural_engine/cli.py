@@ -11,7 +11,10 @@ from rich.table import Table
 
 from neural_engine import APP_NAME, __version__
 from neural_engine.application.brain_trust_inspector import BrainTrustInspection
-from neural_engine.application.brain_trust_transition import BrainTrustMutationError
+from neural_engine.application.brain_trust_transition import (
+    BrainTrustMutationError,
+    BrainTrustRecoveryError,
+)
 from neural_engine.application.container import Container
 from neural_engine.application.decision_acceptance_service import (
     DecisionAcceptanceDecisionNotFoundError,
@@ -187,6 +190,9 @@ playbook_app = typer.Typer(
 run_app = typer.Typer(
     help="Record and inspect playbook runs.",
 )
+brain_app = typer.Typer(
+    help="Perform explicitly authorized Brain Trust recovery.",
+)
 development_evidence_app = typer.Typer(
     help="Preview or explicitly apply one local development evidence bundle.",
 )
@@ -202,6 +208,7 @@ app.add_typer(playbook_app, name="playbook")
 app.add_typer(proposal_app, name="proposal")
 app.add_typer(revision_app, name="revision")
 app.add_typer(run_app, name="run")
+app.add_typer(brain_app, name="brain")
 app.add_typer(development_evidence_app, name="development-evidence")
 
 console = Console()
@@ -266,6 +273,21 @@ def doctor() -> None:
     _render_neural_doctor(report)
     if not report.ready:
         raise typer.Exit(code=1)
+
+
+@brain_app.command("recover")
+def recover_brain() -> None:
+    """Complete one valid pending Knowledge CREATE transition suffix."""
+
+    try:
+        transition_id = (
+            container.brain_trust_recovery_coordinator().recover_pending_knowledge_create()
+        )
+    except BrainTrustRecoveryError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    console.print(f"[green]Brain Trust transition recovered: {transition_id}[/green]")
 
 
 def _render_neural_doctor(report: NeuralDoctorReport) -> None:

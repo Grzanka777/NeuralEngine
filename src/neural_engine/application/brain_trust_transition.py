@@ -28,3 +28,41 @@ class BrainTrustTransitionExecutionError(BrainTrustMutationError):
         super().__init__(
             f"Controlled Brain transition {transition_id} failed; durable state may be advanced."
         )
+
+
+class BrainTrustRecoveryError(BrainTrustMutationError):
+    """Base error for explicit bounded recovery of a pending transition."""
+
+
+class BrainTrustNoRecoverableTransitionError(BrainTrustRecoveryError):
+    """Raised when no pending transition is available for explicit recovery."""
+
+    def __init__(self) -> None:
+        super().__init__("No recoverable pending Brain transition is present.")
+
+
+class BrainTrustUnsupportedRecoveryError(BrainTrustRecoveryError):
+    """Raised when a pending transition is outside the bounded recovery slice."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"Pending Brain transition is unsupported for bounded recovery: {detail}.")
+
+
+class BrainTrustUnsafeRecoveryError(BrainTrustRecoveryError):
+    """Raised when pending evidence is malformed, ambiguous, or unsafe."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"Pending Brain transition is unsafe to recover: {detail}.")
+
+
+class BrainTrustRecoveryExecutionError(BrainTrustRecoveryError):
+    """Raised when an explicit recovery suffix fails during durable execution."""
+
+    def __init__(self, transition_id: UUID, cause: Exception) -> None:
+        self.transition_id = transition_id
+        self.cause = cause
+        super().__init__(
+            f"Brain transition recovery {transition_id} failed; durable state may be advanced."
+        )
