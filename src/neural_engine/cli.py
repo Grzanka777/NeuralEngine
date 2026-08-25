@@ -1,6 +1,7 @@
 import re
 from datetime import datetime
 from math import isfinite
+from pathlib import Path
 from typing import Annotated, cast
 from uuid import UUID
 
@@ -10,6 +11,11 @@ from rich.console import Console
 from rich.table import Table
 
 from neural_engine import APP_NAME, __version__
+from neural_engine.application.brain_trust_adoption import (
+    AdoptionPlan,
+    AdoptionResult,
+    BrainTrustAdoptionError,
+)
 from neural_engine.application.brain_trust_inspector import BrainTrustInspection
 from neural_engine.application.brain_trust_transition import (
     BrainTrustMutationError,
@@ -191,7 +197,7 @@ run_app = typer.Typer(
     help="Record and inspect playbook runs.",
 )
 brain_app = typer.Typer(
-    help="Perform explicitly authorized Brain Trust recovery.",
+    help="Perform explicitly authorized Brain Trust adoption or recovery.",
 )
 development_evidence_app = typer.Typer(
     help="Preview or explicitly apply one local development evidence bundle.",
@@ -288,6 +294,117 @@ def recover_brain() -> None:
         raise typer.Exit(code=1) from error
 
     console.print(f"[green]Brain Trust transition recovered: {transition_id}[/green]")
+
+
+@brain_app.command("adopt")
+def adopt_brain(
+    plan: Annotated[
+        bool,
+        typer.Option("--plan", help="Show read-only adoption eligibility evidence."),
+    ] = False,
+    confirm: Annotated[
+        bool,
+        typer.Option("--confirm", help="Prepare and execute one authorized adoption."),
+    ] = False,
+    recover: Annotated[
+        bool,
+        typer.Option("--recover", help="Continue one authorized S1/S2 adoption suffix."),
+    ] = False,
+    backup_evidence: Annotated[
+        Path | None,
+        typer.Option("--backup-evidence", help="Readable operator-supplied backup evidence."),
+    ] = None,
+    confirmation: Annotated[
+        str | None,
+        typer.Option(
+            "--confirmation",
+            help="Exact identity-bound token: ADOPT <uuid> or RECOVER ADOPTION.",
+        ),
+    ] = None,
+) -> None:
+    """Plan, execute, or recover the bounded local Brain adoption protocol."""
+
+    selected_modes = sum((plan, confirm, recover))
+    if selected_modes != 1:
+        raise typer.BadParameter("select exactly one of --plan, --confirm, or --recover")
+    if plan and confirmation is not None:
+        raise typer.BadParameter("--confirmation is valid only with --confirm or --recover")
+    if recover and backup_evidence is not None:
+        raise typer.BadParameter("--backup-evidence is valid only with --plan or --confirm")
+
+    coordinator = container.brain_trust_adoption_coordinator()
+    try:
+        if plan:
+            adoption_plan = coordinator.plan(backup_evidence)
+            _render_adoption_plan(adoption_plan)
+            if not adoption_plan.eligible:
+                raise typer.Exit(code=1)
+            return
+
+        if recover:
+            token = confirmation
+            if token is None:
+                token = typer.prompt("Type RECOVER ADOPTION to continue")
+            result = coordinator.recover(token)
+            _render_adoption_result("Brain Trust adoption recovered", result)
+            return
+
+        prepared = coordinator.prepare(backup_evidence)
+        _render_adoption_plan(prepared.plan, brain_id=prepared.brain_id)
+        console.print(
+            "[yellow]This changes future controlled-mutation authority for this Brain.[/yellow]"
+        )
+        token = confirmation
+        if token is None:
+            token = typer.prompt(f"Type {prepared.confirmation_token} to continue")
+        result = coordinator.execute(prepared, token)
+        _render_adoption_result("Brain Trust adoption completed", result)
+    except BrainTrustAdoptionError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+
+def _render_adoption_plan(plan: AdoptionPlan, *, brain_id: UUID | None = None) -> None:
+    """Render bounded adoption evidence without record payloads."""
+
+    adoption_plan = plan
+    console.print("[bold cyan]Brain Trust adoption plan[/bold cyan]")
+    console.print(f"Neural home       : {adoption_plan.neural_home}")
+    console.print(f"Brain path        : {adoption_plan.brain_path}")
+    console.print(f"Binding path      : {adoption_plan.binding_path}")
+    console.print(f"Binding parent    : {adoption_plan.binding_parent}")
+    console.print(
+        f"Metadata target   : {'present' if adoption_plan.metadata_present else 'absent'}"
+    )
+    console.print(f"Binding target    : {'present' if adoption_plan.binding_present else 'absent'}")
+    console.print(f"Classification    : {adoption_plan.state.value}")
+    console.print(f"Eligible          : {'yes' if adoption_plan.eligible else 'no'}")
+    console.print(f"Home writable     : {'yes' if adoption_plan.home_writable else 'no'}")
+    console.print(
+        f"Binding parent    : {'ready' if adoption_plan.binding_parent_ready else 'not ready'}"
+    )
+    console.print(f"Backup evidence   : {adoption_plan.backup_evidence or 'missing'}")
+    console.print("Expected generation: 1")
+    if brain_id is not None:
+        console.print(f"Generated brain_id : {brain_id}")
+    console.print("Record counts:")
+    for name, count in adoption_plan.store_counts:
+        console.print(f"  {name}: {count}")
+    if adoption_plan.blockers:
+        console.print("Blockers:")
+        for blocker in adoption_plan.blockers:
+            console.print(f"  - {blocker}")
+    else:
+        console.print("Blockers          : none")
+
+
+def _render_adoption_result(prefix: str, result: AdoptionResult) -> None:
+    adoption_result = result
+    console.print(f"[green]{prefix}: {adoption_result.transition_id}[/green]")
+    console.print(f"brain_id          : {adoption_result.brain_id}")
+    console.print(f"generation        : {adoption_result.generation}")
+    console.print(f"record count      : {adoption_result.record_count}")
+    console.print("Brain Trust state  : TRUSTED_CURRENT")
 
 
 def _render_neural_doctor(report: NeuralDoctorReport) -> None:

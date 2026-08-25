@@ -69,6 +69,9 @@ from neural_engine.infrastructure.json_playbook_revision_repository import (
 from neural_engine.infrastructure.json_playbook_run_repository import (
     JsonPlaybookRunRepository,
 )
+from neural_engine.infrastructure.local_brain_trust_adoption import (
+    LocalBrainTrustAdoptionCoordinator,
+)
 from neural_engine.infrastructure.local_brain_trust_probe import LocalBrainTrustProbe
 from neural_engine.infrastructure.local_brain_trust_transition import (
     LocalBrainTrustTransitionCoordinator,
@@ -78,6 +81,7 @@ from neural_engine.infrastructure.local_development_evidence_source import (
 )
 from neural_engine.infrastructure.local_neural_doctor_probe import LocalNeuralDoctorProbe
 from neural_engine.infrastructure.local_planner_context_readers import LocalPlannerContextReaders
+from neural_engine.ports.brain_trust_adoption import BrainTrustAdoptionCoordinator
 from neural_engine.ports.brain_trust_transition import BrainTrustRecoveryCoordinator
 
 
@@ -110,6 +114,10 @@ class Container:
 
     def brain_trust_recovery_coordinator(self) -> BrainTrustRecoveryCoordinator:
         return self.brain_trust_transition_coordinator()
+
+    def brain_trust_adoption_coordinator(self) -> BrainTrustAdoptionCoordinator:
+        paths = self._resolved_paths()
+        return LocalBrainTrustAdoptionCoordinator(paths, self.brain_trust_inspector(paths))
 
     def development_evidence_service(self) -> DevelopmentEvidenceService:
         paths = self._resolved_paths()
