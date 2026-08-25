@@ -314,10 +314,35 @@ No generic REPLACE recovery exists. M23 development-evidence apply composes the
 existing protected Decision-family and optional Experience services as
 independent single-record generations. A partial prefix is valid and exact
 retry reuses each component's existing idempotency/conflict boundary; M23 does
-not provide group atomicity or group recovery. The bounded scope still
-excludes REMOVE, grouped multi-target operations, adoption, restore, clone,
+not provide group atomicity or group recovery. The ordinary mutation scope
+still excludes REMOVE, grouped multi-target operations, restore, clone,
 rebind, Model B, a central repository guard, a generic transaction/recovery
-engine, and real Brain writes.
+engine, and real Brain writes. Adoption is a separate bounded local procedure
+described below; it is not ordinary mutation recovery.
+
+## Bounded Brain Trust Adoption
+
+`neural brain adopt --plan`, `--confirm`, and `--recover` provide the narrow
+local adoption boundary. Fresh adoption requires a writable, initialized
+selected Neural home, structurally valid canonical records, absent metadata and
+binding artifacts, an existing safe binding parent, and explicit readable
+operator-supplied backup evidence. The command generates a fresh UUID4 and
+establishes generation 1; it does not import pre-existing trust identity or
+generation and it never rewrites records.
+
+The durable sequence is marker-first: adoption metadata with an
+`ADOPTION` `PendingTransition` is published first, the external binding is
+created exactly once and verified, and the metadata marker is cleared last.
+Interrupted S1/S2 adoption states have a distinct forward-only recovery path;
+ordinary `neural brain recover` remains unchanged. Valid existing binding or
+metadata artifacts that are not an exact adoption suffix require manual
+intervention and are never overwritten.
+
+Successful adoption proves `TRUSTED_CURRENT` and bounded structural validity
+of the records at that point. It does not retroactively establish semantic
+truth, provenance, cryptographic tamper evidence, distributed locking, or
+protection from direct filesystem mutation. Real execution remains explicitly
+operator-authorized and is not performed by tests.
 
 Knowledge create-once and same-ID conflict semantics remain owned by
 `JsonKnowledgeRepository`.

@@ -22,6 +22,20 @@ relies on each service's existing idempotency/conflict semantics for exact
 retry. It is not a transaction and does not add a group recovery contract.
 Do not broaden this convention into a generic transaction or repository guard.
 
+## Bounded Brain Trust adoption
+
+Adoption is a separate local boundary exposed through `neural brain adopt`.
+`--plan` is read-only; `--confirm` requires a fresh UUID4, generation 1,
+explicit backup evidence, and an exact identity-bound confirmation; `--recover`
+continues only a valid adoption marker with an absent or matching binding.
+Fresh adoption never overwrites pre-existing metadata or binding artifacts and
+never rewrites existing records. Metadata marker publication precedes
+create-only binding publication, binding verification precedes marker clear,
+and marker clear is last. Recovery is forward-only and does not broaden the
+ordinary `neural brain recover` command. This remains Model A local filesystem
+trust: adoption does not provide distributed locking, cryptographic tamper
+evidence, or retroactive semantic/provenance trust for existing records.
+
 ## M12 proposal status REPLACE
 
 `EvolutionProposalService.set_status()` is the one protected single-record
