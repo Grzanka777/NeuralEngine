@@ -1,6 +1,45 @@
 # Project State
 
-Last updated: 2026-08-04
+Last updated: 2026-08-25
+
+## Current operational Brain state after adoption
+
+The live host currently selects:
+
+```text
+NEURAL_HOME=/run/media/grzanka/777/NeuralEngine-State
+Brain=/run/media/grzanka/777/NeuralEngine-State/brain
+```
+
+Real Brain adoption is complete. Current `neural status` reports
+`TRUSTED_CURRENT`. The trust metadata and external binding are both regular
+0600 files and agree on:
+
+```text
+brain_id: 2b012895-2258-4c91-82a1-3f84de1659e4
+generation: 1
+```
+
+The metadata path is
+`/run/media/grzanka/777/NeuralEngine-State/brain/brain-trust-metadata.json`;
+the external binding path is
+`/home/grzanka/.config/neural-engine/brain-trust-binding.json`.
+
+The successful post-adoption evidence checkpoint recorded 15/15 canonical
+stores, 22 records, integrity `PASS`, manifest `PASS`, and aggregate SHA-256
+`10c90630678c001ea75cebd97616d7e5147ec200fb161340a03c703616ad162e`.
+The verified host checkpoint reports `neural doctor: READY` with zero failed
+checks: the selected home and Brain are writable, all 15 stores pass, the Brain
+contains 22 records, and integrity and manifest checks both pass. This is a
+current operational checkpoint, not a permanent guarantee about future mount
+state.
+
+The repository remains authoritative for code, contracts, schemas, migrations,
+tests, and release state. The adopted Brain is the trusted current Brain for
+durable project intelligence. Adoption does not make historical records
+semantically true, prevent out-of-band filesystem mutation, or create
+cross-machine synchronization semantics. The recorded `brain_id` is an
+operational checkpoint, not a public API contract.
 
 ## Current release state and historical 1.0 operational closure
 
@@ -56,11 +95,11 @@ Activation/Application evidence, or a changed-Playbook feedback cycle. The
 accepted pre-release evidence limits remain part of the historical release-gate
 record rather than current missing release work.
 
-Brain persistence remains host-local under `~/.neural/brain`; Git does not
-synchronize it. The selected authoritative host contains the verified 22-entry
-Brain. Durable Brain writes remain restricted to that host until an explicit
-migration and operating policy exists. `NEURAL_HOME` is not configured on the
-host and no portable Neural home exists.
+At the historical pre-adoption checkpoint captured by this 1.0 closure
+record, Brain persistence remained host-local under `~/.neural/brain`; Git did
+not synchronize it; `NEURAL_HOME` was not configured on the host; and no
+portable Neural home existed. Those facts are preserved as historical release
+context, not as the current operational state.
 
 ## Neural home path selection
 
