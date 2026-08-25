@@ -109,9 +109,21 @@ def test_package_1_1_is_ready_with_brain_format_1_0(tmp_path: Path) -> None:
     assert report.ready
 
 
-def test_doctor_projects_existing_brain_trust_inspection_additively(tmp_path: Path) -> None:
+def test_doctor_projects_existing_brain_trust_inspection_additively(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_home = Path.home()
+    synthetic_home = tmp_path / "user-home"
+    synthetic_home.mkdir()
+    monkeypatch.setenv("HOME", str(synthetic_home))
     paths = _paths(tmp_path / "portable")
+
+    assert paths.TRUST_BINDING.is_relative_to(synthetic_home)
+    assert real_home / ".config/neural-engine/brain-trust-binding.json" != paths.TRUST_BINDING
     paths.BRAIN.mkdir()
+    assert paths.BRAIN_METADATA.exists() is False
+    assert paths.TRUST_BINDING.exists() is False
     inspector = BrainTrustInspector(lambda: paths, LocalBrainTrustProbe())
 
     report = NeuralDoctorService(
