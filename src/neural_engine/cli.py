@@ -375,6 +375,23 @@ def _render_opencode_compatibility(report: OpencodeCompatibilityReport) -> None:
             f"{smoke.state.value:<9} live smoke ({smoke.lane}): {smoke.detail}",
             markup=False,
         )
+    if compatibility_report.command_protocol is not None:
+        console.print("Command Protocol", markup=False)
+        for protocol_check in compatibility_report.command_protocol.checks:
+            console.print(
+                f"{protocol_check.state.value:<9} {protocol_check.name}: {protocol_check.detail}",
+                markup=False,
+            )
+        console.print(
+            "Protocol version "
+            f"{compatibility_report.command_protocol.protocol_version or 'UNKNOWN'}",
+            markup=False,
+        )
+        console.print(
+            "Workflow version "
+            f"{compatibility_report.command_protocol.workflow_version or 'UNKNOWN'}",
+            markup=False,
+        )
     console.print(f"Compatibility: {compatibility_report.compatibility.value}", markup=False)
 
 

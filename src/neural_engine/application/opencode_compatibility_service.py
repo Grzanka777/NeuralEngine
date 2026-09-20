@@ -6,6 +6,7 @@ from neural_engine.domain.opencode_compatibility import (
 )
 from neural_engine.ports.opencode_compatibility import (
     OpencodeCapabilityObservation,
+    OpencodeCommandProtocolProbe,
     OpencodeCompatibilityProbe,
     OpencodeLiveSmokeRunner,
 )
@@ -18,9 +19,11 @@ class OpencodeCompatibilityService:
         self,
         probe: OpencodeCompatibilityProbe,
         live_smoke_runner: OpencodeLiveSmokeRunner,
+        command_protocol_probe: OpencodeCommandProtocolProbe | None = None,
     ) -> None:
         self._probe = probe
         self._live_smoke_runner = live_smoke_runner
+        self._command_protocol_probe = command_protocol_probe
 
     def inspect(
         self,
@@ -29,6 +32,9 @@ class OpencodeCompatibilityService:
         lane: str = "code",
     ) -> OpencodeCompatibilityReport:
         evidence = self._probe.inspect()
+        command_protocol = evidence.command_protocol
+        if self._command_protocol_probe is not None:
+            command_protocol = self._command_protocol_probe.inspect()
         checks = tuple(self._classify(observation) for observation in evidence.capabilities)
         compatibility = self._overall(checks)
         live_result: OpencodeLiveSmokeResult | None = None
@@ -62,6 +68,7 @@ class OpencodeCompatibilityService:
             checks=checks,
             compatibility=compatibility,
             live_smoke=live_result,
+            command_protocol=command_protocol,
         )
 
     @staticmethod

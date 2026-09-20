@@ -3,6 +3,9 @@ from typer.testing import CliRunner
 
 import neural_engine.cli as cli
 from neural_engine.domain.opencode_compatibility import (
+    OpencodeCommandProtocolCheck,
+    OpencodeCommandProtocolReport,
+    OpencodeCommandProtocolState,
     OpencodeCompatibilityCheck,
     OpencodeCompatibilityReport,
     OpencodeCompatibilityState,
@@ -69,6 +72,70 @@ def test_opencode_doctor_returns_zero_for_degraded_optional_capability(
 
     assert result.exit_code == 0
     assert "Compatibility: DEGRADED" in result.output
+
+
+def test_opencode_doctor_reports_repository_command_protocol_without_version_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeCompatibilityService(
+        OpencodeCompatibilityReport(
+            version="opencode v99.9.9",
+            checks=(
+                OpencodeCompatibilityCheck("executable", OpencodeCompatibilityState.PASS, "found"),
+            ),
+            compatibility=OpencodeCompatibilityState.PASS,
+            command_protocol=OpencodeCommandProtocolReport(
+                checks=(
+                    OpencodeCommandProtocolCheck(
+                        "Command Protocol bootstrap", OpencodeCommandProtocolState.PASS, "found"
+                    ),
+                    OpencodeCommandProtocolCheck(
+                        "Canonical/installed hash", OpencodeCommandProtocolState.WARN, "Phase 2A"
+                    ),
+                ),
+                protocol_version="1.2",
+                workflow_version="1.1",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "container", FakeContainer(service))
+
+    result = CliRunner().invoke(cli.app, ["opencode", "doctor"])
+
+    assert result.exit_code == 0
+    assert "Command Protocol" in result.output
+    assert "PASS      Command Protocol bootstrap" in result.output
+    assert "WARN      Canonical/installed hash" in result.output
+    assert "Protocol version 1.2" in result.output
+    assert "Workflow version 1.1" in result.output
+
+
+def test_opencode_doctor_keeps_protocol_failure_non_blocking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = FakeCompatibilityService(
+        OpencodeCompatibilityReport(
+            version="opencode v2.0.8",
+            checks=(),
+            compatibility=OpencodeCompatibilityState.PASS,
+            command_protocol=OpencodeCommandProtocolReport(
+                checks=(
+                    OpencodeCommandProtocolCheck(
+                        "Command Protocol skill", OpencodeCommandProtocolState.FAIL, "missing"
+                    ),
+                ),
+                protocol_version="1.2",
+                workflow_version="1.1",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "container", FakeContainer(service))
+
+    result = CliRunner().invoke(cli.app, ["opencode", "doctor"])
+
+    assert result.exit_code == 0
+    assert "FAIL      Command Protocol skill" in result.output
+    assert "Compatibility: PASS" in result.output
 
 
 def test_opencode_doctor_rejects_invalid_lane_before_service_call(

@@ -85,6 +85,9 @@ from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSource,
 )
 from neural_engine.infrastructure.local_neural_doctor_probe import LocalNeuralDoctorProbe
+from neural_engine.infrastructure.local_opencode_command_protocol_probe import (
+    LocalOpencodeCommandProtocolProbe,
+)
 from neural_engine.infrastructure.local_opencode_compatibility_probe import (
     LocalOpencodeCompatibilityProbe,
     LocalOpencodeLiveSmokeRunner,
@@ -163,7 +166,11 @@ class Container:
     def opencode_compatibility_service(self) -> OpencodeCompatibilityService:
         """Build the read-only rolling OpenCode compatibility guard."""
         probe = LocalOpencodeCompatibilityProbe()
-        return OpencodeCompatibilityService(probe, LocalOpencodeLiveSmokeRunner())
+        return OpencodeCompatibilityService(
+            probe,
+            LocalOpencodeLiveSmokeRunner(),
+            LocalOpencodeCommandProtocolProbe(),
+        )
 
     def opencode_handoff_watch_service(self) -> OpencodeHandoffWatchService:
         """Build a read-only local OpenCode context-pressure observer."""

@@ -18,6 +18,9 @@ from .experience import (
 from .knowledge import Knowledge, KnowledgeConfidence
 from .observation import Observation
 from .opencode_compatibility import (
+    OpencodeCommandProtocolCheck,
+    OpencodeCommandProtocolReport,
+    OpencodeCommandProtocolState,
     OpencodeCompatibilityCheck,
     OpencodeCompatibilityReport,
     OpencodeCompatibilityState,
@@ -61,6 +64,9 @@ __all__ = [
     "Knowledge",
     "KnowledgeConfidence",
     "Observation",
+    "OpencodeCommandProtocolCheck",
+    "OpencodeCommandProtocolReport",
+    "OpencodeCommandProtocolState",
     "OpencodeCompatibilityCheck",
     "OpencodeCompatibilityReport",
     "OpencodeCompatibilityState",
