@@ -1,0 +1,1377 @@
+#!/usr/bin/env python3
+"""Small, explicit launcher for the frozen local LLM profiles."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Sequence
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
+from http import HTTPStatus
+from pathlib import Path
+from typing import Any, cast
+
+
+def _configured_path(name: str, default: Path) -> Path:
+    """Return a path override while preserving the verified host default."""
+
+    value = os.environ.get(name)
+    return Path(value).expanduser() if value else default
+
+
+GENERAL_MODEL = _configured_path(
+    "NEURALENGINE_GENERAL_MODEL",
+    Path("/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf"),
+)
+GENERAL_MTP = _configured_path(
+    "NEURALENGINE_GENERAL_MTP",
+    Path("/models/gguf/qwen3.6-35b-a3b/mtp/mtp-Qwen3.6-35B-A3B-Q4_0.gguf"),
+)
+CODE_MODEL = _configured_path(
+    "NEURALENGINE_CODE_MODEL",
+    Path("/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf"),
+)
+VISION_MODEL = _configured_path(
+    "NEURALENGINE_VISION_MODEL",
+    Path("/models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"),
+)
+VISION_MMPROJ = _configured_path(
+    "NEURALENGINE_VISION_MMPROJ",
+    Path("/models/gguf/gemma4-26b-a4b/mmproj-BF16.gguf"),
+)
+VISION_MTP = _configured_path(
+    "NEURALENGINE_VISION_MTP",
+    Path("/models/gguf/gemma4-26b-a4b/MTP/mtp-gemma-4-26B-A4B-it-Q8_0.gguf"),
+)
+LLAMA_SERVER = _configured_path(
+    "NEURALENGINE_LLAMA_SERVER",
+    Path("/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server"),
+)
+GENERAL_HOST = "127.0.0.1"
+GENERAL_PORT = 18081
+CODE_HOST = "127.0.0.1"
+CODE_PORT = 18080
+VISION_HOST = "127.0.0.1"
+VISION_PORT = 18082
+CONFLICT_PORTS = (18080, 18081, 18082, 18084)
+HEALTH_TIMEOUT_SECONDS = 300
+HEALTH_POLL_SECONDS = 1
+HEALTH_REQUEST_TIMEOUT_SECONDS = 2
+STOP_TIMEOUT_SECONDS = 90
+STOP_POLL_SECONDS = 1
+LIFECYCLE_LOCK_FILENAME = "lifecycle.lock"
+_PID_PATTERN = re.compile(r"\bpid=(\d+)\b")
+
+
+class LauncherError(RuntimeError):
+    """A safe, user-facing launcher failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class GeneralProfile:
+    """The immutable production GENERAL profile."""
+
+    model: Path = GENERAL_MODEL
+    mtp: Path = GENERAL_MTP
+    runtime: Path = LLAMA_SERVER
+    host: str = GENERAL_HOST
+    port: int = GENERAL_PORT
+
+    def arguments(self) -> tuple[str, ...]:
+        """Return the frozen llama-server arguments after the executable."""
+
+        return (
+            "-m",
+            str(self.model),
+            "-dev",
+            "Vulkan0",
+            "-ngl",
+            "999",
+            "-c",
+            "32768",
+            "-b",
+            "2048",
+            "-ub",
+            "1024",
+            "-np",
+            "1",
+            "-fa",
+            "on",
+            "--cache-prompt",
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-model",
+            str(self.mtp),
+            "--spec-draft-device",
+            "Vulkan0",
+            "--spec-draft-ngl",
+            "999",
+            "--spec-draft-n-max",
+            "3",
+            "--metrics",
+            "--host",
+            self.host,
+            "--port",
+            str(self.port),
+        )
+
+    def command(self) -> tuple[str, ...]:
+        """Return the complete frozen command line."""
+
+        return (str(self.runtime), *self.arguments())
+
+    def endpoint(self) -> str:
+        """Return the OpenAI-compatible endpoint."""
+
+        return f"http://{self.host}:{self.port}/v1"
+
+
+DEFAULT_PROFILE = GeneralProfile()
+
+
+@dataclass(frozen=True, slots=True)
+class CodeProfile:
+    """The immutable production CODE profile."""
+
+    model: Path = CODE_MODEL
+    runtime: Path = LLAMA_SERVER
+    host: str = CODE_HOST
+    port: int = CODE_PORT
+
+    def arguments(self) -> tuple[str, ...]:
+        """Return the frozen llama-server arguments after the executable."""
+
+        return (
+            "-m",
+            str(self.model),
+            "-dev",
+            "Vulkan0",
+            "-ngl",
+            "999",
+            "-c",
+            "32768",
+            "-b",
+            "2048",
+            "-ub",
+            "1024",
+            "-np",
+            "1",
+            "-fa",
+            "on",
+            "--cache-prompt",
+            "--metrics",
+            "--host",
+            self.host,
+            "--port",
+            str(self.port),
+        )
+
+    def command(self) -> tuple[str, ...]:
+        """Return the complete frozen command line."""
+
+        return (str(self.runtime), *self.arguments())
+
+    def endpoint(self) -> str:
+        """Return the OpenAI-compatible endpoint."""
+
+        return f"http://{self.host}:{self.port}/v1"
+
+
+DEFAULT_CODE_PROFILE = CodeProfile()
+
+
+@dataclass(frozen=True, slots=True)
+class VisionProfile:
+    """The immutable production VISION profile."""
+
+    model: Path = VISION_MODEL
+    mmproj: Path = VISION_MMPROJ
+    mtp: Path = VISION_MTP
+    runtime: Path = LLAMA_SERVER
+    host: str = VISION_HOST
+    port: int = VISION_PORT
+
+    def arguments(self) -> tuple[str, ...]:
+        """Return the verified frozen llama-server arguments after the executable."""
+
+        return (
+            "-m",
+            str(self.model),
+            "--mmproj",
+            str(self.mmproj),
+            "-dev",
+            "Vulkan0",
+            "-ngl",
+            "999",
+            "-c",
+            "32768",
+            "-b",
+            "2048",
+            "-ub",
+            "1024",
+            "-np",
+            "1",
+            "-fa",
+            "on",
+            "-ctk",
+            "f16",
+            "-ctv",
+            "f16",
+            "--cache-prompt",
+            "--spec-type",
+            "draft-mtp",
+            "--spec-draft-model",
+            str(self.mtp),
+            "--spec-draft-device",
+            "Vulkan0",
+            "--spec-draft-ngl",
+            "999",
+            "--spec-draft-n-max",
+            "2",
+            "--host",
+            self.host,
+            "--port",
+            str(self.port),
+        )
+
+    def command(self) -> tuple[str, ...]:
+        """Return the complete verified frozen command line."""
+
+        return (str(self.runtime), *self.arguments())
+
+    def endpoint(self) -> str:
+        """Return the OpenAI-compatible endpoint."""
+
+        return f"http://{self.host}:{self.port}/v1"
+
+
+DEFAULT_VISION_PROFILE = VisionProfile()
+
+
+@dataclass(frozen=True, slots=True)
+class PortState:
+    """Listening state and visible owning PIDs for one TCP port."""
+
+    listening: bool
+    pids: tuple[int, ...] = ()
+
+
+def _local_port(address: str) -> int | None:
+    if address.startswith("["):
+        _, separator, port = address.rpartition("]:")
+    else:
+        _, separator, port = address.rpartition(":")
+    if not separator:
+        return None
+    try:
+        return int(port)
+    except ValueError:
+        return None
+
+
+def _port_state_from_ss_output(output: str, port: int) -> PortState:
+    pids: set[int] = set()
+    listening = False
+
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 4 or fields[0] != "LISTEN":
+            continue
+        if _local_port(fields[3]) != port:
+            continue
+
+        listening = True
+        pids.update(int(match) for match in _PID_PATTERN.findall(line))
+
+    return PortState(listening=listening, pids=tuple(sorted(pids)))
+
+
+def port_state(port: int) -> PortState:
+    """Read one TCP listening port using Linux's standard ``ss`` utility."""
+
+    try:
+        result = subprocess.run(
+            ["ss", "-H", "-ltnp"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError as error:
+        raise LauncherError(f"Cannot inspect TCP listeners with ss: {error}") from error
+
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "ss returned a non-zero status"
+        raise LauncherError(f"Cannot inspect TCP listeners: {detail}")
+
+    return _port_state_from_ss_output(result.stdout, port)
+
+
+def _process_command_line(pid: int) -> tuple[str, ...] | None:
+    try:
+        raw_command_line = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return None
+
+    return tuple(
+        item.decode("utf-8", errors="replace") for item in raw_command_line.split(b"\0") if item
+    )
+
+
+def is_general_process(pid: int, profile: GeneralProfile = DEFAULT_PROFILE) -> bool:
+    """Verify the complete command line before allowing a stop."""
+
+    return _process_command_line(pid) == profile.command()
+
+
+def is_code_process(pid: int, profile: CodeProfile = DEFAULT_CODE_PROFILE) -> bool:
+    """Verify the complete command line before allowing a CODE stop."""
+
+    return _process_command_line(pid) == profile.command()
+
+
+def is_vision_process(pid: int, profile: VisionProfile = DEFAULT_VISION_PROFILE) -> bool:
+    """Verify the complete command line before allowing a VISION stop."""
+
+    return _process_command_line(pid) == profile.command()
+
+
+def _health_ok(profile: GeneralProfile) -> bool:
+    request = urllib.request.Request(
+        f"http://{profile.host}:{profile.port}/health",
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - localhost-only health check
+            request,
+            timeout=HEALTH_REQUEST_TIMEOUT_SECONDS,
+        ) as response:
+            return cast(int, response.status) == HTTPStatus.OK
+    except OSError, TimeoutError, urllib.error.URLError:
+        return False
+
+
+def _code_health_ok(profile: CodeProfile) -> bool:
+    """Return whether CODE exposes a healthy JSON health response."""
+
+    request = urllib.request.Request(
+        f"http://{profile.host}:{profile.port}/health",
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - localhost-only health check
+            request,
+            timeout=HEALTH_REQUEST_TIMEOUT_SECONDS,
+        ) as response:
+            if cast(int, response.status) != HTTPStatus.OK:
+                return False
+            payload = json.load(response)
+    except OSError, TimeoutError, TypeError, ValueError, urllib.error.URLError:
+        return False
+
+    return isinstance(payload, dict) and payload.get("status") == "ok"
+
+
+def _vision_health_ok(profile: VisionProfile) -> bool:
+    """Return whether VISION exposes a healthy JSON health response."""
+
+    request = urllib.request.Request(
+        f"http://{profile.host}:{profile.port}/health",
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - localhost-only health check
+            request,
+            timeout=HEALTH_REQUEST_TIMEOUT_SECONDS,
+        ) as response:
+            if cast(int, response.status) != HTTPStatus.OK:
+                return False
+            payload = json.load(response)
+    except OSError, TimeoutError, TypeError, ValueError, urllib.error.URLError:
+        return False
+
+    return isinstance(payload, dict) and payload.get("status") == "ok"
+
+
+def wait_for_health(
+    profile: GeneralProfile = DEFAULT_PROFILE,
+    *,
+    timeout_seconds: float = HEALTH_TIMEOUT_SECONDS,
+    poll_seconds: float = HEALTH_POLL_SECONDS,
+    health_check: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], Any] = time.sleep,
+) -> bool:
+    """Wait until ``/health`` returns HTTP 200 or the timeout expires."""
+
+    check = health_check or (lambda: _health_ok(profile))
+    deadline = clock() + timeout_seconds
+
+    while True:
+        if check():
+            return True
+        if clock() >= deadline:
+            return False
+        sleeper(poll_seconds)
+
+
+def wait_for_code_health(
+    profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    *,
+    timeout_seconds: float = HEALTH_TIMEOUT_SECONDS,
+    poll_seconds: float = HEALTH_POLL_SECONDS,
+    health_check: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], Any] = time.sleep,
+) -> bool:
+    """Wait until CODE returns HTTP 200 with a healthy JSON payload."""
+
+    check = health_check or (lambda: _code_health_ok(profile))
+    deadline = clock() + timeout_seconds
+
+    while True:
+        if check():
+            return True
+        if clock() >= deadline:
+            return False
+        sleeper(poll_seconds)
+
+
+def wait_for_vision_health(
+    profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    timeout_seconds: float = HEALTH_TIMEOUT_SECONDS,
+    poll_seconds: float = HEALTH_POLL_SECONDS,
+    health_check: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], Any] = time.sleep,
+) -> bool:
+    """Wait until VISION returns HTTP 200 with a healthy JSON payload."""
+
+    check = health_check or (lambda: _vision_health_ok(profile))
+    deadline = clock() + timeout_seconds
+
+    while True:
+        if check():
+            return True
+        if clock() >= deadline:
+            return False
+        sleeper(poll_seconds)
+
+
+def _state_log_path() -> Path:
+    state_home = os.environ.get("XDG_STATE_HOME")
+    root = Path(state_home) if state_home else Path.home() / ".local" / "state"
+    return root / "llm" / "general.log"
+
+
+def _code_state_log_path() -> Path:
+    state_home = os.environ.get("XDG_STATE_HOME")
+    root = Path(state_home) if state_home else Path.home() / ".local" / "state"
+    return root / "llm" / "code.log"
+
+
+def _vision_state_log_path() -> Path:
+    state_home = os.environ.get("XDG_STATE_HOME")
+    root = Path(state_home) if state_home else Path.home() / ".local" / "state"
+    return root / "llm" / "vision.log"
+
+
+def _lifecycle_lock_path() -> Path:
+    state_home = os.environ.get("XDG_STATE_HOME")
+    root = Path(state_home) if state_home else Path.home() / ".local" / "state"
+    return root / "llm" / LIFECYCLE_LOCK_FILENAME
+
+
+@contextmanager
+def lifecycle_lock(lock_path: Path | None = None) -> Any:
+    """Serialize all production LLM lifecycle transitions with ``flock``."""
+
+    selected_path = lock_path or _lifecycle_lock_path()
+    try:
+        selected_path.parent.mkdir(parents=True, exist_ok=True)
+        with selected_path.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except OSError as error:
+        raise LauncherError(
+            f"Cannot acquire LLM lifecycle lock {selected_path}: {error}"
+        ) from error
+
+
+def _terminate_started_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    with suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=5)
+
+
+def detect_verified_running_profile(
+    state: PortState,
+    *,
+    identity_checker: Callable[[int], bool],
+    health_check: Callable[[], bool],
+) -> int | None:
+    """Return the verified PID when exactly one known-good process owns the port, else None.
+
+    Returns the PID only when ALL three conditions hold:
+    - exactly one visible PID owns the port,
+    - the process command line matches the expected profile, and
+    - the health endpoint reports healthy.
+
+    Returns None for any deviation: unknown PID, multiple PIDs, cmdline mismatch,
+    or unhealthy endpoint.  Callers must treat None as a refusal condition.
+    """
+
+    if len(state.pids) != 1:
+        return None
+    pid = state.pids[0]
+    if not identity_checker(pid):
+        return None
+    if not health_check():
+        return None
+    return pid
+
+
+def start_general(
+    profile: GeneralProfile = DEFAULT_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    process_factory: Callable[..., subprocess.Popen[bytes]] | None = None,
+    health_waiter: Callable[[GeneralProfile], bool] | None = None,
+    log_path: Callable[[], Path] | None = None,
+    identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
+    health_check: Callable[[GeneralProfile], bool] | None = None,
+) -> None:
+    """Validate, launch, and health-check the frozen GENERAL profile.
+
+    Idempotent: if the exact verified GENERAL profile is already running and healthy,
+    prints GENERAL ALREADY READY and returns without spawning a new process.
+    """
+
+    for label, path in (
+        ("model", profile.model),
+        ("MTP model", profile.mtp),
+        ("llama-server runtime", profile.runtime),
+    ):
+        if not path.is_file():
+            raise LauncherError(f"GENERAL start refused: {label} does not exist: {path}")
+    if not os.access(profile.runtime, os.X_OK):
+        raise LauncherError(f"GENERAL start refused: runtime is not executable: {profile.runtime}")
+
+    read_port = port_reader or port_state
+    check_identity = identity_checker or is_general_process
+    check_health = health_check or _health_ok
+
+    # Idempotency: if the profile's own port is already occupied, check whether
+    # it is the exact verified, healthy profile before running the full conflict scan.
+    own_state = read_port(profile.port)
+    if own_state.listening:
+        verified_pid = detect_verified_running_profile(
+            own_state,
+            identity_checker=lambda pid: check_identity(pid, profile),
+            health_check=lambda: check_health(profile),
+        )
+        if verified_pid is not None:
+            print("GENERAL ALREADY READY")
+            print(f"endpoint: {profile.endpoint()}")
+            print(f"pid: {verified_pid}")
+            return
+
+    conflicts = [port for port in CONFLICT_PORTS if read_port(port).listening]
+    if conflicts:
+        formatted_ports = ", ".join(str(port) for port in conflicts)
+        raise LauncherError(
+            f"GENERAL start refused: a listener already occupies port(s): {formatted_ports}"
+        )
+
+    create_process = process_factory or subprocess.Popen
+    target_log_path = log_path or _state_log_path
+    log_file_path = target_log_path()
+    try:
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_file_path.open("ab") as log_file:
+            process = create_process(
+                profile.command(),
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except OSError as error:
+        raise LauncherError(f"GENERAL start failed to launch llama-server: {error}") from error
+
+    wait_health = health_waiter or (lambda selected_profile: wait_for_health(selected_profile))
+    if not wait_health(profile):
+        _terminate_started_process(process)
+        raise LauncherError(
+            "GENERAL start failed: /health did not become OK within "
+            f"{HEALTH_TIMEOUT_SECONDS} seconds"
+        )
+
+    print("GENERAL READY")
+    print(f"endpoint: {profile.endpoint()}")
+    print(f"pid: {process.pid}")
+
+
+def start_code(
+    profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    process_factory: Callable[..., subprocess.Popen[bytes]] | None = None,
+    health_waiter: Callable[[CodeProfile], bool] | None = None,
+    log_path: Callable[[], Path] | None = None,
+    identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    health_check: Callable[[CodeProfile], bool] | None = None,
+) -> None:
+    """Validate, launch, and health-check the frozen CODE profile.
+
+    Idempotent: if the exact verified CODE profile is already running and healthy,
+    prints CODE ALREADY READY and returns without spawning a new process.
+    """
+
+    for label, path in (
+        ("model", profile.model),
+        ("llama-server runtime", profile.runtime),
+    ):
+        if not path.is_file():
+            raise LauncherError(f"CODE start refused: {label} does not exist: {path}")
+    if not os.access(profile.runtime, os.X_OK):
+        raise LauncherError(f"CODE start refused: runtime is not executable: {profile.runtime}")
+
+    read_port = port_reader or port_state
+    check_identity = identity_checker or is_code_process
+    check_health = health_check or _code_health_ok
+
+    # Idempotency: if the profile's own port is already occupied, check whether
+    # it is the exact verified, healthy profile before running the full conflict scan.
+    own_state = read_port(profile.port)
+    if own_state.listening:
+        verified_pid = detect_verified_running_profile(
+            own_state,
+            identity_checker=lambda pid: check_identity(pid, profile),
+            health_check=lambda: check_health(profile),
+        )
+        if verified_pid is not None:
+            print("CODE ALREADY READY")
+            print(f"endpoint: {profile.endpoint()}")
+            print(f"pid: {verified_pid}")
+            return
+
+    conflicts = [port for port in CONFLICT_PORTS if read_port(port).listening]
+    if conflicts:
+        formatted_ports = ", ".join(str(port) for port in conflicts)
+        raise LauncherError(
+            f"CODE start refused: a listener already occupies port(s): {formatted_ports}"
+        )
+
+    create_process = process_factory or subprocess.Popen
+    target_log_path = log_path or _code_state_log_path
+    log_file_path = target_log_path()
+    try:
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_file_path.open("ab") as log_file:
+            process = create_process(
+                profile.command(),
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except OSError as error:
+        raise LauncherError(f"CODE start failed to launch llama-server: {error}") from error
+
+    wait_health = health_waiter or (lambda selected_profile: wait_for_code_health(selected_profile))
+    if not wait_health(profile):
+        _terminate_started_process(process)
+        raise LauncherError(
+            "CODE start failed: /health did not become healthy within "
+            f"{HEALTH_TIMEOUT_SECONDS} seconds"
+        )
+
+    print("CODE READY")
+    print(f"endpoint: {profile.endpoint()}")
+    print(f"pid: {process.pid}")
+
+
+def start_vision(
+    profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    process_factory: Callable[..., subprocess.Popen[bytes]] | None = None,
+    health_waiter: Callable[[VisionProfile], bool] | None = None,
+    log_path: Callable[[], Path] | None = None,
+    identity_checker: Callable[[int, VisionProfile], bool] | None = None,
+    health_check: Callable[[VisionProfile], bool] | None = None,
+) -> None:
+    """Validate, launch, and health-check the verified VISION profile.
+
+    Idempotent: if the exact verified VISION profile is already running and healthy,
+    prints VISION ALREADY READY and returns without spawning a new process.
+    """
+
+    for label, path in (
+        ("model", profile.model),
+        ("mmproj", profile.mmproj),
+        ("MTP model", profile.mtp),
+        ("llama-server runtime", profile.runtime),
+    ):
+        if not path.is_file():
+            raise LauncherError(f"VISION start refused: {label} does not exist: {path}")
+    if not os.access(profile.runtime, os.X_OK):
+        raise LauncherError(f"VISION start refused: runtime is not executable: {profile.runtime}")
+
+    read_port = port_reader or port_state
+    check_identity = identity_checker or is_vision_process
+    check_health = health_check or _vision_health_ok
+
+    # Idempotency: if the profile's own port is already occupied, check whether
+    # it is the exact verified, healthy profile before running the full conflict scan.
+    own_state = read_port(profile.port)
+    if own_state.listening:
+        verified_pid = detect_verified_running_profile(
+            own_state,
+            identity_checker=lambda pid: check_identity(pid, profile),
+            health_check=lambda: check_health(profile),
+        )
+        if verified_pid is not None:
+            print("VISION ALREADY READY")
+            print(f"endpoint: {profile.endpoint()}")
+            print(f"pid: {verified_pid}")
+            return
+
+    conflicts = [port for port in CONFLICT_PORTS if read_port(port).listening]
+    if conflicts:
+        formatted_ports = ", ".join(str(port) for port in conflicts)
+        raise LauncherError(
+            f"VISION start refused: a listener already occupies port(s): {formatted_ports}"
+        )
+
+    create_process = process_factory or subprocess.Popen
+    target_log_path = log_path or _vision_state_log_path
+    log_file_path = target_log_path()
+    try:
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_file_path.open("ab") as log_file:
+            process = create_process(
+                profile.command(),
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except OSError as error:
+        raise LauncherError(f"VISION start failed to launch llama-server: {error}") from error
+
+    wait_health = health_waiter or (
+        lambda selected_profile: wait_for_vision_health(selected_profile)
+    )
+    if not wait_health(profile):
+        _terminate_started_process(process)
+        raise LauncherError(
+            "VISION start failed: /health did not become healthy within "
+            f"{HEALTH_TIMEOUT_SECONDS} seconds"
+        )
+
+    print("VISION READY")
+    print(f"endpoint: {profile.endpoint()}")
+    print(f"pid: {process.pid}")
+
+
+def wait_for_port_closed(
+    port: int,
+    *,
+    port_reader: Callable[[int], PortState] = port_state,
+    timeout_seconds: float = STOP_TIMEOUT_SECONDS,
+    poll_seconds: float = STOP_POLL_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], Any] = time.sleep,
+) -> bool:
+    """Wait until a TCP port no longer has a listener."""
+
+    deadline = clock() + timeout_seconds
+    while True:
+        if not port_reader(port).listening:
+            return True
+        if clock() >= deadline:
+            return False
+        sleeper(poll_seconds)
+
+
+def stop_general(
+    profile: GeneralProfile = DEFAULT_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
+    killer: Callable[[int, int], Any] | None = None,
+    closed_waiter: Callable[[int], bool] | None = None,
+) -> None:
+    """Stop only the verified GENERAL process that owns port 18081."""
+
+    read_port = port_reader or port_state
+    state = read_port(profile.port)
+    if not state.listening:
+        print("GENERAL STOPPED")
+        print(f"port {profile.port}: closed")
+        return
+
+    if len(state.pids) != 1:
+        raise LauncherError(
+            f"GENERAL stop refused: owner of port {profile.port} is ambiguous "
+            f"(visible PIDs: {', '.join(map(str, state.pids)) or 'unknown'})"
+        )
+
+    pid = state.pids[0]
+    check_identity = identity_checker or is_general_process
+    if not check_identity(pid, profile):
+        raise LauncherError(f"GENERAL stop refused: PID {pid} is not the verified GENERAL profile")
+
+    send_signal = killer or os.kill
+    try:
+        send_signal(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except OSError as error:
+        raise LauncherError(f"GENERAL stop failed for verified PID {pid}: {error}") from error
+
+    wait_closed = closed_waiter or (
+        lambda selected_port: wait_for_port_closed(selected_port, port_reader=read_port)
+    )
+    if not wait_closed(profile.port):
+        raise LauncherError(f"GENERAL stop failed: port {profile.port} is still listening")
+
+    print("GENERAL STOPPED")
+    print(f"port {profile.port}: closed")
+
+
+def _stop_verified_profile(
+    profile_name: str,
+    profile: Any,
+    state: PortState,
+    *,
+    port_reader: Callable[[int], PortState],
+    identity_checker: Callable[[int, Any], bool],
+    killer: Callable[[int, int], Any] | None = None,
+    closed_waiter: Callable[[int], bool] | None = None,
+) -> None:
+    if len(state.pids) != 1:
+        raise LauncherError(
+            f"{profile_name} stop refused: owner of port {profile.port} is ambiguous "
+            f"(visible PIDs: {', '.join(map(str, state.pids)) or 'unknown'})"
+        )
+
+    pid = state.pids[0]
+    if not identity_checker(pid, profile):
+        raise LauncherError(
+            f"{profile_name} stop refused: PID {pid} is not the verified {profile_name} profile"
+        )
+
+    send_signal = killer or os.kill
+    try:
+        send_signal(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except OSError as error:
+        raise LauncherError(
+            f"{profile_name} stop failed for verified PID {pid}: {error}"
+        ) from error
+
+    wait_closed = closed_waiter or (
+        lambda selected_port: wait_for_port_closed(selected_port, port_reader=port_reader)
+    )
+    if not wait_closed(profile.port):
+        raise LauncherError(f"{profile_name} stop failed: port {profile.port} is still listening")
+
+    print(f"{profile_name} STOPPED")
+    print(f"port {profile.port}: closed")
+
+
+def stop_code(
+    profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    killer: Callable[[int, int], Any] | None = None,
+    closed_waiter: Callable[[int], bool] | None = None,
+) -> None:
+    """Stop only the verified CODE process that owns port 18080."""
+
+    read_port = port_reader or port_state
+    state = read_port(profile.port)
+    if not state.listening:
+        print("CODE STOPPED")
+        print(f"port {profile.port}: closed")
+        return
+
+    check_identity = identity_checker or is_code_process
+    _stop_verified_profile(
+        "CODE",
+        profile,
+        state,
+        port_reader=read_port,
+        identity_checker=check_identity,
+        killer=killer,
+        closed_waiter=closed_waiter,
+    )
+
+
+def stop_vision(
+    profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    identity_checker: Callable[[int, VisionProfile], bool] | None = None,
+    killer: Callable[[int, int], Any] | None = None,
+    closed_waiter: Callable[[int], bool] | None = None,
+) -> None:
+    """Stop only the verified VISION process that owns port 18082."""
+
+    read_port = port_reader or port_state
+    state = read_port(profile.port)
+    if not state.listening:
+        print("VISION STOPPED")
+        print(f"port {profile.port}: closed")
+        return
+
+    check_identity = identity_checker or is_vision_process
+    _stop_verified_profile(
+        "VISION",
+        profile,
+        state,
+        port_reader=read_port,
+        identity_checker=check_identity,
+        killer=killer,
+        closed_waiter=closed_waiter,
+    )
+
+
+def _print_status_pid(state: PortState) -> None:
+    if len(state.pids) == 1:
+        print(f"pid: {state.pids[0]}")
+    elif state.pids:
+        print(f"pid: ambiguous ({', '.join(map(str, state.pids))})")
+    else:
+        print("pid: unknown (ss did not expose the owner)")
+
+
+def status_profiles(
+    code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    general_profile: GeneralProfile = DEFAULT_PROFILE,
+    vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    code_health_check: Callable[[CodeProfile], bool] | None = None,
+    general_health_check: Callable[[GeneralProfile], bool] | None = None,
+    vision_health_check: Callable[[VisionProfile], bool] | None = None,
+    code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
+    vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
+) -> None:
+    """Report supported profile state without changing any process state."""
+
+    read_port = port_reader or port_state
+    code_state = read_port(code_profile.port)
+    general_state = read_port(general_profile.port)
+    vision_state = read_port(vision_profile.port)
+
+    profile_specs = (
+        ("CODE", code_profile, code_state, code_health_check or _code_health_ok),
+        ("GENERAL", general_profile, general_state, general_health_check or _health_ok),
+        ("VISION", vision_profile, vision_state, vision_health_check or _vision_health_ok),
+    )
+    active_profiles = [spec for spec in profile_specs if spec[2].listening]
+
+    if len(active_profiles) > 1:
+        print("profile: CONFLICT")
+        print(f"active ports: {', '.join(str(spec[1].port) for spec in active_profiles)}")
+        for name, profile, state, health_check in active_profiles:
+            print(f"{name} port {profile.port}: listening")
+            print(f"{name} health: {'OK' if health_check(profile) else 'not OK or unavailable'}")
+            if len(state.pids) == 1:
+                print(f"{name} pid: {state.pids[0]}")
+            elif state.pids:
+                print(f"{name} pid: ambiguous ({', '.join(map(str, state.pids))})")
+            else:
+                print(f"{name} pid: unknown (ss did not expose the owner)")
+        return
+
+    if not active_profiles:
+        print("LLM STOPPED")
+        print("profile: none")
+        print("active port: none")
+        print("health: unavailable")
+        print("pid: not running")
+        return
+
+    profile_name, profile, state, health_check = active_profiles[0]
+    identity_check = {
+        "CODE": code_identity_checker or is_code_process,
+        "GENERAL": general_identity_checker or is_general_process,
+        "VISION": vision_identity_checker or is_vision_process,
+    }[profile_name]
+
+    identifiable = len(state.pids) == 1 and identity_check(state.pids[0], profile)
+    print(f"profile: {profile_name if identifiable else 'unknown'}")
+    print(f"active port: {profile.port}")
+    print(f"port {profile.port}: listening")
+    print(f"health: {'OK' if health_check(profile) else 'not OK or unavailable'}")
+    _print_status_pid(state)
+
+
+def active_profile_state(
+    code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    general_profile: GeneralProfile = DEFAULT_PROFILE,
+    vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    code_health_check: Callable[[CodeProfile], bool] | None = None,
+    general_health_check: Callable[[GeneralProfile], bool] | None = None,
+    vision_health_check: Callable[[VisionProfile], bool] | None = None,
+    code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
+    vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
+) -> str:
+    """Return one exact, machine-readable verified production state.
+
+    ``UNKNOWN`` is returned for every state that cannot be proven to be one
+    healthy, uniquely owned frozen profile.  The wrapper uses this as a
+    fail-closed ownership boundary.
+    """
+
+    read_port = port_reader or port_state
+    profile_specs = (
+        (
+            "CODE",
+            code_profile,
+            read_port(code_profile.port),
+            code_identity_checker or is_code_process,
+            code_health_check or _code_health_ok,
+        ),
+        (
+            "GENERAL",
+            general_profile,
+            read_port(general_profile.port),
+            general_identity_checker or is_general_process,
+            general_health_check or _health_ok,
+        ),
+        (
+            "VISION",
+            vision_profile,
+            read_port(vision_profile.port),
+            vision_identity_checker or is_vision_process,
+            vision_health_check or _vision_health_ok,
+        ),
+    )
+
+    profile_ports = {code_profile.port, general_profile.port, vision_profile.port}
+    if any(read_port(port).listening for port in CONFLICT_PORTS if port not in profile_ports):
+        return "UNKNOWN"
+
+    active_profiles = [spec for spec in profile_specs if spec[2].listening]
+    if not active_profiles:
+        return "STOPPED"
+    if len(active_profiles) != 1:
+        return "UNKNOWN"
+
+    profile_name, profile, state, identity_checker, health_checker = active_profiles[0]
+    verified_pid = detect_verified_running_profile(
+        state,
+        identity_checker=lambda pid: identity_checker(pid, profile),
+        health_check=lambda: health_checker(profile),
+    )
+    return profile_name if verified_pid is not None else "UNKNOWN"
+
+
+def active_profile_identity(
+    code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    general_profile: GeneralProfile = DEFAULT_PROFILE,
+    vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    code_health_check: Callable[[CodeProfile], bool] | None = None,
+    general_health_check: Callable[[GeneralProfile], bool] | None = None,
+    vision_health_check: Callable[[VisionProfile], bool] | None = None,
+    code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
+    vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
+) -> tuple[str, int] | None:
+    """Return the exact verified active profile and PID, or ``None``."""
+
+    read_port = port_reader or port_state
+    profile_specs = (
+        (
+            "CODE",
+            code_profile,
+            read_port(code_profile.port),
+            code_identity_checker or is_code_process,
+            code_health_check or _code_health_ok,
+        ),
+        (
+            "GENERAL",
+            general_profile,
+            read_port(general_profile.port),
+            general_identity_checker or is_general_process,
+            general_health_check or _health_ok,
+        ),
+        (
+            "VISION",
+            vision_profile,
+            read_port(vision_profile.port),
+            vision_identity_checker or is_vision_process,
+            vision_health_check or _vision_health_ok,
+        ),
+    )
+
+    profile_ports = {code_profile.port, general_profile.port, vision_profile.port}
+    if any(read_port(port).listening for port in CONFLICT_PORTS if port not in profile_ports):
+        return None
+
+    active_profiles = [spec for spec in profile_specs if spec[2].listening]
+    if len(active_profiles) != 1:
+        return None
+
+    profile_name, profile, state, identity_checker, health_checker = active_profiles[0]
+    verified_pid = detect_verified_running_profile(
+        state,
+        identity_checker=lambda pid: identity_checker(pid, profile),
+        health_check=lambda: health_checker(profile),
+    )
+    if verified_pid is None:
+        return None
+    return profile_name, verified_pid
+
+
+def machine_profile_identity() -> str:
+    """Return ``PROFILE PID``, ``STOPPED``, or ``UNKNOWN`` for automation."""
+
+    state = active_profile_state()
+    if state == "STOPPED":
+        return "STOPPED"
+    identity = active_profile_identity()
+    if identity is None:
+        return "UNKNOWN"
+    profile_name, pid = identity
+    return f"{profile_name} {pid}"
+
+
+def switch_profile(
+    target: str,
+    *,
+    state_reader: Callable[[], str] | None = None,
+    stopper: Callable[[], None] | None = None,
+    starter: Callable[[], None] | None = None,
+    lock_path: Path | None = None,
+) -> None:
+    """Switch between verified production profiles while holding the lifecycle lock."""
+
+    target_name = target.upper()
+    if target_name not in {"GENERAL", "CODE", "VISION"}:
+        raise LauncherError(f"SWITCH FAILED: unsupported target profile: {target}")
+
+    read_state = state_reader or active_profile_state
+    stop_current = stopper or stop_active_profiles
+    start_target = (
+        starter
+        or {
+            "GENERAL": start_general,
+            "CODE": start_code,
+            "VISION": start_vision,
+        }[target_name]
+    )
+
+    with lifecycle_lock(lock_path):
+        current = read_state()
+        if current == "UNKNOWN":
+            raise LauncherError(
+                "SWITCH FAILED: current LLM state is UNKNOWN; refusing to stop or start"
+            )
+        if current == target_name:
+            print(f"{target_name} ALREADY READY")
+            return
+        if current not in {"STOPPED", "GENERAL", "CODE", "VISION"}:
+            raise LauncherError(f"SWITCH FAILED: unsupported current LLM state: {current}")
+
+        try:
+            if current != "STOPPED":
+                stop_current()
+                if read_state() != "STOPPED":
+                    raise LauncherError(
+                        f"old profile {current} did not reach verified STOPPED state"
+                    )
+
+            start_target()
+            if read_state() != target_name:
+                raise LauncherError(f"target profile {target_name} was not verified READY")
+        except LauncherError as error:
+            message = str(error)
+            if message.startswith("SWITCH FAILED:"):
+                raise
+            raise LauncherError(f"SWITCH FAILED: {message}") from error
+
+
+def stop_active_profiles(
+    code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    general_profile: GeneralProfile = DEFAULT_PROFILE,
+    vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
+    vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
+    killer: Callable[[int, int], Any] | None = None,
+    closed_waiter: Callable[[int], bool] | None = None,
+    expected_profile: str | None = None,
+    expected_pid: int | None = None,
+) -> None:
+    """Stop one verified supported profile, refusing conflicts or ambiguity."""
+
+    read_port = port_reader or port_state
+    code_state = read_port(code_profile.port)
+    general_state = read_port(general_profile.port)
+    vision_state = read_port(vision_profile.port)
+
+    profile_specs = (
+        ("CODE", code_profile, code_state, code_identity_checker or is_code_process),
+        ("GENERAL", general_profile, general_state, general_identity_checker or is_general_process),
+        ("VISION", vision_profile, vision_state, vision_identity_checker or is_vision_process),
+    )
+    active_profiles = [spec for spec in profile_specs if spec[2].listening]
+
+    if len(active_profiles) > 1:
+        raise LauncherError(
+            "stop refused: supported profile conflict on ports "
+            f"{', '.join(str(spec[1].port) for spec in active_profiles)}"
+        )
+    if not active_profiles:
+        if expected_profile is not None or expected_pid is not None:
+            raise LauncherError("stop refused: expected profile is no longer active")
+        print("LLM STOPPED")
+        print("active ports: none")
+        return
+
+    profile_name, profile, state, identity_checker = active_profiles[0]
+    if (expected_profile is not None or expected_pid is not None) and (
+        expected_profile != profile_name or len(state.pids) != 1 or state.pids[0] != expected_pid
+    ):
+        observed_pid = ", ".join(map(str, state.pids)) or "unknown"
+        raise LauncherError(
+            "stop refused: ownership mismatch; expected "
+            f"{expected_profile or 'unknown'} PID {expected_pid or 'unknown'}, "
+            f"observed {profile_name} PID {observed_pid}"
+        )
+    _stop_verified_profile(
+        profile_name,
+        profile,
+        state,
+        port_reader=read_port,
+        identity_checker=identity_checker,
+        killer=killer,
+        closed_waiter=closed_waiter,
+    )
+
+
+def status_general(
+    profile: GeneralProfile = DEFAULT_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    health_check: Callable[[GeneralProfile], bool] | None = None,
+) -> None:
+    """Report GENERAL port, health, and visible process identity."""
+
+    read_port = port_reader or port_state
+    state = read_port(profile.port)
+    print(f"port {profile.port}: {'listening' if state.listening else 'closed'}")
+
+    if not state.listening:
+        print("health: unavailable")
+        print("pid: not running")
+        return
+
+    check_health = health_check or _health_ok
+    print(f"health: {'OK' if check_health(profile) else 'not OK or unavailable'}")
+    if len(state.pids) == 1:
+        print(f"pid: {state.pids[0]}")
+    elif state.pids:
+        print(f"pid: ambiguous ({', '.join(map(str, state.pids))})")
+    else:
+        print("pid: unknown (ss did not expose the owner)")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="llm", description=__doc__)
+    parser.add_argument(
+        "command",
+        choices=("code", "general", "vision", "switch", "status", "state", "identity", "stop"),
+    )
+    parser.add_argument("profile", nargs="?", choices=("code", "general", "vision"))
+    parser.add_argument("--expected-profile", choices=("GENERAL", "CODE", "VISION"))
+    parser.add_argument("--expected-pid", type=int)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    if args.command == "switch" and args.profile is None:
+        print("llm: switch requires a target profile", file=sys.stderr)
+        return 2
+    if args.command != "switch" and args.profile is not None:
+        print(f"llm: {args.command} does not accept a profile argument", file=sys.stderr)
+        return 2
+    if (args.expected_profile is None) != (args.expected_pid is None):
+        print(
+            "llm: --expected-profile and --expected-pid must be supplied together",
+            file=sys.stderr,
+        )
+        return 2
+    if args.command != "stop" and (
+        args.expected_profile is not None or args.expected_pid is not None
+    ):
+        print("llm: expected identity options are only valid with stop", file=sys.stderr)
+        return 2
+    try:
+        if args.command == "switch":
+            switch_profile(args.profile)
+        elif args.command == "code":
+            with lifecycle_lock():
+                start_code()
+        elif args.command == "general":
+            with lifecycle_lock():
+                start_general()
+        elif args.command == "vision":
+            with lifecycle_lock():
+                start_vision()
+        elif args.command == "status":
+            status_profiles()
+        elif args.command == "state":
+            print(active_profile_state())
+        elif args.command == "identity":
+            print(machine_profile_identity())
+        else:
+            with lifecycle_lock():
+                stop_active_profiles(
+                    expected_profile=args.expected_profile,
+                    expected_pid=args.expected_pid,
+                )
+    except LauncherError as error:
+        print(f"llm: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

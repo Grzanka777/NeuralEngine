@@ -30,8 +30,8 @@ assumptions, and release evidence gate are defined in
   This is path selection only, not migration, synchronization, backup,
   locking, or mount management.
 - Real Brain adoption is complete for the current host. `NEURAL_HOME` selects
-  `/run/media/grzanka/777/NeuralEngine-State`, whose Brain is
-  `/run/media/grzanka/777/NeuralEngine-State/brain`. Current `neural status`
+  `/home/grzanka/Work/NeuralEngine-State`, whose Brain is
+  `/home/grzanka/Work/NeuralEngine-State/brain`. Current `neural status`
   reports `TRUSTED_CURRENT`; the metadata and external binding agree on
   identity and generation `1`. The repository remains authoritative for code,
   contracts, schemas, migrations, tests, and release state; the adopted Brain

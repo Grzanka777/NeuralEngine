@@ -17,6 +17,20 @@ from .experience import (
 )
 from .knowledge import Knowledge, KnowledgeConfidence
 from .observation import Observation
+from .opencode_compatibility import (
+    OpencodeCompatibilityCheck,
+    OpencodeCompatibilityReport,
+    OpencodeCompatibilityState,
+    OpencodeLiveSmokeResult,
+)
+from .opencode_context import (
+    ContextPressure,
+    ContextPressureLevel,
+    ContextSourceQuality,
+    OpencodeContextObservation,
+    SessionAssociationMethod,
+    SessionResolutionResult,
+)
 from .playbook import Playbook
 from .playbook_evaluation import PlaybookEffectiveness, PlaybookEvaluation
 from .playbook_revision import PlaybookRevision
@@ -47,6 +61,16 @@ __all__ = [
     "Knowledge",
     "KnowledgeConfidence",
     "Observation",
+    "OpencodeCompatibilityCheck",
+    "OpencodeCompatibilityReport",
+    "OpencodeCompatibilityState",
+    "OpencodeLiveSmokeResult",
+    "ContextPressure",
+    "ContextPressureLevel",
+    "ContextSourceQuality",
+    "OpencodeContextObservation",
+    "SessionAssociationMethod",
+    "SessionResolutionResult",
     "Playbook",
     "PlaybookEffectiveness",
     "PlaybookEvaluation",

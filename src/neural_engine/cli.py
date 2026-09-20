@@ -1,4 +1,5 @@
 import re
+import time
 from datetime import datetime
 from math import isfinite
 from pathlib import Path
@@ -82,6 +83,18 @@ from neural_engine.application.neural_doctor_service import (
     DoctorState,
     NeuralDoctorReport,
 )
+from neural_engine.application.opencode_handoff_service import (
+    HandoffSessionObservation,
+    OpencodeHandoffError,
+    OpencodeHandoffRequest,
+)
+from neural_engine.application.opencode_handoff_watch_presentation import (
+    render_opencode_handoff_watch,
+)
+from neural_engine.application.opencode_handoff_watch_service import (
+    OpencodeHandoffWatchReport,
+    OpencodeHandoffWatchService,
+)
 from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationFindingsRequiredError,
     PlaybookRunNotFoundError,
@@ -148,8 +161,16 @@ from neural_engine.domain import (
     PlaybookRun,
 )
 from neural_engine.domain.decision_outcome import DecisionOutcomeMetricValue
+from neural_engine.domain.opencode_compatibility import (
+    OpencodeCompatibilityReport,
+    OpencodeCompatibilityState,
+)
+from neural_engine.domain.opencode_context import ContextPressureLevel
 from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSourceError,
+)
+from neural_engine.infrastructure.local_opencode_handoff_repository import (
+    OpencodeHandoffRepositoryError,
 )
 from neural_engine.ports.knowledge_repository import KnowledgeRepositoryError
 from neural_engine.ports.playbook_revision_repository import (
@@ -202,6 +223,14 @@ brain_app = typer.Typer(
 development_evidence_app = typer.Typer(
     help="Preview or explicitly apply one local development evidence bundle.",
 )
+handoff_app = typer.Typer(
+    help=(
+        "Observe OpenCode context pressure and create manual handoffs without changing Brain state."
+    ),
+)
+opencode_app = typer.Typer(
+    help="Inspect rolling OpenCode compatibility without pinning a version.",
+)
 app.add_typer(decision_app, name="decision")
 decision_app.add_typer(decision_action_app, name="action")
 decision_app.add_typer(decision_outcome_app, name="outcome")
@@ -216,16 +245,33 @@ app.add_typer(revision_app, name="revision")
 app.add_typer(run_app, name="run")
 app.add_typer(brain_app, name="brain")
 app.add_typer(development_evidence_app, name="development-evidence")
+app.add_typer(handoff_app, name="handoff")
+app.add_typer(opencode_app, name="opencode")
 
 console = Console()
 container = Container()
+
+_WATCH_EXIT_CODES = {
+    ContextPressureLevel.HEALTHY: 0,
+    ContextPressureLevel.NOTICE: 0,
+    ContextPressureLevel.HANDOFF: 10,
+    ContextPressureLevel.CRITICAL: 20,
+    ContextPressureLevel.UNKNOWN: 30,
+}
+_WATCH_MEANINGFUL_TOKEN_CHANGE = 1_000
+_OPENCODE_COMPATIBILITY_EXIT_CODES = {
+    OpencodeCompatibilityState.PASS: 0,
+    OpencodeCompatibilityState.DEGRADED: 0,
+    OpencodeCompatibilityState.BLOCKED: 1,
+    OpencodeCompatibilityState.UNKNOWN: 2,
+}
 
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
     """Neural Engine entry point."""
 
-    if ctx.invoked_subcommand in {"doctor", "init", "status"}:
+    if ctx.invoked_subcommand in {"doctor", "handoff", "init", "opencode", "status"}:
         return
 
     if ctx.invoked_subcommand is None:
@@ -279,6 +325,241 @@ def doctor() -> None:
     _render_neural_doctor(report)
     if not report.ready:
         raise typer.Exit(code=1)
+
+
+@opencode_app.command("doctor")
+def doctor_opencode(
+    live_smoke: Annotated[
+        bool,
+        typer.Option(
+            "--live-smoke",
+            help="Run one explicit marker-only smoke through the existing wrapper.",
+        ),
+    ] = False,
+    lane: Annotated[
+        str,
+        typer.Option("--lane", help="Live smoke lane: general or code."),
+    ] = "code",
+) -> None:
+    """Check OpenCode capabilities without comparing exact version strings."""
+
+    if lane not in {"general", "code"}:
+        raise typer.BadParameter("must be one of: general, code", param_hint="--lane")
+    try:
+        report = container.opencode_compatibility_service().inspect(
+            live_smoke=live_smoke,
+            lane=lane,
+        )
+    except Exception as error:
+        console.print("OpenCode compatibility check failed unexpectedly.")
+        raise typer.Exit(code=2) from error
+
+    _render_opencode_compatibility(report)
+    raise typer.Exit(code=_OPENCODE_COMPATIBILITY_EXIT_CODES[report.compatibility])
+
+
+def _render_opencode_compatibility(report: OpencodeCompatibilityReport) -> None:
+    """Render compatibility evidence without exposing process or Brain payloads."""
+
+    compatibility_report = report
+    console.print("OpenCode compatibility", markup=False)
+    console.print(f"OpenCode: {compatibility_report.version or 'UNKNOWN'}", markup=False)
+    for check in compatibility_report.checks:
+        console.print(
+            f"{check.state.value:<9} {check.name}: {check.detail}",
+            markup=False,
+        )
+    if compatibility_report.live_smoke is not None:
+        smoke = compatibility_report.live_smoke
+        console.print(
+            f"{smoke.state.value:<9} live smoke ({smoke.lane}): {smoke.detail}",
+            markup=False,
+        )
+    console.print(f"Compatibility: {compatibility_report.compatibility.value}", markup=False)
+
+
+@handoff_app.command("opencode")
+def render_opencode_handoff(
+    task_goal: Annotated[
+        str,
+        typer.Option("--task-goal", help="Explicit current task objective for the new session."),
+    ],
+    next_action: Annotated[
+        str,
+        typer.Option("--next-action", help="One concise next meaningful step."),
+    ],
+    repository_root: Annotated[
+        Path,
+        typer.Option(
+            "--repository-root", help="Git repository root; defaults to the current directory."
+        ),
+    ] = Path("."),
+    verified_decisions: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--verified-decision", help="Repeat only for still-valid, reviewed decisions."
+        ),
+    ] = None,
+    files: Annotated[
+        list[str] | None,
+        typer.Option("--file", help="Repeat for an existing repository-relative working-set file."),
+    ] = None,
+    modules: Annotated[
+        list[str] | None,
+        typer.Option("--module", help="Repeat for a caller-verified relevant module."),
+    ] = None,
+    validated_evidence: Annotated[
+        list[str] | None,
+        typer.Option("--validated-evidence", help="Repeat for a concise supported fact only."),
+    ] = None,
+    uncertainty: Annotated[
+        list[str] | None,
+        typer.Option("--uncertainty", help="Repeat for unresolved or unverified facts."),
+    ] = None,
+    do_not_do: Annotated[
+        list[str] | None,
+        typer.Option("--do-not-do", help="Repeat for additional constraints to preserve."),
+    ] = None,
+) -> None:
+    """Render one manual, reviewable OpenCode fresh-session handoff to stdout."""
+
+    request = OpencodeHandoffRequest(
+        repository_root=repository_root,
+        task_goal=task_goal,
+        next_action=next_action,
+        verified_decisions=tuple(verified_decisions or []),
+        files=tuple(files or []),
+        modules=tuple(modules or []),
+        validated_evidence=tuple(validated_evidence or []),
+        uncertainty=tuple(uncertainty or []),
+        do_not_do=tuple(do_not_do or []),
+    )
+    try:
+        rendered = container.opencode_handoff_service().render(request)
+    except (OpencodeHandoffError, OpencodeHandoffRepositoryError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    console.print(rendered, markup=False, highlight=False, soft_wrap=True, end="")
+
+
+@handoff_app.command("watch")
+def watch_opencode_handoff(
+    check: Annotated[
+        bool,
+        typer.Option("--check", help="Print one read-only status and use pressure exit codes."),
+    ] = False,
+    follow: Annotated[
+        bool,
+        typer.Option(
+            "--follow", help="Poll in the foreground without prompts or handoff generation."
+        ),
+    ] = False,
+    interval: Annotated[
+        int,
+        typer.Option("--interval", help="Foreground polling interval in seconds; minimum 30."),
+    ] = 60,
+    session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--session", help="Explicit OpenCode session ID when local ownership is ambiguous."
+        ),
+    ] = None,
+    repository_root: Annotated[
+        Path,
+        typer.Option(
+            "--repository-root",
+            help=(
+                "OpenCode working directory and handoff repository root; "
+                "defaults to current directory."
+            ),
+        ),
+    ] = Path("."),
+) -> None:
+    """Observe OpenCode only; never compact, summarize, or control session lifecycle."""
+
+    if follow and check:
+        console.print("[red]--check and --follow cannot be combined.[/red]")
+        raise typer.Exit(code=2)
+    if follow and interval < 30:
+        console.print("[red]--interval must be at least 30 seconds.[/red]")
+        raise typer.Exit(code=2)
+
+    directory = repository_root.resolve()
+    watcher = container.opencode_handoff_watch_service()
+    if follow:
+        _follow_opencode_handoff_watch(
+            watcher, session_id=session_id, directory=directory, interval=interval
+        )
+        return
+
+    report = watcher.inspect(session_id=session_id, directory=directory)
+    _print_opencode_handoff_watch(report)
+    if check:
+        raise typer.Exit(code=_WATCH_EXIT_CODES[report.pressure.level])
+    if report.pressure.level not in {
+        ContextPressureLevel.HANDOFF,
+        ContextPressureLevel.CRITICAL,
+    }:
+        return
+    if not typer.confirm("Generate handoff now?", default=False):
+        return
+    if report.observation.session_id is None or report.observation.current_tokens is None:
+        return
+
+    task_goal = typer.prompt("Task goal")
+    next_action = typer.prompt("Next action")
+    request = OpencodeHandoffRequest(
+        repository_root=directory,
+        task_goal=task_goal,
+        next_action=next_action,
+        session_observation=HandoffSessionObservation(
+            session_id=report.observation.session_id,
+            current_tokens=report.observation.current_tokens,
+            context_limit=report.observation.context_limit,
+            source_quality=report.observation.source_quality,
+            source_description=report.observation.source_description,
+        ),
+    )
+    try:
+        rendered = container.opencode_handoff_service().render(request)
+    except (OpencodeHandoffError, OpencodeHandoffRepositoryError) as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+    console.print(rendered, markup=False, highlight=False, soft_wrap=True, end="")
+
+
+def _follow_opencode_handoff_watch(
+    watcher: OpencodeHandoffWatchService, *, session_id: str | None, directory: Path, interval: int
+) -> None:
+    """Poll foreground-only and print initial, transition, or material-change status."""
+
+    prior: OpencodeHandoffWatchReport | None = None
+    try:
+        while True:
+            report = watcher.inspect(session_id=session_id, directory=directory)
+            if _watch_report_changed(prior, report):
+                _print_opencode_handoff_watch(report)
+            prior = report
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+
+
+def _watch_report_changed(
+    prior: OpencodeHandoffWatchReport | None, current: OpencodeHandoffWatchReport
+) -> bool:
+    if prior is None or prior.pressure.level is not current.pressure.level:
+        return True
+    previous_tokens = prior.observation.current_tokens
+    current_tokens = current.observation.current_tokens
+    if previous_tokens is None or current_tokens is None:
+        return previous_tokens != current_tokens
+    return abs(current_tokens - previous_tokens) >= _WATCH_MEANINGFUL_TOKEN_CHANGE
+
+
+def _print_opencode_handoff_watch(report: OpencodeHandoffWatchReport) -> None:
+    console.print(render_opencode_handoff_watch(report), markup=False, highlight=False)
 
 
 @brain_app.command("recover")
