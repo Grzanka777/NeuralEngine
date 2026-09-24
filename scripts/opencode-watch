@@ -25,7 +25,20 @@ CLEANUP_DONE=0
 log() {
     local timestamp
     timestamp="$(date --iso-8601=seconds)"
-    printf '%s %s\n' "${timestamp}" "$*" >>"${LOG_FILE}"
+    local message="${1:-}"
+    (
+        umask 077
+        printf '%s %s\n' "${timestamp}" "${message}" >>"${LOG_FILE}"
+    )
+}
+
+write_private_line() {
+    local path="$1"
+    local value="$2"
+    (
+        umask 077
+        printf '%s\n' "${value}" >"${path}"
+    )
 }
 
 read_llm_state() {
@@ -118,7 +131,7 @@ record_owned_identity() {
             fi
             if [[ -z "${current_record}" || ( "${allow_update}" == "1" && "${current_record}" != "${identity}" ) ]]; then
                 local temporary_file="${OWNERSHIP_FILE}.tmp.$$"
-                printf '%s\n' "${identity}" >"${temporary_file}"
+                write_private_line "${temporary_file}" "${identity}"
                 mv -f -- "${temporary_file}" "${OWNERSHIP_FILE}"
                 log "Recorded wrapper-owned LLM identity: ${identity}."
             fi
@@ -240,7 +253,7 @@ handle_signal() {
     exit "${signal_exit}"
 }
 
-mkdir -p "${STATE_DIR}" || {
+(umask 077; mkdir -p "${STATE_DIR}") || {
     echo "[opencode-watch] Failed to create state directory: ${STATE_DIR}" >&2
     exit 1
 }
@@ -254,18 +267,18 @@ if ! check_duplicate_wrapper; then
     exit 1
 fi
 
-printf '%s\n' "$$" >"${PID_FILE}"
+write_private_line "${PID_FILE}" "$$"
 log "=== opencode-watch started (PID $$) ==="
 log "State dir: ${STATE_DIR}"
 log "Log file: ${LOG_FILE}"
 log "PID file: ${PID_FILE}"
-log "Arguments: ${OPENCODE_BIN} $*"
+log "OpenCode invocation started (argument_count=$#)."
 
 PRE_LLM_STATE="$(read_llm_state)"
 log "pre-launch LLM state: ${PRE_LLM_STATE}"
 
 OPENCODE_STARTED=1
-log "Launching OpenCode with arguments: $*"
+log "Launching OpenCode child."
 "${OPENCODE_BIN}" "$@" &
 OPENCODE_PID=$!
 start_ownership_monitor

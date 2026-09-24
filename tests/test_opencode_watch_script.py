@@ -3,6 +3,7 @@
 import os
 import shlex
 import signal
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -203,9 +204,12 @@ def launch_wrapper(
     *,
     llm_identities: list[str],
     opencode_sleep: float,
+    create_state_dir: bool = True,
+    process_umask: int | None = None,
 ) -> tuple[subprocess.Popen[str], Path, Path]:
     state_dir = tmp_path / "state"
-    state_dir.mkdir()
+    if create_state_dir:
+        state_dir.mkdir()
     project_dir = tmp_path / "project"
     project_dir.mkdir()
     mock_opencode = install_mock_opencode(
@@ -228,6 +232,7 @@ def launch_wrapper(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        preexec_fn=(lambda: os.umask(process_umask)) if process_umask is not None else None,
     )
     return process, state_dir, stop_log
 
@@ -238,7 +243,15 @@ def test_wrapper_forwards_arguments_and_stdio_without_runtime_watchers(tmp_path:
     result, state_dir, stop_log, state_count_file = run_wrapper(
         tmp_path,
         llm_states=["STOPPED", "STOPPED"],
-        args=["--session", "ses_user_supplied", "value with spaces"],
+        args=[
+            "--session",
+            "ses_user_supplied",
+            "--prompt",
+            "PRIVATE_PROMPT_SENTINEL_7f31",
+            "--token",
+            "TOKEN_SENTINEL_9ac2",
+            "value with spaces",
+        ],
         opencode_args_file=args_file,
         neural_marker_file=neural_marker,
     )
@@ -249,6 +262,10 @@ def test_wrapper_forwards_arguments_and_stdio_without_runtime_watchers(tmp_path:
     assert args_file.read_text(encoding="utf-8").splitlines() == [
         "--session",
         "ses_user_supplied",
+        "--prompt",
+        "PRIVATE_PROMPT_SENTINEL_7f31",
+        "--token",
+        "TOKEN_SENTINEL_9ac2",
         "value with spaces",
     ]
     assert not neural_marker.exists()
@@ -257,9 +274,46 @@ def test_wrapper_forwards_arguments_and_stdio_without_runtime_watchers(tmp_path:
     log_content = (state_dir / "opencode-watch.log").read_text(encoding="utf-8")
     assert "pre-launch LLM state: STOPPED" in log_content
     assert "OpenCode exited (exit code 0)" in log_content
+    assert "PRIVATE_PROMPT_SENTINEL_7f31" not in log_content
+    assert "TOKEN_SENTINEL_9ac2" not in log_content
+    assert "argument_count=7" in log_content
     assert "resolved session" not in log_content
     assert "watcher" not in log_content.lower()
     assert not (state_dir / "opencode-watch.pid").exists()
+
+
+def test_wrapper_created_runtime_files_are_private_under_permissive_umask(
+    tmp_path: Path,
+) -> None:
+    process, state_dir, _ = launch_wrapper(
+        tmp_path,
+        llm_identities=["GENERAL 5001"],
+        opencode_sleep=5,
+        create_state_dir=False,
+        process_umask=0,
+    )
+
+    pid_file = state_dir / "opencode-watch.pid"
+    log_file = state_dir / "opencode-watch.log"
+    ownership_file = state_dir / "llm-owner"
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not all(
+            path.exists() for path in (pid_file, log_file, ownership_file)
+        ):
+            time.sleep(0.01)
+
+        assert state_dir.is_dir()
+        assert all(path.exists() for path in (pid_file, log_file, ownership_file))
+        assert stat.S_IMODE(state_dir.stat().st_mode) & 0o077 == 0
+        for path in (pid_file, log_file, ownership_file):
+            assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
+    finally:
+        if process.poll() is None:
+            process.send_signal(signal.SIGTERM)
+        process.communicate(timeout=5)
+
+    assert process.returncode == 128 + signal.SIGTERM
 
 
 def test_wrapper_stops_one_new_healthy_profile_after_stopped_baseline(tmp_path: Path) -> None:
