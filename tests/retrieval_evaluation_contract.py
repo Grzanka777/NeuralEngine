@@ -89,6 +89,8 @@ class RetrievalFixture:
     def __post_init__(self) -> None:
         if not self.case_id.strip() or not self.query_or_claim.strip():
             raise ValueError("Retrieval fixture identity and query must be non-blank.")
+        if self.abstention_expected and self.required_evidence:
+            raise ValueError("Fixtures expecting abstention cannot declare required evidence.")
 
         record_ids = tuple(record.identity for record in self.records)
         if len(record_ids) != len(set(record_ids)):

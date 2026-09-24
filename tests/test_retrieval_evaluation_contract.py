@@ -617,3 +617,78 @@ def test_fixture_rejects_provenance_paths_that_are_not_in_the_relation_graph() -
                 ),
             ),
         )
+
+
+def _contradictory_abstention_fixture() -> RetrievalFixture:
+    return RetrievalFixture(
+        case_id="contradictory-abstention",
+        query_or_claim="query with required evidence but expected abstention",
+        records=(
+            FixtureRecord("required", "Required evidence", EvidenceState.HISTORICAL, "fixture"),
+        ),
+        required_evidence=(ExpectedEvidence("required"),),
+        abstention_expected=True,
+    )
+
+
+def test_fixture_rejects_abstention_with_required_evidence() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Fixtures expecting abstention cannot declare required evidence\\.",
+    ):
+        _contradictory_abstention_fixture()
+
+
+def test_valid_abstention_fixture_evaluates_as_correct_abstention() -> None:
+    fixture = RetrievalFixture(
+        case_id="valid-abstention",
+        query_or_claim="query with no sufficient evidence",
+        records=(FixtureRecord("missing", "Missing evidence", EvidenceState.MISSING, "fixture"),),
+        abstention_expected=True,
+        abstention_reason=(EvidenceState.MISSING,),
+    )
+
+    assert fixture.required_evidence == ()
+    assert evaluate_retrieval(fixture, RetrievalResult(abstained=True)) == RetrievalEvaluation(
+        passed=True,
+        categories=(FailureCategory.CORRECT_ABSTENTION,),
+        findings=(),
+    )
+
+
+def test_positive_evidence_fixture_evaluates_as_correct_hit() -> None:
+    fixture = RetrievalFixture(
+        case_id="valid-positive-evidence",
+        query_or_claim="query with sufficient evidence",
+        records=(
+            FixtureRecord("required", "Required evidence", EvidenceState.HISTORICAL, "fixture"),
+        ),
+        required_evidence=(ExpectedEvidence("required"),),
+        abstention_expected=False,
+    )
+
+    assert evaluate_retrieval(
+        fixture,
+        RetrievalResult(evidence=(RetrievedEvidence("required"),)),
+    ) == RetrievalEvaluation(
+        passed=True,
+        categories=(FailureCategory.CORRECT_HIT,),
+        findings=(),
+    )
+
+
+def test_former_false_pass_case_is_rejected_before_oracle_evaluation() -> None:
+    """The old contract passed when required evidence accompanied abstention."""
+    actual = RetrievalResult(
+        evidence=(RetrievedEvidence("required"),),
+        abstained=True,
+    )
+
+    assert actual.abstained
+    assert tuple(item.identity for item in actual.evidence) == ("required",)
+    with pytest.raises(
+        ValueError,
+        match="Fixtures expecting abstention cannot declare required evidence\\.",
+    ):
+        fixture = _contradictory_abstention_fixture()
+        evaluate_retrieval(fixture, actual)
