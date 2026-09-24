@@ -1289,25 +1289,34 @@ def test_general_refuses_when_port_18084_is_occupied(tmp_path: Path) -> None:
 
 
 def test_main_returns_zero_when_general_already_ready(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
     """main() must return 0 (exit code 0) when GENERAL ALREADY READY."""
     profile = _profile(tmp_path)
 
-    monkeypatch.setattr(launcher, "DEFAULT_PROFILE", profile)
+    monkeypatch.setenv("NEURALENGINE_GENERAL_MODEL", str(profile.model))
+    monkeypatch.setenv("NEURALENGINE_GENERAL_MTP", str(profile.mtp))
+    monkeypatch.setenv("NEURALENGINE_LLAMA_SERVER", str(profile.runtime))
+    configured = _load_launcher("neural_engine_llm_launcher_general_ready_cli")
+    assert configured.DEFAULT_PROFILE.model == profile.model
+    assert configured.DEFAULT_PROFILE.mtp == profile.mtp
+    assert configured.DEFAULT_PROFILE.runtime == profile.runtime
+
     monkeypatch.setattr(
-        launcher,
+        configured,
         "port_state",
-        lambda port: launcher.PortState(
+        lambda port: configured.PortState(
             listening=port == profile.port,
             pids=(6001,) if port == profile.port else (),
         ),
     )
-    monkeypatch.setattr(launcher, "is_general_process", lambda pid, _: pid == 6001)
-    monkeypatch.setattr(launcher, "_health_ok", lambda _: True)
+    monkeypatch.setattr(configured, "is_general_process", lambda pid, _: pid == 6001)
+    monkeypatch.setattr(configured, "_health_ok", lambda _: True)
+    monkeypatch.setattr(configured, "_lifecycle_lock_path", lambda: tmp_path / "lifecycle.lock")
 
-    result = launcher.main(["general"])
+    result = configured.main(["general"])
     assert result == 0
+    assert "GENERAL ALREADY READY" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
