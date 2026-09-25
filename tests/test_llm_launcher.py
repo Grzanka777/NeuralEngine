@@ -209,7 +209,7 @@ def test_code_profile_has_only_the_frozen_non_speculative_arguments(tmp_path: Pa
         "-ngl",
         "999",
         "-c",
-        "32768",
+        "65536",
         "-b",
         "2048",
         "-ub",
@@ -756,6 +756,93 @@ def test_machine_state_fails_closed_for_conflict_or_unverified_listener() -> Non
         )
         == "UNKNOWN"
     )
+
+
+def test_start_profile_from_stopped_returns_exact_owned_identity(
+    tmp_path: Path, capsys: Any
+) -> None:
+    states = iter(("STOPPED", "CODE"))
+    started: list[str] = []
+
+    def start_code() -> None:
+        started.append("CODE")
+        print("CODE READY")
+        print("endpoint: http://127.0.0.1:18080/v1")
+        print("pid: 4321")
+
+    identity = launcher.start_profile(
+        "code",
+        state_reader=lambda: next(states),
+        starter=start_code,
+        identity_reader=lambda: ("CODE", 4321),
+        lock_path=tmp_path / "lifecycle.lock",
+    )
+
+    assert identity == ("CODE", 4321)
+    assert started == ["CODE"]
+    output = capsys.readouterr().out
+    assert "CODE READY" in output
+    assert "pid: 4321" in output
+    assert "CODE STARTED BY THIS INVOCATION" in output
+    assert "ownership: CODE pid=4321" in output
+
+
+def test_start_profile_borrows_same_profile_without_pid_or_restart(
+    tmp_path: Path, capsys: Any
+) -> None:
+    identity = launcher.start_profile(
+        "code",
+        state_reader=lambda: "CODE",
+        starter=lambda: pytest.fail("same-profile start must not restart"),
+        identity_reader=lambda: pytest.fail("borrowed start must not return an identity"),
+        lock_path=tmp_path / "lifecycle.lock",
+    )
+
+    assert identity is None
+    output = capsys.readouterr().out
+    assert output.strip() == "CODE ALREADY READY"
+    assert "pid:" not in output
+
+
+def test_start_profile_refuses_different_active_profile_without_switching(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+
+    def read_identity() -> tuple[str, int]:
+        events.append("identity")
+        return ("CODE", 4321)
+
+    with pytest.raises(launcher.LauncherError, match="START REFUSED: active profile is GENERAL"):
+        launcher.start_profile(
+            "code",
+            state_reader=lambda: "GENERAL",
+            starter=lambda: events.append("start"),
+            identity_reader=read_identity,
+            lock_path=tmp_path / "lifecycle.lock",
+        )
+
+    assert events == []
+
+
+def test_start_profile_refuses_unknown_state_without_starting(tmp_path: Path) -> None:
+    with pytest.raises(launcher.LauncherError, match="START REFUSED: current LLM state is UNKNOWN"):
+        launcher.start_profile(
+            "vision",
+            state_reader=lambda: "UNKNOWN",
+            starter=lambda: pytest.fail("UNKNOWN must not start a profile"),
+            lock_path=tmp_path / "lifecycle.lock",
+        )
+
+
+def test_main_routes_start_profile_to_atomic_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[str | None] = []
+    monkeypatch.setattr(launcher, "start_profile", lambda profile: requested.append(profile))
+
+    assert launcher.main(["start", "code"]) == 0
+    assert requested == ["code"]
 
 
 def test_switch_from_stopped_starts_target_and_verifies_it(tmp_path: Path, capsys: Any) -> None:

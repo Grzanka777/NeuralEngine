@@ -98,7 +98,7 @@ class GeneralProfile:
             "-ngl",
             "999",
             "-c",
-            "32768",
+            "65536",
             "-b",
             "2048",
             "-ub",
@@ -159,7 +159,7 @@ class CodeProfile:
             "-ngl",
             "999",
             "-c",
-            "32768",
+            "65536",
             "-b",
             "2048",
             "-ub",
@@ -1224,6 +1224,64 @@ def switch_profile(
             raise LauncherError(f"SWITCH FAILED: {message}") from error
 
 
+def start_profile(
+    target: str,
+    *,
+    state_reader: Callable[[], str] | None = None,
+    starter: Callable[[], None] | None = None,
+    identity_reader: Callable[[], tuple[str, int] | None] | None = None,
+    lock_path: Path | None = None,
+) -> tuple[str, int] | None:
+    """Start only from STOPPED; return identity only when this call started it."""
+
+    target_name = target.upper()
+    if target_name not in {"GENERAL", "CODE", "VISION"}:
+        raise LauncherError(f"START REFUSED: unsupported target profile: {target}")
+
+    read_state = state_reader or active_profile_state
+    start_target = (
+        starter
+        or {
+            "GENERAL": start_general,
+            "CODE": start_code,
+            "VISION": start_vision,
+        }[target_name]
+    )
+    read_identity = identity_reader or active_profile_identity
+
+    with lifecycle_lock(lock_path):
+        current = read_state()
+        if current == "UNKNOWN":
+            raise LauncherError("START REFUSED: current LLM state is UNKNOWN; refusing to start")
+        if current == target_name:
+            print(f"{target_name} ALREADY READY")
+            return None
+        if current != "STOPPED":
+            raise LauncherError(
+                f"START REFUSED: active profile is {current}; requested {target_name}"
+            )
+
+        try:
+            start_target()
+        except LauncherError as error:
+            raise LauncherError(f"START FAILED: {error}") from error
+
+        if read_state() != target_name:
+            raise LauncherError(
+                f"START FAILED: target profile {target_name} was not verified READY"
+            )
+
+        identity = read_identity()
+        if identity is None or identity[0] != target_name or identity[1] <= 0:
+            raise LauncherError(
+                f"START FAILED: exact {target_name} process identity was not verified"
+            )
+
+        print(f"{target_name} STARTED BY THIS INVOCATION")
+        print(f"ownership: {target_name} pid={identity[1]}")
+        return identity
+
+
 def stop_active_profiles(
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
     general_profile: GeneralProfile = DEFAULT_PROFILE,
@@ -1316,7 +1374,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="llm", description=__doc__)
     parser.add_argument(
         "command",
-        choices=("code", "general", "vision", "switch", "status", "state", "identity", "stop"),
+        choices=(
+            "code",
+            "general",
+            "vision",
+            "switch",
+            "start",
+            "status",
+            "state",
+            "identity",
+            "stop",
+        ),
     )
     parser.add_argument("profile", nargs="?", choices=("code", "general", "vision"))
     parser.add_argument("--expected-profile", choices=("GENERAL", "CODE", "VISION"))
@@ -1329,7 +1397,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "switch" and args.profile is None:
         print("llm: switch requires a target profile", file=sys.stderr)
         return 2
-    if args.command != "switch" and args.profile is not None:
+    if args.command == "start" and args.profile is None:
+        print("llm: start requires a target profile", file=sys.stderr)
+        return 2
+    if args.command not in {"switch", "start"} and args.profile is not None:
         print(f"llm: {args.command} does not accept a profile argument", file=sys.stderr)
         return 2
     if (args.expected_profile is None) != (args.expected_pid is None):
@@ -1346,6 +1417,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "switch":
             switch_profile(args.profile)
+        elif args.command == "start":
+            start_profile(args.profile)
         elif args.command == "code":
             with lifecycle_lock():
                 start_code()
