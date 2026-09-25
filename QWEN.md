@@ -20,6 +20,31 @@ gate. A `PROCEED` RECHECK permits the next plan; the next phase still requires
 an explicit launch. Do not create a generic `//ANALYSE` command or fork protocol
 semantics in a skill or agent.
 
+## Scope and evidence boundary
+
+- The user's explicitly requested target defines the scope root. Operate only
+  within that root. Do not inspect, cite, analyze, or use state outside it
+  unless the task requires an external dependency or the user explicitly
+  authorizes scope expansion.
+- For a narrow file or directory target, bind evidence to its exact paths,
+  contents, inventory, hashes, and observed target-specific output. Do not
+  substitute branch/HEAD, repository status or diffs, unrelated worktree state,
+  or Brain state for target evidence.
+- Obtain requested hashes from an actual hash-tool result on the exact in-scope
+  files and copy the values verbatim. If that result is unavailable, report the
+  hashes as `UNVERIFIED`; never invent or reconstruct them.
+- Follow the user's requested response format exactly. When specific fields are
+  requested, use those labels and return only those fields.
+- For `SEEK`, `REVIEW`, `CHECKPOINT`, `RECHECK`, and `VERIFY`, follow the
+  corresponding adapter in `.qwen/skills/<command>/SKILL.md`.
+- Before returning a requested SHA-256 value, call the shell tool with
+  `sha256sum -- <exact in-scope paths>` and copy each returned value verbatim.
+  A hash without that observed command result is `UNVERIFIED`; do not answer
+  with a guessed or generated value.
+- If external state appears necessary, STOP, explain why, and request explicit
+  authorization before expanding scope. If requested evidence is unavailable
+  within scope, report `UNVERIFIED`; do not infer it.
+
 ## Repository constraints
 
 - Make the smallest safe change within the requested scope.
