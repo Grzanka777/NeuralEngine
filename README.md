@@ -54,7 +54,175 @@ portable Neural home is supported provided the same path is available and
 accessible. Storage lifecycle, device management, and deployment remain user
 and operator responsibilities.
 
+The complete repository-owned reconstruction contract for the current
+NeuralEngine/OpenCode workflow is in
+[`docs/reproducible-baseline.md`](docs/reproducible-baseline.md). It separates
+development and non-editable production installation, documents external
+OpenCode/llama/model prerequisites, and defines the read-only health sequence.
+
 ## Current Capabilities
+
+### Frozen local LLM launcher
+
+The repository includes a small terminal-first launcher for the frozen local
+Qwen3.6 GENERAL, Qwen3-Coder CODE, and Gemma 4 VISION profiles. It performs
+prerequisite, port, health, and verified process checks without enabling a
+service or starting anything during login or boot. To make the command
+available as `llm`, install the executable into a user-local bin directory:
+
+```bash
+install -m 0755 scripts/llm ~/.local/bin/llm
+```
+
+Use it from fish or another shell:
+
+```text
+llm code
+llm general
+llm vision
+llm switch general
+llm switch code
+llm switch vision
+llm status
+llm state
+llm identity
+llm stop
+```
+
+`llm state` is a machine-readable ownership check and prints exactly one of
+`STOPPED`, `GENERAL`, `CODE`, `VISION`, or `UNKNOWN`. It reports a profile only
+when its listener, process command line, and health endpoint are all verified.
+`llm switch <profile>` serializes state inspection, verified shutdown, target
+startup, and target verification with a user-level lifecycle lock. It refuses
+unknown, foreign, or conflicting state and does not perform automatic rollback.
+`llm identity` is a read-only machine-readable check that prints `PROFILE PID`,
+`STOPPED`, or `UNKNOWN`.
+
+The launcher reports these OpenAI-compatible endpoints after `/health` becomes
+ready:
+
+```text
+CODE:    http://127.0.0.1:18080/v1
+GENERAL: http://127.0.0.1:18081/v1
+VISION:  http://127.0.0.1:18082/v1
+```
+
+CODE uses the frozen Vulkan profile without speculative decoding, MTP, or
+EAGLE3 flags. VISION uses the verified Gemma 4 projector and draft-MTP n2
+profile. Only one supported profile may run at a time.
+
+### Manual OpenCode fresh-session handoff
+
+`neural handoff opencode` renders a compact, copy/paste-ready checkpoint for a
+new OpenCode session. It never calls OpenCode compaction or summarize APIs,
+does not start a session, and does not read or write Brain state. The caller
+must explicitly provide the current task goal and next action; optional facts
+are included only when supplied as concise reviewed values.
+
+```bash
+neural handoff opencode \
+  --task-goal "Implement a bounded handoff helper" \
+  --next-action "Review the checkpoint before starting a fresh session" \
+  --verified-decision "Keep the workflow manual" \
+  --file src/neural_engine/cli.py \
+  --validated-evidence "Focused tests passed" \
+  --uncertainty "Automatic triggering is not approved"
+```
+
+The command writes only to stdout, validates supplied working-set files as
+repository-relative existing files, deduplicates facts, rejects oversized raw
+logs and likely secrets, and records live Git branch, HEAD, and a bounded
+worktree state. Redirect stdout when a reviewable file is wanted.
+
+### OpenCode context-pressure watcher
+
+`neural handoff watch` is a foreground, read-only assistant for deciding when
+to create the manual checkpoint. It does not compact, summarize, rewrite,
+close, replace, or start an OpenCode session; it does not modify OpenCode
+configuration or Brain state.
+
+```bash
+# One non-interactive status check for a script.
+neural handoff watch --check --session ses_example
+
+# Interactively offer the existing manual handoff only at HANDOFF pressure.
+neural handoff watch --session ses_example
+
+# Foreground-only monitoring; transitions and changes of at least 1,000 tokens.
+neural handoff watch --follow --session ses_example --interval 60
+```
+
+The frozen production context limit is `32768` tokens. Levels are `HEALTHY`
+below `22000`, `NOTICE` from `22000`, `HANDOFF` from `25000`, and `CRITICAL`
+from `29000`. `--check` exits `0` for HEALTHY/NOTICE, `10` for HANDOFF, `20`
+for CRITICAL, and `30` if session selection or context observation is
+unavailable or ambiguous.
+
+OpenCode v2.0.3 stores sessions in `session_v2` and completed response token
+components in `session_message`; older installations use `session` and
+`part`. The adapter reads both layouts and reports the latest completed
+response as `ESTIMATED` (prefixed with `~`), not as a live active-prompt
+total. It fails closed when the current directory maps to more than one
+unarchived session; use `--session` to select a specific session. A persisted
+session is considered observable only while a live local OpenCode process
+exists; after OpenCode exits, `--check` returns `UNKNOWN` with exit `30` rather
+than presenting stale session state. An estimated value never alone produces
+`CRITICAL`.
+
+### Daily OpenCode wrapper
+
+Install the wrapper as `opencode-watch` (the existing fish `ow` function may
+continue to resolve it):
+
+```bash
+install -m 0755 scripts/opencode-watch ~/.local/bin/opencode-watch
+```
+
+The wrapper records `llm state`, launches OpenCode directly with its original
+arguments and terminal streams, and leaves context management, compaction, and
+tools to OpenCode. It does not resolve sessions, read the OpenCode SQLite
+database, or start a background NeuralEngine watcher. When the initial state is
+`STOPPED`, it records exact verified profile/PID observations and uses signal-safe,
+idempotent cleanup. It invokes `llm stop` only when the same exact identity is
+still verified; pre-existing, conflicting, unknown, or changed ownership is
+preserved.
+
+### OpenCode rolling compatibility
+
+NeuralEngine follows OpenCode as a rolling external platform. After an OpenCode
+update, run the read-only capability preflight:
+
+```bash
+neural opencode doctor
+```
+
+The preflight records the installed OpenCode version for diagnostics and checks
+the executable, resolved user config, selected agent, GENERAL/CODE/VISION
+provider and model identifiers, `llm` lifecycle integration, executable
+`opencode-watch` wrapper, and the explicit NeuralEngine/Brain safety boundary.
+It does not compare against an exact version, start a model, open the OpenCode
+database/service, or write Brain state.
+
+Interpret the result as follows:
+
+```text
+Compatibility: PASS       continue normal work
+Compatibility: DEGRADED   continue; the output names the optional capability
+Compatibility: BLOCKED    stop and repair the named required capability
+Compatibility: UNKNOWN    stop and run the smallest named diagnostic
+```
+
+When stronger evidence is needed, request one bounded marker smoke explicitly:
+
+```bash
+neural opencode doctor --live-smoke --lane code
+```
+
+Use `--lane general` when validating the GENERAL path. The live smoke reuses
+the existing wrapper and exact LLM ownership cleanup; it requires `STOPPED`
+before launch and must finish with `llm state` reported as `STOPPED`. Do not
+pin or downgrade OpenCode, rebaseline prompts, or run token benchmarks merely
+because its version changed.
 
 The first implemented slice is Observation capture:
 

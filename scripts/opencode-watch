@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# opencode-watch — thin lifecycle wrapper for OpenCode and the local LLM launcher
+#
+# The wrapper deliberately does not inspect OpenCode internals. OpenCode owns
+# context management, compaction, and tool execution. This script only protects
+# the LLM lifecycle around one OpenCode invocation.
+
+OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
+LLM_PATH="${LLM_PATH:-${HOME}/.local/bin/llm}"
+STATE_DIR="${STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/neural-engine/opencode-watch}"
+LOG_FILE="${STATE_DIR}/opencode-watch.log"
+PID_FILE="${STATE_DIR}/opencode-watch.pid"
+OWNERSHIP_FILE="${STATE_DIR}/llm-owner"
+OWNERSHIP_POLL_SECONDS="${OWNERSHIP_POLL_SECONDS:-1}"
+
+OPENCODE_STARTED=0
+OPENCODE_PID=""
+OWNERSHIP_MONITOR_PID=""
+PRE_LLM_STATE="UNKNOWN"
+OPENCODE_EXIT=0
+CLEANUP_DONE=0
+
+log() {
+    local timestamp
+    timestamp="$(date --iso-8601=seconds)"
+    local message="${1:-}"
+    (
+        umask 077
+        printf '%s %s\n' "${timestamp}" "${message}" >>"${LOG_FILE}"
+    )
+}
+
+write_private_line() {
+    local path="$1"
+    local value="$2"
+    (
+        umask 077
+        printf '%s\n' "${value}" >"${path}"
+    )
+}
+
+read_llm_state() {
+    local state
+
+    if ! state="$("${LLM_PATH}" state 2>>"${LOG_FILE}")"; then
+        log "WARNING: could not query the verified LLM state; failing closed."
+        printf '%s\n' "UNKNOWN"
+        return 0
+    fi
+
+    case "${state}" in
+        STOPPED|GENERAL|CODE|VISION)
+            printf '%s\n' "${state}"
+            ;;
+        *)
+            log "WARNING: LLM state query returned an unrecognized state; failing closed."
+            printf '%s\n' "UNKNOWN"
+            ;;
+    esac
+}
+
+read_llm_identity() {
+    local identity
+
+    if ! identity="$("${LLM_PATH}" identity 2>>"${LOG_FILE}")"; then
+        log "WARNING: could not query the exact LLM identity; failing closed."
+        printf '%s\n' "UNKNOWN"
+        return 0
+    fi
+
+    if [[ "${identity}" == "STOPPED" ]]; then
+        printf '%s\n' "STOPPED"
+    elif [[ "${identity}" == "UNKNOWN" ]]; then
+        printf '%s\n' "UNKNOWN"
+    elif [[ "${identity}" =~ ^(GENERAL|CODE|VISION)[[:space:]]([1-9][0-9]*)$ ]]; then
+        printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    else
+        log "WARNING: exact LLM identity query returned an unrecognized value; failing closed."
+        printf '%s\n' "UNKNOWN"
+    fi
+}
+
+cleanup_pid_file() {
+    if [[ ! -f "${PID_FILE}" ]]; then
+        return
+    fi
+
+    local owner_pid
+    if ! owner_pid="$(<"${PID_FILE}")"; then
+        log "WARNING: could not read PID file ownership; leaving ${PID_FILE} untouched."
+        return
+    fi
+    if [[ "${owner_pid}" == "$$" ]]; then
+        rm -f -- "${PID_FILE}"
+    else
+        log "PID file ownership changed; leaving ${PID_FILE} untouched."
+    fi
+}
+
+check_duplicate_wrapper() {
+    if [[ ! -f "${PID_FILE}" ]]; then
+        return
+    fi
+
+    local existing_pid
+    existing_pid="$(<"${PID_FILE}")"
+    if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
+        echo "[opencode-watch] Wrapper already running (PID ${existing_pid}). See ${PID_FILE}." >&2
+        return 1
+    fi
+
+    log "Stale PID file found (PID ${existing_pid}); cleaning up."
+    rm -f -- "${PID_FILE}"
+}
+
+record_owned_identity() {
+    if [[ "${PRE_LLM_STATE}" != "STOPPED" ]]; then
+        return
+    fi
+
+    local allow_update="${1:-1}"
+    local identity
+    identity="$(read_llm_identity)"
+    case "${identity}" in
+        GENERAL\ *|CODE\ *|VISION\ *)
+            local current_record=""
+            if [[ -f "${OWNERSHIP_FILE}" ]]; then
+                current_record="$(<"${OWNERSHIP_FILE}")"
+            fi
+            if [[ -z "${current_record}" || ( "${allow_update}" == "1" && "${current_record}" != "${identity}" ) ]]; then
+                local temporary_file="${OWNERSHIP_FILE}.tmp.$$"
+                write_private_line "${temporary_file}" "${identity}"
+                mv -f -- "${temporary_file}" "${OWNERSHIP_FILE}"
+                log "Recorded wrapper-owned LLM identity: ${identity}."
+            fi
+            ;;
+        STOPPED|UNKNOWN)
+            ;;
+    esac
+}
+
+monitor_owned_identity() {
+    while kill -0 "${OPENCODE_PID}" 2>/dev/null; do
+        record_owned_identity
+        sleep "${OWNERSHIP_POLL_SECONDS}" || true
+    done
+}
+
+start_ownership_monitor() {
+    if [[ "${PRE_LLM_STATE}" != "STOPPED" ]]; then
+        return
+    fi
+
+    rm -f -- "${OWNERSHIP_FILE}" "${OWNERSHIP_FILE}.tmp.$$"
+    monitor_owned_identity &
+    OWNERSHIP_MONITOR_PID=$!
+}
+
+stop_ownership_monitor() {
+    if [[ -z "${OWNERSHIP_MONITOR_PID}" ]]; then
+        return
+    fi
+
+    kill "${OWNERSHIP_MONITOR_PID}" 2>/dev/null || true
+    wait "${OWNERSHIP_MONITOR_PID}" 2>/dev/null || true
+    OWNERSHIP_MONITOR_PID=""
+}
+
+cleanup_llm() {
+    if [[ "${OPENCODE_STARTED}" != "1" ]]; then
+        log "LLM cleanup decision: skipped because OpenCode was not started by this wrapper."
+        return
+    fi
+
+    if [[ "${PRE_LLM_STATE}" != "STOPPED" ]]; then
+        log "LLM cleanup decision: preserve pre-existing or unverified state (${PRE_LLM_STATE})."
+        return
+    fi
+
+    if [[ ! -f "${OWNERSHIP_FILE}" ]]; then
+        log "LLM cleanup decision: no wrapper-owned profile was observed; no action."
+        return
+    fi
+
+    local owned_identity
+    owned_identity="$(<"${OWNERSHIP_FILE}")"
+    if [[ ! "${owned_identity}" =~ ^(GENERAL|CODE|VISION)[[:space:]]([1-9][0-9]*)$ ]]; then
+        log "LLM cleanup decision: ownership record is invalid; preserving active state."
+        return
+    fi
+
+    local owned_profile="${BASH_REMATCH[1]}"
+    local owned_pid="${BASH_REMATCH[2]}"
+    local current_identity
+    current_identity="$(read_llm_identity)"
+    if [[ "${current_identity}" != "${owned_identity}" ]]; then
+        log "LLM cleanup decision: ownership mismatch (owned ${owned_identity}, current ${current_identity}); no action."
+        return
+    fi
+
+    log "LLM cleanup decision: verified wrapper-owned ${owned_identity}; invoking llm stop with exact identity."
+    if "${LLM_PATH}" stop --expected-profile "${owned_profile}" --expected-pid "${owned_pid}" >>"${LOG_FILE}" 2>&1; then
+        log "LLM stop result: success (${owned_identity})."
+    else
+        log "WARNING: LLM stop result: failed (${owned_identity}); preserving OpenCode exit code."
+    fi
+}
+
+cleanup() {
+    local exit_code="${1:-${OPENCODE_EXIT}}"
+
+    if [[ "${CLEANUP_DONE}" == "1" ]]; then
+        return
+    fi
+    CLEANUP_DONE=1
+    trap - EXIT INT TERM HUP
+
+    stop_ownership_monitor
+    log "Ownership monitor stopped; final ownership check follows."
+    record_owned_identity 0
+    cleanup_llm
+    cleanup_pid_file
+    rm -f -- "${OWNERSHIP_FILE}" "${OWNERSHIP_FILE}.tmp.$$" || true
+    log "Cleanup complete (exit code ${exit_code})."
+}
+
+handle_signal() {
+    local signal_name="$1"
+    local signal_number="$2"
+    local signal_exit=$((128 + signal_number))
+
+    log "Received ${signal_name}; forwarding to wrapper-owned OpenCode child and cleaning up."
+    if [[ -n "${OPENCODE_PID}" ]] && kill -0 "${OPENCODE_PID}" 2>/dev/null; then
+        kill "-${signal_name}" "${OPENCODE_PID}" 2>>"${LOG_FILE}" || true
+        local attempts=0
+        while kill -0 "${OPENCODE_PID}" 2>/dev/null && (( attempts < 40 )); do
+            sleep 0.05 || true
+            attempts=$((attempts + 1))
+        done
+        if kill -0 "${OPENCODE_PID}" 2>/dev/null; then
+            log "WARNING: OpenCode child did not exit after ${signal_name}; forwarding TERM to exact child PID."
+            kill -TERM "${OPENCODE_PID}" 2>>"${LOG_FILE}" || true
+        fi
+        if wait "${OPENCODE_PID}"; then
+            OPENCODE_EXIT=0
+        else
+            OPENCODE_EXIT=$?
+        fi
+    fi
+    cleanup "${signal_exit}"
+    exit "${signal_exit}"
+}
+
+(umask 077; mkdir -p "${STATE_DIR}") || {
+    echo "[opencode-watch] Failed to create state directory: ${STATE_DIR}" >&2
+    exit 1
+}
+
+trap 'cleanup "$?"' EXIT
+trap 'handle_signal INT 2' INT
+trap 'handle_signal TERM 15' TERM
+trap 'handle_signal HUP 1' HUP
+
+if ! check_duplicate_wrapper; then
+    exit 1
+fi
+
+write_private_line "${PID_FILE}" "$$"
+log "=== opencode-watch started (PID $$) ==="
+log "State dir: ${STATE_DIR}"
+log "Log file: ${LOG_FILE}"
+log "PID file: ${PID_FILE}"
+log "OpenCode invocation started (argument_count=$#)."
+
+PRE_LLM_STATE="$(read_llm_state)"
+log "pre-launch LLM state: ${PRE_LLM_STATE}"
+
+OPENCODE_STARTED=1
+log "Launching OpenCode child."
+"${OPENCODE_BIN}" "$@" &
+OPENCODE_PID=$!
+start_ownership_monitor
+if wait "${OPENCODE_PID}"; then
+    OPENCODE_EXIT=0
+else
+    OPENCODE_EXIT=$?
+fi
+
+log "OpenCode exited (exit code ${OPENCODE_EXIT})."
+cleanup "${OPENCODE_EXIT}"
+exit "${OPENCODE_EXIT}"

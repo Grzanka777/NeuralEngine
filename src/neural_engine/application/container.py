@@ -11,6 +11,11 @@ from neural_engine.application.experience_service import ExperienceService
 from neural_engine.application.knowledge_service import KnowledgeService
 from neural_engine.application.neural_doctor_service import NeuralDoctorService
 from neural_engine.application.observation_service import ObservationService
+from neural_engine.application.opencode_compatibility_service import (
+    OpencodeCompatibilityService,
+)
+from neural_engine.application.opencode_handoff_service import OpencodeHandoffService
+from neural_engine.application.opencode_handoff_watch_service import OpencodeHandoffWatchService
 from neural_engine.application.planner_context_service import PlannerContextService
 from neural_engine.application.playbook_evaluation_service import (
     PlaybookEvaluationService,
@@ -80,9 +85,26 @@ from neural_engine.infrastructure.local_development_evidence_source import (
     LocalDevelopmentEvidenceSource,
 )
 from neural_engine.infrastructure.local_neural_doctor_probe import LocalNeuralDoctorProbe
+from neural_engine.infrastructure.local_opencode_command_protocol_probe import (
+    LocalOpencodeCommandProtocolProbe,
+)
+from neural_engine.infrastructure.local_opencode_compatibility_probe import (
+    LocalOpencodeCompatibilityProbe,
+    LocalOpencodeLiveSmokeRunner,
+)
+from neural_engine.infrastructure.local_opencode_handoff_repository import (
+    LocalOpencodeHandoffRepository,
+)
+from neural_engine.infrastructure.local_opencode_session_observer import (
+    LocalOpencodeSessionObserver,
+)
+from neural_engine.infrastructure.local_opencode_session_resolver import (
+    LocalOpencodeSessionResolver,
+)
 from neural_engine.infrastructure.local_planner_context_readers import LocalPlannerContextReaders
 from neural_engine.ports.brain_trust_adoption import BrainTrustAdoptionCoordinator
 from neural_engine.ports.brain_trust_transition import BrainTrustRecoveryCoordinator
+from neural_engine.ports.opencode_session_resolver import OpencodeSessionResolver
 
 
 class Container:
@@ -136,6 +158,27 @@ class Container:
         """Build the bounded read-only planner-context use case (no CLI exposure)."""
         readers = LocalPlannerContextReaders(self._resolved_paths())
         return PlannerContextService(readers, readers, readers, readers, readers)
+
+    def opencode_handoff_service(self) -> OpencodeHandoffService:
+        """Build a read-only manual OpenCode fresh-session handoff use case."""
+        return OpencodeHandoffService(LocalOpencodeHandoffRepository())
+
+    def opencode_compatibility_service(self) -> OpencodeCompatibilityService:
+        """Build the read-only rolling OpenCode compatibility guard."""
+        probe = LocalOpencodeCompatibilityProbe()
+        return OpencodeCompatibilityService(
+            probe,
+            LocalOpencodeLiveSmokeRunner(),
+            LocalOpencodeCommandProtocolProbe(),
+        )
+
+    def opencode_handoff_watch_service(self) -> OpencodeHandoffWatchService:
+        """Build a read-only local OpenCode context-pressure observer."""
+        return OpencodeHandoffWatchService(LocalOpencodeSessionObserver())
+
+    def opencode_session_resolver(self) -> OpencodeSessionResolver:
+        """Build a read-only local OpenCode session resolver."""
+        return LocalOpencodeSessionResolver()
 
     def decision_action_service(self) -> DecisionActionService:
         paths = self._resolved_paths()

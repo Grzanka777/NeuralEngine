@@ -7,8 +7,8 @@ Last updated: 2026-08-25
 The live host currently selects:
 
 ```text
-NEURAL_HOME=/run/media/grzanka/777/NeuralEngine-State
-Brain=/run/media/grzanka/777/NeuralEngine-State/brain
+NEURAL_HOME=/home/grzanka/Work/NeuralEngine-State
+Brain=/home/grzanka/Work/NeuralEngine-State/brain
 ```
 
 Real Brain adoption is complete. Current `neural status` reports
@@ -21,7 +21,7 @@ generation: 1
 ```
 
 The metadata path is
-`/run/media/grzanka/777/NeuralEngine-State/brain/brain-trust-metadata.json`;
+`/home/grzanka/Work/NeuralEngine-State/brain/brain-trust-metadata.json`;
 the external binding path is
 `/home/grzanka/.config/neural-engine/brain-trust-binding.json`.
 

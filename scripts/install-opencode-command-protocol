@@ -1,0 +1,511 @@
+#!/usr/bin/env python3
+"""Install or check the repository-owned OpenCode Command Protocol adapter."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+PROTOCOL_VERSION = "1.2"
+WORKFLOW_VERSION = "1.1"
+INSTALLER_ID = "neuralengine-opencode-command-protocol"
+MANIFEST_VERSION = 2
+MANIFEST_NAME = "command-protocol.manifest.json"
+
+CANONICAL_HASHES = {
+    "COMMAND_CORE_v1.2.md": "8cb30c38cf0aa3d96848f1cab78cbe5a8ed5d6c7c7b426bb841f5cc9a864119b",
+    "COMMAND_PROTOCOL_v1.2.md": "ebe2a2f26adc96b5f671a3174691f26bbd4e3abf3de7fc577010e208b5b81ee4",
+    "ENGINEERING_WORKFLOW_v1.1.md": "910c4ad8f990c48da90b2d554ef4c3b139b894fdc930b3d17678c94f81854f0e",
+}
+COMMANDS = (
+    "seek",
+    "fix",
+    "arch",
+    "ship",
+    "research",
+    "optimize",
+    "kill",
+    "checkpoint",
+    "recheck",
+    "next",
+)
+ADAPTER_FILES = ("SKILL.md", "bootstrap.md", *(f"commands/{name}.md" for name in COMMANDS))
+INSTALL_MAP = {
+    "integrations/opencode/command-protocol/bootstrap.md": "AGENTS.md",
+    "integrations/opencode/command-protocol/SKILL.md": "skills/command-protocol/SKILL.md",
+    **{
+        f"integrations/opencode/command-protocol/commands/{name}.md": f"commands/{name}.md"
+        for name in COMMANDS
+    },
+    **{
+        f"docs/command-protocol/{name}": f"skills/command-protocol/references/{name}"
+        for name in CANONICAL_HASHES
+    },
+}
+MANAGED_ROOTS = ["AGENTS.md", "skills/command-protocol", "commands/agent.md"]
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def source_root_path(root: Path, relative: str) -> Path:
+    return root / relative
+
+
+def _lexists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _path_kind(path: Path) -> str:
+    if path.is_symlink():
+        return "symlink"
+    if path.is_file():
+        return "regular file"
+    if path.is_dir():
+        return "directory"
+    return "special"
+
+
+def validate_sources(source_root: Path) -> tuple[dict[str, str], list[str]]:
+    hashes: dict[str, str] = {}
+    errors: list[str] = []
+    canonical_root = source_root / "docs" / "command-protocol"
+    for name, expected in CANONICAL_HASHES.items():
+        path = canonical_root / name
+        try:
+            actual = sha256(path)
+        except OSError as error:
+            errors.append(f"missing canonical source {path}: {error}")
+            continue
+        hashes[name] = actual
+        if actual != expected:
+            errors.append(f"canonical source hash mismatch {path}: {actual} != {expected}")
+    adapter_root = source_root / "integrations" / "opencode" / "command-protocol"
+    for relative in ADAPTER_FILES:
+        path = adapter_root / relative
+        if not path.is_file() or path.is_symlink():
+            errors.append(f"missing or non-regular adapter source {path}")
+    return hashes, errors
+
+
+def expected_installed_paths() -> tuple[str, ...]:
+    return tuple(sorted(INSTALL_MAP.values()))
+
+
+def managed_target_paths() -> tuple[str, ...]:
+    return (*expected_installed_paths(), MANIFEST_NAME)
+
+
+def _preflight_target(target_root: Path) -> list[str]:
+    errors: set[str] = set()
+    if _lexists(target_root):
+        if target_root.is_symlink() or not target_root.is_dir():
+            errors.add(f"target root collision: {target_root} ({_path_kind(target_root)})")
+    else:
+        parent = target_root.parent
+        if not _lexists(parent):
+            errors.add(f"target root parent is missing: {parent}")
+        elif parent.is_symlink() or not parent.is_dir():
+            errors.add(f"target root parent collision: {parent} ({_path_kind(parent)})")
+
+    if not _lexists(target_root) or target_root.is_symlink() or not target_root.is_dir():
+        return sorted(errors)
+
+    managed_skill_root = target_root / "skills" / "command-protocol"
+    if _lexists(managed_skill_root):
+        errors.add(
+            "installer-managed root collision: "
+            f"{managed_skill_root.relative_to(target_root)} ({_path_kind(managed_skill_root)})"
+        )
+
+    for relative in managed_target_paths():
+        destination = target_root / relative
+        if _lexists(destination):
+            errors.add(f"managed destination collision: {relative} ({_path_kind(destination)})")
+
+        relative_path = Path(relative)
+        parent = target_root
+        for part in relative_path.parent.parts:
+            parent /= part
+            if _lexists(parent) and (parent.is_symlink() or not parent.is_dir()):
+                errors.add(
+                    f"managed parent collision: {parent.relative_to(target_root)} "
+                    f"({_path_kind(parent)})"
+                )
+
+    forbidden = target_root / "commands" / "agent.md"
+    if _lexists(forbidden):
+        errors.add(
+            "unknown installer-managed material collision: "
+            f"{forbidden.relative_to(target_root)} ({_path_kind(forbidden)})"
+        )
+    return sorted(errors)
+
+
+def make_manifest(source_root: Path, staged_root: Path) -> dict[str, object]:
+    installed_hashes = {
+        target: sha256(staged_root / target) for target in expected_installed_paths()
+    }
+    installed_hashes = dict(sorted(installed_hashes.items()))
+    installed_files = {
+        relative: {"disposition": "NEW", "sha256": digest}
+        for relative, digest in installed_hashes.items()
+    }
+    return {
+        "installer_id": INSTALLER_ID,
+        "manifest_version": MANIFEST_VERSION,
+        "protocol_version": PROTOCOL_VERSION,
+        "workflow_version": WORKFLOW_VERSION,
+        "canonical_source_hashes": dict(sorted(CANONICAL_HASHES.items())),
+        "source_paths": dict(sorted(INSTALL_MAP.items())),
+        "expected_installed_paths": list(expected_installed_paths()),
+        "installed_hashes": installed_hashes,
+        "installed_files": installed_files,
+        "managed_roots": MANAGED_ROOTS,
+    }
+
+
+def _write_manifest(path: Path, manifest: dict[str, object]) -> None:
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _manifest_errors(manifest: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    if manifest.get("installer_id") != INSTALLER_ID:
+        errors.append("installer identity mismatch")
+    if manifest.get("manifest_version") != MANIFEST_VERSION:
+        errors.append("manifest version mismatch")
+    if manifest.get("protocol_version") != PROTOCOL_VERSION:
+        errors.append("protocol version mismatch")
+    if manifest.get("workflow_version") != WORKFLOW_VERSION:
+        errors.append("workflow version mismatch")
+    if manifest.get("canonical_source_hashes") != dict(sorted(CANONICAL_HASHES.items())):
+        errors.append("canonical source identity in manifest mismatches expected identity")
+    expected = list(expected_installed_paths())
+    if manifest.get("source_paths") != dict(sorted(INSTALL_MAP.items())):
+        errors.append("source paths mismatch")
+    if manifest.get("expected_installed_paths") != expected:
+        errors.append("expected installed paths mismatch")
+    if manifest.get("managed_roots") != MANAGED_ROOTS:
+        errors.append("managed roots mismatch")
+
+    installed_hashes = manifest.get("installed_hashes")
+    if not isinstance(installed_hashes, dict):
+        errors.append("installed_hashes is missing or invalid")
+        installed_hashes = {}
+    elif set(installed_hashes) != set(expected):
+        errors.append("installed_hashes paths mismatch")
+    if any(not isinstance(value, str) for value in installed_hashes.values()):
+        errors.append("installed_hashes contains an invalid digest")
+
+    installed_files = manifest.get("installed_files")
+    if not isinstance(installed_files, dict):
+        errors.append("installed_files is missing or invalid")
+        installed_files = {}
+    elif set(installed_files) != set(expected):
+        errors.append("installed_files paths mismatch")
+    for relative in expected:
+        entry = installed_files.get(relative)
+        if not isinstance(entry, dict):
+            errors.append(f"installed file identity is missing or invalid: {relative}")
+            continue
+        if entry.get("disposition") != "NEW":
+            errors.append(f"installed file disposition mismatch: {relative}")
+        digest = installed_hashes.get(relative)
+        if entry.get("sha256") != digest or not isinstance(digest, str):
+            errors.append(f"installed file hash identity mismatch: {relative}")
+    return errors
+
+
+def _unexpected_paths(target_root: Path, expected: set[str]) -> list[str]:
+    unexpected: list[str] = []
+    expected_ancestors: set[str] = set()
+    for relative in expected:
+        parts = Path(relative).parts
+        expected_ancestors.update("/".join(parts[:index]) for index in range(1, len(parts)))
+    managed_skill_root = target_root / "skills" / "command-protocol"
+    if managed_skill_root.is_dir() and not managed_skill_root.is_symlink():
+        for path in managed_skill_root.rglob("*"):
+            relative = path.relative_to(target_root).as_posix()
+            if relative not in expected and relative not in expected_ancestors:
+                unexpected.append(relative)
+    agent_command = target_root / "commands" / "agent.md"
+    if _lexists(agent_command):
+        unexpected.append("commands/agent.md")
+    return sorted(set(unexpected))
+
+
+def _verify_installed_tree(root: Path, manifest: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    installed_hashes = manifest.get("installed_hashes")
+    if not isinstance(installed_hashes, dict):
+        return ["installed_hashes is missing or invalid"]
+    expected = set(expected_installed_paths())
+    for relative in sorted(expected):
+        path = root / relative
+        for parent in path.parents:
+            if parent == root:
+                break
+            if parent.is_symlink() or not parent.is_dir():
+                errors.append(f"installed parent is missing or not a real directory: {parent}")
+                break
+        if path.is_symlink() or not path.is_file():
+            errors.append(f"installed path is missing or not a copy: {path}")
+            continue
+        actual = sha256(path)
+        recorded = installed_hashes.get(relative)
+        if not isinstance(recorded, str) or actual != recorded:
+            errors.append(f"installed hash mismatch {path}: {actual} != {recorded}")
+    errors.extend(
+        f"unexpected installer-owned material: {relative}"
+        for relative in _unexpected_paths(root, expected)
+    )
+    return errors
+
+
+def _load_manifest(target_root: Path) -> tuple[dict[str, object] | None, list[str]]:
+    path = target_root / MANIFEST_NAME
+    if path.is_symlink() or not path.is_file():
+        return None, [f"manifest is missing or not a regular file: {path}"]
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return None, [f"manifest could not be read: {error}"]
+    if not isinstance(value, dict):
+        return None, ["manifest root is not an object"]
+    return value, []
+
+
+def _existing_publish_dirs(target_root: Path) -> set[Path]:
+    existing: set[Path] = set()
+    if target_root.is_dir() and not target_root.is_symlink():
+        existing.add(target_root)
+    for relative in managed_target_paths():
+        current = target_root
+        for part in Path(relative).parent.parts:
+            current /= part
+            if current.is_dir() and not current.is_symlink():
+                existing.add(current)
+    return existing
+
+
+def _ensure_publish_parent(
+    target_root: Path,
+    parent: Path,
+    created_dirs: list[Path],
+    preexisting_dirs: set[Path],
+    target_root_was_present: bool,
+) -> None:
+    if not _lexists(target_root):
+        if target_root_was_present:
+            raise RuntimeError(f"late target-root disappearance: {target_root}")
+        target_root.mkdir()
+        created_dirs.append(target_root)
+    elif target_root.is_symlink() or not target_root.is_dir():
+        raise RuntimeError(f"late target-root collision: {target_root} ({_path_kind(target_root)})")
+    elif target_root not in preexisting_dirs and target_root not in created_dirs:
+        raise RuntimeError(f"late target-root collision: {target_root}")
+
+    relative_parent = parent.relative_to(target_root)
+    current = target_root
+    for part in relative_parent.parts:
+        current /= part
+        if _lexists(current):
+            if current.is_symlink() or not current.is_dir():
+                raise RuntimeError(
+                    f"late managed parent collision: {current.relative_to(target_root)} "
+                    f"({_path_kind(current)})"
+                )
+            if current not in preexisting_dirs and current not in created_dirs:
+                raise RuntimeError(
+                    f"late managed parent collision: {current.relative_to(target_root)}"
+                )
+        else:
+            if current in preexisting_dirs:
+                raise RuntimeError(
+                    f"late managed parent disappearance: {current.relative_to(target_root)}"
+                )
+            current.mkdir()
+            created_dirs.append(current)
+
+
+def _rollback(
+    published: list[tuple[Path, str]],
+    created_dirs: list[Path],
+) -> list[str]:
+    errors: list[str] = []
+    for path, expected_hash in reversed(published):
+        if not _lexists(path):
+            continue
+        if path.is_symlink() or not path.is_file():
+            errors.append(f"rollback preserved changed published path: {path}")
+            continue
+        try:
+            actual = sha256(path)
+        except OSError as error:
+            errors.append(f"rollback could not verify published path {path}: {error}")
+            continue
+        if actual != expected_hash:
+            errors.append(
+                f"rollback preserved changed published path: {path} ({actual} != {expected_hash})"
+            )
+            continue
+        try:
+            path.unlink()
+        except OSError as error:
+            errors.append(f"rollback could not remove published path {path}: {error}")
+
+    for directory in sorted(set(created_dirs), key=lambda path: len(path.parts), reverse=True):
+        if not _lexists(directory):
+            continue
+        if directory.is_symlink() or not directory.is_dir():
+            errors.append(f"rollback preserved changed created directory: {directory}")
+            continue
+        try:
+            directory.rmdir()
+        except OSError as error:
+            errors.append(f"rollback preserved non-empty created directory {directory}: {error}")
+    return errors
+
+
+def _publish(
+    source_root: Path,
+    target_root: Path,
+    staged_root: Path,
+    manifest: dict[str, object],
+    preexisting_dirs: set[Path],
+    target_root_was_present: bool,
+) -> dict[str, object]:
+    published: list[tuple[Path, str]] = []
+    created_dirs: list[Path] = []
+    try:
+        for relative in (*expected_installed_paths(), MANIFEST_NAME):
+            destination = target_root / relative
+            _ensure_publish_parent(
+                target_root,
+                destination.parent,
+                created_dirs,
+                preexisting_dirs,
+                target_root_was_present,
+            )
+            if _lexists(destination):
+                raise RuntimeError(f"late managed destination collision: {relative}")
+
+            staged_file = staged_root / relative
+            expected_hash = sha256(staged_file)
+            file_descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".command-protocol-", dir=destination.parent
+            )
+            os.close(file_descriptor)
+            temporary = Path(temporary_name)
+            try:
+                shutil.copyfile(staged_file, temporary)
+                if sha256(temporary) != expected_hash:
+                    raise RuntimeError(f"staged publication hash mismatch: {relative}")
+                if _lexists(destination):
+                    raise RuntimeError(f"late managed destination collision: {relative}")
+                os.link(temporary, destination)
+                published.append((destination, expected_hash))
+            finally:
+                if _lexists(temporary):
+                    temporary.unlink()
+
+        checked = check(source_root, target_root)
+        if not checked["ok"]:
+            raise RuntimeError("post-write verification failed: " + "; ".join(checked["errors"]))
+        return {"ok": True, "operation": "install", "manifest": manifest}
+    except (OSError, RuntimeError) as error:
+        rollback_errors = _rollback(published, created_dirs)
+        errors = [f"publication failed: {error}"]
+        if rollback_errors:
+            errors.append("rollback failed: " + "; ".join(rollback_errors))
+        return {"ok": False, "errors": errors, "operation": "install"}
+
+
+def install(source_root: Path, target_root: Path) -> dict[str, object]:
+    _source_hashes, source_errors = validate_sources(source_root)
+    collision_errors = _preflight_target(target_root)
+    errors = sorted(set(source_errors + collision_errors))
+    if errors:
+        return {"ok": False, "errors": errors, "operation": "install"}
+
+    target_root_was_present = _lexists(target_root)
+    preexisting_dirs = _existing_publish_dirs(target_root)
+    try:
+        with tempfile.TemporaryDirectory(prefix="neuralengine-opencode-command-protocol-") as stage:
+            staged_root = Path(stage)
+            for source, target in sorted(INSTALL_MAP.items()):
+                staged_destination = staged_root / target
+                staged_destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source_root_path(source_root, source), staged_destination)
+            manifest = make_manifest(source_root, staged_root)
+            _write_manifest(staged_root / MANIFEST_NAME, manifest)
+            staged_errors = _manifest_errors(manifest) + _verify_installed_tree(
+                staged_root, manifest
+            )
+            if staged_errors:
+                return {
+                    "ok": False,
+                    "errors": sorted(set(staged_errors)),
+                    "operation": "install",
+                }
+            return _publish(
+                source_root,
+                target_root,
+                staged_root,
+                manifest,
+                preexisting_dirs,
+                target_root_was_present,
+            )
+    except OSError as error:
+        return {"ok": False, "errors": [f"staging failed: {error}"], "operation": "install"}
+
+
+def check(source_root: Path, target_root: Path) -> dict[str, object]:
+    source_hashes, errors = validate_sources(source_root)
+    if _lexists(target_root) and (target_root.is_symlink() or not target_root.is_dir()):
+        errors.append(f"target root is not a real directory: {target_root}")
+    manifest, manifest_errors = _load_manifest(target_root)
+    errors.extend(manifest_errors)
+    if manifest is None:
+        return {"ok": False, "errors": sorted(set(errors)), "operation": "check"}
+
+    errors.extend(_manifest_errors(manifest))
+    errors.extend(_verify_installed_tree(target_root, manifest))
+    return {
+        "ok": not errors and len(source_hashes) == len(CANONICAL_HASHES),
+        "errors": sorted(set(errors)),
+        "operation": "check",
+        "manifest": manifest,
+    }
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    operation = parser.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--check", action="store_true")
+    operation.add_argument("--install", action="store_true")
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--target-root", type=Path, required=True)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv or sys.argv[1:])
+    if args.install:
+        result = install(args.source_root, args.target_root)
+    else:
+        result = check(args.source_root, args.target_root)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
