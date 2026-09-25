@@ -56,8 +56,11 @@ Every AI agent must:
 * Read repository instructions and required project context before editing.
 * Work only within the authorized task scope.
 * Preserve explicitly stated non-goals.
-* Treat the verified live checkout as repository authority.
-* Use `/run/media/grzanka/777/projekty/NeuralEngine` for NeuralEngine work.
+* Treat `/home/grzanka/Work/NeuralEngine` as the verified authoritative
+  checkout for NeuralEngine work.
+* Treat `/run/media/grzanka/777/projekty/NeuralEngine` as legacy
+  archive/reference only; do not read project state from it unless explicitly
+  requested.
 * Never substitute stale checkouts under `/run/media/grzanka/Big_Shit/`.
 * Treat the live NeuralEngine Brain as read-only by default.
 * Never write to Brain, create lifecycle records, or mutate durable state without separate explicit authorization.

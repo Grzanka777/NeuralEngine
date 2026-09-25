@@ -1,0 +1,22 @@
+{
+  "markers": ["ALPHA", "BRAVO", "CHARLIE", "DELTA"],
+  "deterministic": [
+    {
+      "name": "integer_addition",
+      "prompt": "Return only the decimal result of 137 + 286.",
+      "expected": "423"
+    },
+    {
+      "name": "stable_sort",
+      "prompt": "Sort these words alphabetically and return only a comma-separated list: pear apple kiwi.",
+      "expected": "apple,kiwi,pear"
+    },
+    {
+      "name": "boolean_logic",
+      "prompt": "Return only TRUE or FALSE: (7 > 3) AND (2 > 9).",
+      "expected": "FALSE"
+    }
+  ],
+  "json_runs": 5,
+  "tool_runs": 5
+}
