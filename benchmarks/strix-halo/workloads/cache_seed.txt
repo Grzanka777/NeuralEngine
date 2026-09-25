@@ -1,0 +1,6 @@
+NeuralEngine is a local-first cognitive evolution engine. Repository evidence is
+authoritative for code and contracts. Durable knowledge remains human-controlled.
+Benchmarks must preserve raw evidence, use deterministic inputs, validate outputs,
+and fail closed when runtime identity, device placement, or request isolation is
+uncertain. The static context in this record is intentionally repetitive but each
+numbered record remains deterministic and stable across cache requests.
