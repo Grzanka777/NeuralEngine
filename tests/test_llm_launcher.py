@@ -197,6 +197,19 @@ def test_health_wait_times_out_without_success() -> None:
     )
 
 
+def test_profiles_use_production_context_limits() -> None:
+    profiles = (
+        (launcher.DEFAULT_PROFILE, "65536"),
+        (launcher.DEFAULT_CODE_PROFILE, "65536"),
+        (launcher.DEFAULT_VISION_PROFILE, "32768"),
+    )
+
+    for profile, expected_context in profiles:
+        arguments = profile.arguments()
+        context_index = arguments.index("-c")
+        assert arguments[context_index + 1] == expected_context
+
+
 def test_code_profile_has_only_the_frozen_non_speculative_arguments(tmp_path: Path) -> None:
     profile = _code_profile(tmp_path)
 
