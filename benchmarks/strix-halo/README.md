@@ -66,3 +66,40 @@ Self-tests do not start a server:
 uv run python -m unittest discover benchmarks/strix-halo/tests -v
 uv run python -m py_compile benchmarks/strix-halo/bench-z13 benchmarks/strix-halo/scripts/harness.py
 ```
+
+## GENERAL `n_ubatch` A/B (`scripts/ubatch_ab.py`)
+
+A single-variable A/B for the production GENERAL profile: `n_ubatch` 1024
+(baseline) versus 2048 (challenger). Model, quantization, context, `n_batch`,
+GPU layers, device, `-fa on`, KV cache type, and MTP depth are held identical,
+so `-ub` is the only knob that differs between arms.
+The default context is 65536; pass `--context 32768` for historical comparison.
+
+The driver is isolated from production: it never edits `configs/default.json`,
+`scripts/llm`, the installed `~/.local/bin/llm`, or any systemd unit. It reuses
+the harness `ManagedServer` on its own port (`18089` by default, so the
+production `18080`/`18081`/`18082` ports are untouched) and keeps every
+fail-closed gate (hash pins, port collision, OOM, GPU reset/device loss, CPU
+fallback, token-count mismatch).
+
+```fish
+# pin identities and print both arms without starting a server
+uv run python benchmarks/strix-halo/scripts/ubatch_ab.py --dry-run
+
+# default run: TG512 and PP at context 65536
+uv run python benchmarks/strix-halo/scripts/ubatch_ab.py
+
+# historical 32768-context comparison
+uv run python benchmarks/strix-halo/scripts/ubatch_ab.py --context 32768
+
+# two blocks (order reverses each block) plus cache and full correctness
+uv run python benchmarks/strix-halo/scripts/ubatch_ab.py --blocks 2 \
+    --suites tg,prefill,cache,correctness --context 65536
+```
+
+Each run writes the usual evidence directory (suite name `ubatch-ab`) whose
+`summary.md` carries the two-arm table, the exact per-arm commands, a
+cross-arm greedy-output comparison, and a comparison table using the same
+observed-noise rule as the rest of the harness. `--suites` selects any of
+`tg`, `prefill`, `cache`, `correctness`; `tg` is always included. Ctrl-C during
+the benchmark records an `ABORTED` result with an `ABORT` reason.
