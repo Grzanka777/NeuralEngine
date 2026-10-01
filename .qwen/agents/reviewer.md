@@ -1,7 +1,7 @@
 ---
 name: reviewer
-description: Read-only, provider-neutral review of scope, diffs, contracts, and verification evidence.
-model: inherit
+description: Read-only review of scope, diffs, contracts, and verification evidence on deterministic local GENERAL.
+model: "openai:/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf"
 approvalMode: plan
 ---
 

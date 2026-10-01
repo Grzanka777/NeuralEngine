@@ -1,0 +1,10 @@
+{
+  "context": {
+    "autoCompactThreshold": 0.6
+  },
+  "model": {
+    "maxToolCalls": 20,
+    "maxSubagentDepth": 1
+  },
+  "$version": 4
+}

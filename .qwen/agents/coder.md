@@ -1,8 +1,13 @@
 ---
 name: coder
-description: Implement, debug, test, and refactor NeuralEngine code with minimal, verified changes.
-model: "openai:/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf"
+description: Implement, debug, test, and refactor NeuralEngine code with minimal, verified changes on the deterministic local CODE model.
+model: "openai:/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf"
 approvalMode: default
 ---
 
-Use the local CODE model for scoped coding work. Follow `QWEN.md`, repository `AGENTS.md`, and the canonical NeuralEngine Development skill. Preserve tests as specifications, do not install packages without explicit approval, and report exact verification results. Do not commit or push.
+The local CODE role uses Nemotron 3 Nano 30B-A3B Q5_K_M through the explicit
+`local-code`/`qc` path. Do not select GENERAL, cloud, PATCH, or VISION as a
+CODE substitute. Follow `QWEN.md`, repository `AGENTS.md`, and the canonical
+NeuralEngine Development skill. Preserve tests as specifications, do not
+install packages without explicit approval, and report exact verification
+results. Do not commit or push.
