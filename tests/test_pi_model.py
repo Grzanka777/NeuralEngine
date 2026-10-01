@@ -34,6 +34,10 @@ def test_supported_pi_topology_is_exact(adapter: dict[str, Any]) -> None:
     assert adapter["CONFLICT_ONLY_PORTS"] == (18082, 18087)
 
 
+def test_patch_alias_routes_to_gptoss(adapter: dict[str, Any]) -> None:
+    assert adapter["normalize_target"]("patch") == "GPTOSS"
+
+
 def test_installed_pi_catalog_has_only_supported_local_mappings() -> None:
     catalog_path = Path.home() / ".pi" / "agent" / "models.json"
     if not catalog_path.is_file():

@@ -22,6 +22,11 @@ PORTS = {
     "CODE": 18080,
     "GPTOSS": 18086,
 }
+PROVIDERS = {
+    "GENERAL": "neural-general",
+    "CODE": "neural-code",
+    "GPTOSS": "local-gptoss",
+}
 MODELS = {
     "GENERAL": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
     "CODE": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
@@ -31,6 +36,7 @@ CHALLENGER_NAMES = {"GPTOSS": "gptoss"}
 UNFILLED_ROLES = {"VISION"}
 CONFLICT_ONLY_PORTS = (18082, 18087)
 PID = re.compile(r"\bpid=(\d+)\b")
+PI_CATALOG = Path.home() / ".pi" / "agent" / "models.json"
 
 
 class SwitchError(RuntimeError):
@@ -96,6 +102,16 @@ def validate_catalog_entry(name: str) -> None:
         raise SwitchError(f"{name} is UNFILLED/unsupported: no model is assigned")
     if name not in PORTS:
         raise SwitchError(f"unsupported model role: {name}")
+
+
+def normalize_target(value: str) -> str:
+    """Map operator aliases to the existing lifecycle profile names."""
+    target = value.upper()
+    if target == "PATCH":
+        return "GPTOSS"
+    if target in (*PORTS, *UNFILLED_ROLES, "STOP", "STATUS"):
+        return target
+    raise SwitchError(f"unsupported model role: {value}")
 
 
 def identify(states: dict[str, tuple[int, ...] | None]) -> Listener | None:
@@ -235,34 +251,135 @@ def stop_current() -> Listener | None:
         return current
 
 
+def _catalog_matches() -> tuple[str, str]:
+    """Check the user-managed Pi provider catalog without becoming its authority."""
+    try:
+        payload = json.loads(PI_CATALOG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return "UNKNOWN", f"cannot read {PI_CATALOG}: {error}"
+    providers = payload.get("providers") if isinstance(payload, dict) else None
+    if not isinstance(providers, dict):
+        return "MISMATCH", "Pi catalog has no providers object"
+    mismatches: list[str] = []
+    for role, provider in PROVIDERS.items():
+        entry = providers.get(provider)
+        expected_endpoint = f"http://127.0.0.1:{PORTS[role]}/v1"
+        models = entry.get("models") if isinstance(entry, dict) else None
+        actual_model = (
+            models[0].get("id")
+            if isinstance(models, list) and models and isinstance(models[0], dict)
+            else None
+        )
+        if (
+            not isinstance(entry, dict)
+            or entry.get("baseUrl") != expected_endpoint
+            or actual_model != MODELS[role]
+        ):
+            mismatches.append(f"{provider} does not match {role}")
+    if "neural-vision" in providers:
+        mismatches.append("neural-vision must remain absent while VISION is unfilled")
+    return (
+        ("OK", "exact role/provider/model mapping")
+        if not mismatches
+        else ("MISMATCH", "; ".join(mismatches))
+    )
+
+
+def _role_label(profile: str) -> str:
+    return "PATCH" if profile == "GPTOSS" else profile
+
+
+def _status_lines(listener: Listener | None, catalog_state: str, catalog_detail: str) -> list[str]:
+    if listener is None:
+        lifecycle = ("STOPPED", "NONE", "NONE", "NONE", "NONE", "NONE")
+    else:
+        endpoint = f"http://127.0.0.1:{PORTS[listener.profile]}/v1"
+        lifecycle = (
+            "RUNNING",
+            _role_label(listener.profile),
+            str(listener.pid),
+            endpoint,
+            MODELS[listener.profile],
+            MODELS[listener.profile],
+        )
+    lines = [
+        f"LIFECYCLE={lifecycle[0]}",
+        f"ACTIVE_ROLE={lifecycle[1]}",
+        f"ACTIVE_PID={lifecycle[2]}",
+        f"ACTIVE_ENDPOINT={lifecycle[3]}",
+        f"EXPECTED_MODEL={lifecycle[4]}",
+        f"ACTUAL_IDENTITY={lifecycle[5]}",
+    ]
+    for role in ("GENERAL", "CODE", "GPTOSS"):
+        label = _role_label(role)
+        lines.extend(
+            (
+                f"PI_MAPPING_{label}_PROVIDER={PROVIDERS[role]}",
+                f"PI_MAPPING_{label}_MODEL={MODELS[role]}",
+                f"PI_MAPPING_{label}_ENDPOINT=http://127.0.0.1:{PORTS[role]}/v1",
+            )
+        )
+    lines.extend(
+        (
+            f"PI_CATALOG={catalog_state}",
+            f"PI_CATALOG_DETAIL={catalog_detail}",
+            f"FALLBACK={'DISABLED' if catalog_state == 'OK' else 'UNKNOWN'}",
+            "VISION=UNFILLED/FAIL_CLOSED",
+        )
+    )
+    return lines
+
+
+def status() -> int:
+    """Report lifecycle and Pi mapping state without changing any process."""
+    try:
+        listener = identify(scan())
+    except (OSError, SwitchError) as error:
+        print("LIFECYCLE=ERROR")
+        print(f"ERROR={error}", file=sys.stderr)
+        return 1
+    catalog_state, catalog_detail = _catalog_matches()
+    print("\n".join(_status_lines(listener, catalog_state, catalog_detail)))
+    return 0 if catalog_state == "OK" else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", choices=(*PORTS, *sorted(UNFILLED_ROLES), "STOP"))
+    parser.add_argument("target", help="GENERAL, CODE, PATCH/GPTOSS, VISION, STATUS or STOP")
     parser.add_argument("--context", type=int)
     parser.add_argument("--batch", type=int)
     parser.add_argument("--ubatch", type=int)
     args = parser.parse_args()
     tuning = (args.context, args.batch, args.ubatch)
-    if any(value is not None for value in tuning) and args.target != "GPTOSS":
+    try:
+        target = normalize_target(args.target)
+    except SwitchError as error:
+        parser.error(str(error))
+    if any(value is not None for value in tuning) and target != "GPTOSS":
         parser.error("runtime tuning options are only valid with GPTOSS")
     try:
         result = (
             stop_current()
-            if args.target == "STOP"
+            if target == "STOP"
+            else None
+            if target == "STATUS"
             else switch(
-                args.target,
+                target,
                 context=args.context,
                 batch=args.batch,
                 ubatch=args.ubatch,
             )
         )
+        if target == "STATUS":
+            return status()
     except (OSError, SwitchError) as error:
         print(f"pi-model: {error}", file=sys.stderr)
         return 1
-    if args.target == "STOP":
+    if target == "STOP":
         print("ALL LOCAL MODEL ENDPOINTS STOPPED")
     else:
-        print(f"{result.profile} READY pid={result.pid} port={PORTS[result.profile]}")
+        display = "PATCH" if args.target.upper() == "PATCH" else result.profile
+        print(f"{display} READY pid={result.pid} port={PORTS[result.profile]}")
     return 0
 
 
