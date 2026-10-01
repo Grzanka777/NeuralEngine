@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""Fail-closed Pi switcher for supported local llama-server profiles."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PORTS = {
+    "GENERAL": 18081,
+    "CODE": 18080,
+    "GPTOSS": 18086,
+}
+MODELS = {
+    "GENERAL": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+    "CODE": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
+    "GPTOSS": "/models/gguf/gpt-oss-20b/gpt-oss-20b-MXFP4.gguf",
+}
+CHALLENGER_NAMES = {"GPTOSS": "gptoss"}
+UNFILLED_ROLES = {"VISION"}
+CONFLICT_ONLY_PORTS = (18082, 18087)
+PID = re.compile(r"\bpid=(\d+)\b")
+
+
+class SwitchError(RuntimeError):
+    """A refusal that leaves unknown processes untouched."""
+
+
+@dataclass(frozen=True)
+class Listener:
+    profile: str
+    pid: int
+    context: int | None = None
+    batch: int | None = None
+    ubatch: int | None = None
+
+
+def run(*args: str) -> str:
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise SwitchError(f"{' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def scan() -> dict[str, tuple[int, ...] | None]:
+    """Inspect all supported local model ports in one ss snapshot."""
+    found: dict[str, set[int]] = {name: set() for name in PORTS}
+    listening: set[str] = set()
+    output = run("ss", "-H", "-ltnp")
+    by_port = {port: name for name, port in PORTS.items()}
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 4 or fields[0] != "LISTEN":
+            continue
+        try:
+            port = int(fields[3].rsplit(":", 1)[1])
+        except IndexError, ValueError:
+            continue
+        name = by_port.get(port)
+        if port in CONFLICT_ONLY_PORTS:
+            raise SwitchError(f"listener on conflict-only unsupported port {port}")
+        if name:
+            listening.add(name)
+            found[name].update(int(pid) for pid in PID.findall(line))
+    return {name: tuple(sorted(found[name])) if name in listening else None for name in PORTS}
+
+
+def model_identity(name: str) -> bool:
+    if name not in MODELS:
+        return False
+    port = PORTS[name]
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
+            if response.status != 200 or json.load(response).get("status") != "ok":
+                return False
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as response:
+            models = json.load(response).get("data", [])
+        return any(item.get("id") == MODELS[name] for item in models)
+    except OSError, ValueError, TypeError:
+        return False
+
+
+def validate_catalog_entry(name: str) -> None:
+    if name in UNFILLED_ROLES:
+        raise SwitchError(f"{name} is UNFILLED/unsupported: no model is assigned")
+    if name not in PORTS:
+        raise SwitchError(f"unsupported model role: {name}")
+
+
+def identify(states: dict[str, tuple[int, ...] | None]) -> Listener | None:
+    active = [(name, pids) for name, pids in states.items() if pids is not None]
+    if not active:
+        return None
+    if len(active) != 1:
+        raise SwitchError(f"multiple listeners: {', '.join(name for name, _ in active)}")
+    name, pids = active[0]
+    if len(pids) != 1:
+        raise SwitchError(f"{name} listener has no unique visible PID")
+    pid = pids[0]
+    if name in CHALLENGER_NAMES:
+        evidence = run(str(ROOT / "scripts/challenger"), "status", CHALLENGER_NAMES[name])
+        gptoss_runtime: tuple[int, int, int] | None = None
+        if name == "GPTOSS":
+            match = re.fullmatch(
+                r"gptoss READY pid=(\d+) context=(\d+) batch=(\d+) ubatch=(\d+)",
+                evidence,
+            )
+            valid = match is not None and int(match.group(1)) == pid
+            if valid:
+                assert match is not None
+                gptoss_runtime = (int(match.group(2)), int(match.group(3)), int(match.group(4)))
+        else:
+            valid = evidence == f"{CHALLENGER_NAMES[name]} READY pid={pid}"
+    else:
+        evidence = run(str(ROOT / "scripts/llm"), "identity")
+        valid = evidence == f"{name} {pid}"
+    if not valid or not model_identity(name):
+        raise SwitchError(f"{name} listener pid={pid} is unknown or has wrong model identity")
+    if name == "GPTOSS":
+        if gptoss_runtime is None:
+            raise SwitchError("GPT-OSS runtime settings could not be identified")
+        return Listener(name, pid, *gptoss_runtime)
+    return Listener(name, pid)
+
+
+@contextmanager
+def switch_lock() -> Iterator[None]:
+    # Serializes Pi switches. Launchers retain their own ownership checks.
+    state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    path = state_home / "pi-neuralengine" / "lifecycle.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def command(
+    name: str,
+    action: str,
+    pid: int | None = None,
+    *,
+    context: int | None = None,
+    batch: int | None = None,
+    ubatch: int | None = None,
+) -> None:
+    if name in UNFILLED_ROLES:
+        raise SwitchError(f"{name} is UNFILLED/unsupported: no model is assigned")
+    if name in CHALLENGER_NAMES:
+        args = [str(ROOT / "scripts/challenger"), action, CHALLENGER_NAMES[name]]
+        if pid is not None:
+            args.extend(("--expected-pid", str(pid)))
+        if name == "GPTOSS" and action == "start":
+            for flag, value in (("--context", context), ("--batch", batch), ("--ubatch", ubatch)):
+                if value is not None:
+                    args.extend((flag, str(value)))
+    elif action == "start":
+        args = [str(ROOT / "scripts/llm"), "start", name.lower()]
+    else:
+        assert pid is not None
+        args = [
+            str(ROOT / "scripts/llm"),
+            "stop",
+            "--expected-profile",
+            name,
+            "--expected-pid",
+            str(pid),
+        ]
+    run(*args)
+
+
+def switch(
+    target: str,
+    *,
+    context: int | None = None,
+    batch: int | None = None,
+    ubatch: int | None = None,
+) -> Listener:
+    if target in UNFILLED_ROLES:
+        raise SwitchError(f"{target} is UNFILLED/unsupported: no model is assigned")
+    if target not in PORTS:
+        raise SwitchError(f"unsupported model role: {target}")
+    validate_catalog_entry(target)
+    with switch_lock():
+        current = identify(scan())
+        target_matches = current is not None and current.profile == target
+        if target_matches and target == "GPTOSS":
+            target_matches = (current.context, current.batch, current.ubatch) == (
+                32768 if context is None else context,
+                2048 if batch is None else batch,
+                1024 if ubatch is None else ubatch,
+            )
+        if current is not None and not target_matches:
+            # Recheck immediately before the launcher receives its expected PID.
+            if identify(scan()) != current:
+                raise SwitchError("listener changed before stop")
+            command(current.profile, "stop", current.pid)
+            if any(pids is not None for pids in scan().values()):
+                raise SwitchError("a listener remains after stop")
+        if not target_matches:
+            if any(pids is not None for pids in scan().values()):
+                raise SwitchError("a listener appeared before start")
+            if target == "GPTOSS":
+                command(target, "start", context=context, batch=batch, ubatch=ubatch)
+            else:
+                command(target, "start")
+        result = identify(scan())
+        if result is None or result.profile != target:
+            raise SwitchError(f"{target} identity or exclusivity verification failed")
+        return result
+
+
+def stop_current() -> Listener | None:
+    with switch_lock():
+        current = identify(scan())
+        if current is not None:
+            if identify(scan()) != current:
+                raise SwitchError("listener changed before stop")
+            command(current.profile, "stop", current.pid)
+        if any(pids is not None for pids in scan().values()):
+            raise SwitchError("a listener remains after stop")
+        return current
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("target", choices=(*PORTS, *sorted(UNFILLED_ROLES), "STOP"))
+    parser.add_argument("--context", type=int)
+    parser.add_argument("--batch", type=int)
+    parser.add_argument("--ubatch", type=int)
+    args = parser.parse_args()
+    tuning = (args.context, args.batch, args.ubatch)
+    if any(value is not None for value in tuning) and args.target != "GPTOSS":
+        parser.error("runtime tuning options are only valid with GPTOSS")
+    try:
+        result = (
+            stop_current()
+            if args.target == "STOP"
+            else switch(
+                args.target,
+                context=args.context,
+                batch=args.batch,
+                ubatch=args.ubatch,
+            )
+        )
+    except (OSError, SwitchError) as error:
+        print(f"pi-model: {error}", file=sys.stderr)
+        return 1
+    if args.target == "STOP":
+        print("ALL LOCAL MODEL ENDPOINTS STOPPED")
+    else:
+        print(f"{result.profile} READY pid={result.pid} port={PORTS[result.profile]}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

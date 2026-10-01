@@ -1,0 +1,431 @@
+#!/usr/bin/env python3
+"""Isolated lifecycle for local challenger model endpoints."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+SERVER = Path("/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server")
+REPO = Path(__file__).resolve().parent.parent
+HOST = "127.0.0.1"
+PRODUCTION_PORTS = (18080, 18081, 18082)
+RETIRED_CONFLICT_PORTS = (18087,)
+
+
+def _canonical_patch_sha256() -> str:
+    """Read the active PATCH digest from the repository manifest."""
+
+    try:
+        value = json.loads((REPO / "llm-manifest.json").read_text())["roles"]["PATCH"][
+            "model_sha256"
+        ]
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("cannot read canonical PATCH model SHA-256") from error
+    if not isinstance(value, str) or len(value) != 64:
+        raise RuntimeError("canonical PATCH model SHA-256 is invalid")
+    return value
+
+
+PATCH_MODEL_SHA256 = _canonical_patch_sha256()
+
+
+@dataclass(frozen=True)
+class Profile:
+    name: str
+    model: Path
+    port: int
+    options: tuple[str, ...]
+    model_id: str | None = None
+    expected_sha256: str | None = None
+    owner_required: bool = False
+
+    @property
+    def endpoint_model_id(self) -> str:
+        return self.model_id or str(self.model)
+
+    @property
+    def command(self) -> tuple[str, ...]:
+        return self.command_for()
+
+    def command_for(
+        self,
+        *,
+        context: int | None = None,
+        batch: int | None = None,
+        ubatch: int | None = None,
+    ) -> tuple[str, ...]:
+        settings = (context, batch, ubatch)
+        if self.name != "gptoss":
+            if any(value is not None for value in settings):
+                raise RuntimeError(f"{self.name} does not support runtime tuning options")
+            options = self.options
+        else:
+            context = 32768 if context is None else context
+            batch = 2048 if batch is None else batch
+            ubatch = 1024 if ubatch is None else ubatch
+            if context not in (32768, 65536):
+                raise RuntimeError("GPT-OSS context must be 32768 or 65536")
+            if batch not in (1024, 2048, 4096):
+                raise RuntimeError("GPT-OSS batch must be 1024, 2048, or 4096")
+            if ubatch not in (256, 512, 1024, 2048) or ubatch > batch:
+                raise RuntimeError("GPT-OSS ubatch must be 256/512/1024/2048 and <= batch")
+            values = {"-c": str(context), "-b": str(batch), "-ub": str(ubatch)}
+            tuned: list[str] = []
+            index = 0
+            while index < len(self.options):
+                option = self.options[index]
+                tuned.append(option)
+                if option in values:
+                    tuned.append(values[option])
+                    index += 2
+                else:
+                    index += 1
+            options = tuple(tuned)
+        return (
+            str(SERVER),
+            "-m",
+            str(self.model),
+            *options,
+            *(("--alias", self.model_id) if self.model_id else ()),
+            "--host",
+            HOST,
+            "--port",
+            str(self.port),
+        )
+
+
+PROFILES = {
+    "gptoss": Profile(
+        "gptoss",
+        Path("/models/gguf/gpt-oss-20b/gpt-oss-20b-MXFP4.gguf"),
+        18086,
+        (
+            "-dev",
+            "Vulkan0",
+            "-ngl",
+            "999",
+            "-c",
+            "32768",
+            "-b",
+            "2048",
+            "-ub",
+            "1024",
+            "-fa",
+            "on",
+            "--parallel",
+            "1",
+            "--jinja",
+        ),
+        expected_sha256=PATCH_MODEL_SHA256,
+    ),
+}
+
+
+def state_dir() -> Path:
+    return (
+        Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "neural-challenger"
+    )
+
+
+def coordination_lock_path() -> Path:
+    """Return the host-wide lock shared with the production LLM launcher."""
+
+    state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    return state_home / "neuralengine" / "lifecycle.lock"
+
+
+def ownership_path(profile: Profile) -> Path:
+    return state_dir() / f"{profile.name}.owner.json"
+
+
+def process_start_time(pid: int) -> str | None:
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rpartition(") ")[2].split()
+    except OSError:
+        return None
+    return fields[19] if len(fields) > 19 else None
+
+
+def recorded_owner(profile: Profile, pid: int) -> bool:
+    try:
+        record = json.loads(ownership_path(profile).read_text())
+    except OSError, ValueError:
+        return False
+    return record == {"pid": pid, "start_time": process_start_time(pid)}
+
+
+def record_owner(profile: Profile, pid: int) -> None:
+    start_time = process_start_time(pid)
+    if start_time is None:
+        raise RuntimeError(f"cannot identify started process pid={pid}")
+    path = ownership_path(profile)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"pid": pid, "start_time": start_time}) + "\n")
+    temporary.replace(path)
+
+
+@contextmanager
+def lifecycle_lock() -> Iterator[None]:
+    path = coordination_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def listener_pids(port: int) -> tuple[bool, tuple[int, ...]]:
+    result = subprocess.run(["ss", "-H", "-ltnp"], capture_output=True, text=True, check=True)
+    pids: set[int] = set()
+    listening = False
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 4 or fields[0] != "LISTEN" or fields[3].rsplit(":", 1)[-1] != str(port):
+            continue
+        listening = True
+        import re
+
+        pids.update(int(pid) for pid in re.findall(r"\bpid=(\d+)\b", line))
+    return listening, tuple(sorted(pids))
+
+
+def owned_process(pid: int, profile: Profile) -> bool:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+    command = tuple(part.decode(errors="replace") for part in raw.split(b"\0") if part)
+    if profile.name != "gptoss":
+        return command == profile.command
+    for context in (32768, 65536):
+        for batch in (1024, 2048, 4096):
+            for ubatch in (256, 512, 1024, 2048):
+                try:
+                    expected = profile.command_for(context=context, batch=batch, ubatch=ubatch)
+                except RuntimeError:
+                    continue
+                if command == expected:
+                    return True
+    return False
+
+
+def gptoss_settings(pid: int) -> tuple[int, int, int] | None:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return None
+    command = tuple(part.decode(errors="replace") for part in raw.split(b"\0") if part)
+    values: dict[str, int] = {}
+    for flag in ("-c", "-b", "-ub"):
+        try:
+            values[flag] = int(command[command.index(flag) + 1])
+        except ValueError, IndexError:
+            return None
+    return values["-c"], values["-b"], values["-ub"]
+
+
+def endpoint_identity(profile: Profile) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://{HOST}:{profile.port}/health", timeout=2) as response:
+            if response.status != 200 or json.load(response).get("status") != "ok":
+                return False
+        with urllib.request.urlopen(
+            f"http://{HOST}:{profile.port}/v1/models", timeout=2
+        ) as response:
+            models = json.load(response).get("data", [])
+        return any(model.get("id") == profile.endpoint_model_id for model in models)
+    except OSError, ValueError, TypeError, urllib.error.URLError:
+        return False
+
+
+def active_pid(profile: Profile) -> int | None:
+    listening, pids = listener_pids(profile.port)
+    if not listening:
+        return None
+    if len(pids) != 1 or not owned_process(pids[0], profile) or not endpoint_identity(profile):
+        raise RuntimeError(f"port {profile.port} is occupied by an unknown or unhealthy server")
+    if profile.owner_required and not recorded_owner(profile, pids[0]):
+        raise RuntimeError(f"port {profile.port} has no matching challenger ownership record")
+    return pids[0]
+
+
+def verify_model_artifact(profile: Profile) -> None:
+    if not profile.model.is_file():
+        raise RuntimeError(f"required model is missing: {profile.model}")
+    if profile.expected_sha256 is None:
+        return
+    digest = hashlib.sha256()
+    with profile.model.open("rb") as model:
+        for chunk in iter(lambda: model.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != profile.expected_sha256:
+        raise RuntimeError(
+            f"model SHA-256 mismatch for {profile.model}: expected "
+            f"{profile.expected_sha256}, found {actual}"
+        )
+
+
+def start(
+    profile: Profile,
+    *,
+    context: int | None = None,
+    batch: int | None = None,
+    ubatch: int | None = None,
+) -> None:
+    command = profile.command_for(context=context, batch=batch, ubatch=ubatch)
+    with lifecycle_lock():
+        verify_model_artifact(profile)
+        for other in PROFILES.values():
+            if other != profile and active_pid(other) is not None:
+                raise RuntimeError(f"{other.name} challenger is already active")
+        for port in (*PRODUCTION_PORTS, *RETIRED_CONFLICT_PORTS):
+            if listener_pids(port)[0]:
+                raise RuntimeError(f"conflicting listener is already active on port {port}")
+        pid = active_pid(profile)
+        if pid is not None:
+            if (
+                profile.name == "gptoss"
+                and tuple(
+                    part.decode(errors="replace")
+                    for part in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+                    if part
+                )
+                != command
+            ):
+                raise RuntimeError("GPT-OSS is already running with a different profile")
+            print(f"{profile.name} ALREADY READY pid={pid}")
+            return
+        if not SERVER.is_file() or not os.access(SERVER, os.X_OK):
+            raise RuntimeError("required runtime or model is missing")
+        log_path = state_dir() / f"{profile.name}.log"
+        with log_path.open("ab") as log:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                env={**os.environ, "AMD_VULKAN_ICD": "RADV"},
+            )
+        try:
+            for _ in range(300):
+                if process.poll() is not None:
+                    raise RuntimeError(f"server exited during startup; see {log_path}")
+                if endpoint_identity(profile):
+                    listening, pids = listener_pids(profile.port)
+                    if (
+                        not listening
+                        or pids != (process.pid,)
+                        or not owned_process(process.pid, profile)
+                    ):
+                        raise RuntimeError("listener ownership changed during startup")
+                    record_owner(profile, process.pid)
+                    if active_pid(profile) != process.pid:
+                        raise RuntimeError("listener ownership changed during startup")
+                    print(f"{profile.name} STARTED BY THIS INVOCATION pid={process.pid}")
+                    return
+                time.sleep(1)
+            raise RuntimeError(f"server did not become ready within 300 seconds; see {log_path}")
+        except BaseException:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            raise
+
+
+def stop(profile: Profile, expected_pid: int | None) -> None:
+    with lifecycle_lock():
+        pid = active_pid(profile)
+        if pid is None:
+            if expected_pid is not None:
+                raise RuntimeError("expected server is no longer listening")
+            print(f"{profile.name} STOPPED")
+            return
+        if expected_pid is not None and pid != expected_pid:
+            raise RuntimeError(f"expected pid {expected_pid}, found {pid}; refusing stop")
+        if not recorded_owner(profile, pid):
+            raise RuntimeError(f"pid={pid} has no matching challenger ownership record")
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(90):
+            if not listener_pids(profile.port)[0]:
+                ownership_path(profile).unlink(missing_ok=True)
+                print(f"{profile.name} STOPPED pid={pid}")
+                return
+            time.sleep(1)
+        raise RuntimeError(f"server pid={pid} did not stop within 90 seconds")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("start", "stop", "status", "identity"))
+    parser.add_argument("profile", choices=tuple(PROFILES))
+    parser.add_argument("--expected-pid", type=int)
+    parser.add_argument("--context", type=int)
+    parser.add_argument("--batch", type=int)
+    parser.add_argument("--ubatch", type=int)
+    args = parser.parse_args()
+    profile = PROFILES[args.profile]
+    if args.expected_pid is not None and args.command != "stop":
+        parser.error("--expected-pid is only valid with stop")
+    if any(value is not None for value in (args.context, args.batch, args.ubatch)):
+        if args.command != "start" or args.profile != "gptoss":
+            parser.error("runtime tuning options are only valid for GPT-OSS start")
+        try:
+            profile.command_for(context=args.context, batch=args.batch, ubatch=args.ubatch)
+        except RuntimeError as error:
+            parser.error(str(error))
+    try:
+        if args.command == "start":
+            start(profile, context=args.context, batch=args.batch, ubatch=args.ubatch)
+        elif args.command == "stop":
+            stop(profile, args.expected_pid)
+        else:
+            pid = active_pid(profile)
+            if args.command == "status":
+                if profile.name == "gptoss" and pid is not None:
+                    settings = gptoss_settings(pid)
+                    if settings is None:
+                        raise RuntimeError("cannot identify GPT-OSS runtime settings")
+                    print(
+                        f"gptoss READY pid={pid} context={settings[0]} "
+                        f"batch={settings[1]} ubatch={settings[2]}"
+                    )
+                else:
+                    print(f"{profile.name} READY pid={pid}" if pid else f"{profile.name} STOPPED")
+            else:
+                print(f"{profile.name} model={profile.model}")
+                print(f"endpoint=http://{HOST}:{profile.port}/v1 pid={pid or 'none'}")
+                if profile.name == "gptoss" and pid is not None:
+                    settings = gptoss_settings(pid)
+                    if settings is None:
+                        raise RuntimeError("cannot identify GPT-OSS runtime settings")
+                    print(f"context={settings[0]} batch={settings[1]} ubatch={settings[2]}")
+    except (OSError, subprocess.CalledProcessError, RuntimeError) as error:
+        print(f"challenger: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

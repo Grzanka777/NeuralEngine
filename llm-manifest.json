@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "roles": {
+    "GENERAL": {
+      "enabled": true,
+      "state": "ACTIVE",
+      "model_path": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+      "model_sha256": "671e47e0ec53c665d048b98c3ecbfd5236b5ca9c3e02ed19fc8f81f7b85140c7",
+      "expected_v1_models_id": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+      "runtime_binary": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server",
+      "runtime_build": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan",
+      "backend": "Vulkan",
+      "device": "Vulkan0",
+      "host": "127.0.0.1",
+      "port": 18081,
+      "context": 65536,
+      "batch": 2048,
+      "ubatch": 1024,
+      "ngl": 999,
+      "mtp": {
+        "enabled": true,
+        "path": "/models/gguf/qwen3.6-35b-a3b/mtp/mtp-Qwen3.6-35B-A3B-Q4_0.gguf",
+        "sha256": "606fca331adcbfbdadc107512ce6a7161e84e1646ba0e0018256426f6296877f",
+        "type": "draft-mtp",
+        "device": "Vulkan0",
+        "ngl": 999,
+        "n_max": 3
+      }
+    },
+    "CODE": {
+      "enabled": true,
+      "state": "ACTIVE",
+      "model_path": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
+      "model_sha256": "b6b52b1bfd9cc3509a0337eb1a4be3b405190ec49863b352ebf33e448c1149af",
+      "expected_v1_models_id": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
+      "runtime_binary": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server",
+      "runtime_build": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan",
+      "backend": "Vulkan",
+      "device": "Vulkan0",
+      "host": "127.0.0.1",
+      "port": 18080,
+      "context": 32768,
+      "batch": 2048,
+      "ubatch": 512,
+      "ngl": 999,
+      "mtp": { "enabled": false },
+      "evidence": ".agent-work/reviews/nemotron-q5-final-retest.md"
+    },
+    "PATCH": {
+      "enabled": true,
+      "state": "SPECIALIST",
+      "model_path": "/models/gguf/gpt-oss-20b/gpt-oss-20b-MXFP4.gguf",
+      "model_sha256": "27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901",
+      "launcher": "scripts/challenger gptoss",
+      "port": 18086,
+      "mapped_to_code": false
+    },
+    "VISION": { "enabled": false, "state": "UNFILLED" }
+  },
+  "clients": {
+    "pi_general_context": 65536,
+    "pi_code_context": 32768,
+    "qwen_general_context": 65536,
+    "qwen_code_context": 32768,
+    "opencode_general_context": 32768,
+    "opencode_code_context": 32768,
+    "opencode_general_context_policy": "documented-client-override"
+  }
+}

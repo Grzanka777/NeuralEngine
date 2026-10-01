@@ -66,11 +66,15 @@ semantics in a skill or agent.
 
 ## Frozen Qwen integration boundary
 
-Qwen Code is a thin NeuralEngine client. Use `qg` → LOCAL GENERAL (65536),
-`qc` → LOCAL CODE (65536), and `qv` → LOCAL VISION (32768) with the existing
-NeuralEngine `scripts/llm` lifecycle.
+Qwen Code is a thin NeuralEngine client. `qg` selects LOCAL GENERAL (65536)
+and `qc` selects Nemotron Q5 CODE (32768) through the existing `scripts/llm`
+lifecycle. VISION is `UNFILLED/disabled`; `qv` fails closed and does not select a substitute.
 
-Do not create another router or runtime manager, change runtime/model
-configuration, modify OpenCode, or redesign Brain or Knowledge promotion.
-Brain and Knowledge may be read; durable writes require separate explicit
+The supported Qwen local profiles are `local-general` and `local-code`. The production launcher
+preserves GPT-OSS as the explicit PATCH/challenger on port 18086 and treats
+retired endpoints on port 18087 as conflicts, so a production model does not
+start beside an unknown or challenger listener.
+
+Do not change the existing `qg` workflow or Brain/Knowledge promotion. Brain
+and Knowledge may be read; durable writes require separate explicit
 authorization, as above.

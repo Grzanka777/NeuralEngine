@@ -64,25 +64,24 @@ OpenCode/llama/model prerequisites, and defines the read-only health sequence.
 
 ### Frozen local LLM launcher
 
-The repository includes a small terminal-first launcher for the frozen local
-Qwen3.6 GENERAL, Qwen3-Coder CODE, and Gemma 4 VISION profiles. It performs
+The repository includes a small terminal-first launcher for Qwen3.6 GENERAL
+and Nemotron Q5 CODE. VISION is UNFILLED/disabled; the launcher refuses it and
+does not select a replacement model. It performs
 prerequisite, port, health, and verified process checks without enabling a
-service or starting anything during login or boot. To make the command
-available as `llm`, install the executable into a user-local bin directory:
+service or starting anything during login or boot. The installed `llm` command
+is a symlink to the repository implementation, so it cannot drift independently:
 
 ```bash
-install -m 0755 scripts/llm ~/.local/bin/llm
+ln -s /home/grzanka/Work/NeuralEngine/scripts/llm ~/.local/bin/llm
 ```
 
 Use it from fish or another shell:
 
 ```text
-llm code
 llm general
-llm vision
+llm code
 llm switch general
 llm switch code
-llm switch vision
 llm status
 llm state
 llm identity
@@ -90,13 +89,19 @@ llm stop
 ```
 
 `llm state` is a machine-readable ownership check and prints exactly one of
-`STOPPED`, `GENERAL`, `CODE`, `VISION`, or `UNKNOWN`. It reports a profile only
-when its listener, process command line, and health endpoint are all verified.
+`STOPPED`, `GENERAL`, `CODE`, or `UNKNOWN`. It reports a profile only when
+its listener, process command line, and health endpoint are all verified.
+`llm status` reports VISION as `UNFILLED/disabled`.
 `llm switch <profile>` serializes state inspection, verified shutdown, target
 startup, and target verification with a user-level lifecycle lock. It refuses
 unknown, foreign, or conflicting state and does not perform automatic rollback.
 `llm identity` is a read-only machine-readable check that prints `PROFILE PID`,
 `STOPPED`, or `UNKNOWN`.
+The inactive user systemd units use `scripts/llm serve` for GENERAL and
+`scripts/llm serve code` for CODE in the foreground when started explicitly.
+`llm-manifest.json` records both verified profiles and the separate GPT-OSS
+PATCH specialist. Run `python scripts/validate-llm-manifest` for a read-only
+configuration drift check; add `--hash` to rehash the GGUF files.
 
 The launcher reports these OpenAI-compatible endpoints after `/health` becomes
 ready:
@@ -104,12 +109,13 @@ ready:
 ```text
 CODE:    http://127.0.0.1:18080/v1
 GENERAL: http://127.0.0.1:18081/v1
-VISION:  http://127.0.0.1:18082/v1
 ```
 
-CODE uses the frozen Vulkan profile without speculative decoding, MTP, or
-EAGLE3 flags. VISION uses the verified Gemma 4 projector and draft-MTP n2
-profile. Only one supported profile may run at a time.
+CODE uses the previously verified Nemotron Q5 profile at context 32768, batch
+2048, ubatch 512, ngl 999, Vulkan0, and no MTP. Port 18082 remains
+conflict-only while VISION is unfilled. Only one production profile may run at
+a time. OpenCode GENERAL keeps its documented 32768-token client limit while
+the GENERAL server remains at 65536.
 
 ### Manual OpenCode fresh-session handoff
 
@@ -197,8 +203,8 @@ neural opencode doctor
 ```
 
 The preflight records the installed OpenCode version for diagnostics and checks
-the executable, resolved user config, selected agent, GENERAL/CODE/VISION
-provider and model identifiers, `llm` lifecycle integration, executable
+the executable, resolved user config, selected agent, GENERAL/VISION provider
+and model identifiers, the explicit unfilled CODE state, `llm` lifecycle integration, executable
 `opencode-watch` wrapper, and the explicit NeuralEngine/Brain safety boundary.
 It does not compare against an exact version, start a model, open the OpenCode
 database/service, or write Brain state.
@@ -215,12 +221,13 @@ Compatibility: UNKNOWN    stop and run the smallest named diagnostic
 When stronger evidence is needed, request one bounded marker smoke explicitly:
 
 ```bash
-neural opencode doctor --live-smoke --lane code
+neural opencode doctor --live-smoke --lane general
 ```
 
-Use `--lane general` when validating the GENERAL path. The live smoke reuses
-the existing wrapper and exact LLM ownership cleanup; it requires `STOPPED`
-before launch and must finish with `llm state` reported as `STOPPED`. Do not
+The CODE lane is unsupported and returns a blocked smoke result without
+starting a model. The GENERAL live smoke reuses the existing wrapper and exact
+LLM ownership cleanup; it requires `STOPPED` before launch and must finish
+with `llm state` reported as `STOPPED`. Do not
 pin or downgrade OpenCode, rebaseline prompts, or run token benchmarks merely
 because its version changed.
 
