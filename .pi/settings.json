@@ -1,0 +1,16 @@
+{
+  "enabledModels": [
+    "deepseek/*"
+  ],
+  "extensions": [
+    "extensions/neuralengine-guard.ts"
+  ],
+  "skills": [
+    "skills/neuralengine-development",
+    "skills/neuralengine-roles",
+    "../integrations/opencode/command-protocol"
+  ],
+  "prompts": [
+    "../integrations/opencode/command-protocol/commands"
+  ]
+}
