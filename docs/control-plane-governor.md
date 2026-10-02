@@ -58,6 +58,71 @@ validation commands, simple Git inspection commands, and path-checked `cat`,
 network commands, and system mutations are denied in bounded modes. This is a
 tool boundary, not a sandbox for an uncontrolled process.
 
+## Git authority
+
+The canonical policy is the same for every provider or host:
+
+```text
+GIT_READ=ALLOW
+GIT_STAGE=BOUNDED
+GIT_COMMIT=EXPLICIT_AUTHORIZATION
+GIT_PUSH=SEPARATE_EXPLICIT_AUTHORIZATION
+GIT_FORCE_PUSH=DENY
+GIT_REMOTE_CHANGE=DENY
+GIT_AUTH_MUTATION=DENY
+
+GPT_DESKTOP_POLICY=SAME_GOVERNOR_POLICY
+CODEX_POLICY=SAME_GOVERNOR_POLICY
+GPT_DESKTOP_RUNTIME_ENFORCEMENT=UNPROVEN
+CODEX_RUNTIME_ENFORCEMENT=UNPROVEN
+```
+
+Policy definition does not prove a host routes its tools through Governor:
+`POLICY_DEFINED != RUNTIME_ENFORCEMENT_PROVEN`. No GPT Desktop or Codex runtime
+adapter is implemented here. The current Pi adapter also retains its separate
+stricter Git mutation guard. Host identity does not grant extra Git authority.
+
+Git policy is additive to execution-mode and role checks. `OBSERVE` continues
+to accept file evidence only; Git shell reads do not bypass that rule. Outside
+`OBSERVE`, read operations include status, diff, log, show, current branch,
+`rev-parse`, `remote -v`, `rev-list`, and guarded fetch. Fetch is rejected if a
+configured refspec could update a local branch or worktree ref.
+
+Exact staging paths must be changed paths listed in
+`AUTHORIZED_GIT_STAGE_PATHS`. Broad staging (`git add .`, `git add -A`, or
+`git add --all`) needs a separately reviewed changed-path snapshot and explicit
+operator approval. Git policy evaluates authority; it does not execute staging,
+commit, or push commands.
+
+`EDIT != STAGE`, `STAGE != COMMIT`, `COMMIT != PUSH`, and `PUSH != PR`. Each is a
+separate authority transition; approval for one never authorizes the next.
+
+Commit preflight records repository, branch, `HEAD`, staged paths and diff
+digest, unstaged paths, and the exact message. Push preflight records repository,
+branch, `HEAD`, matching upstream, one configured push URL identity, and
+ahead/behind counts. The push URL itself is never included in the review; its
+opaque comparison digest is internal and must not be rendered. A mismatch
+invalidates the preflight and stops the run.
+Commit and push each require their own explicit operator approval; neither
+approval grants authority for the other operation. Push preflight is limited
+to the reviewed `HEAD` and matching upstream with exactly one outgoing commit
+and none incoming. Tags and pull requests are outside this permission.
+
+The authorization snapshot is an in-process preflight value, not an execution
+lock. `AUTHORIZATION_PREFLIGHT=PROVEN`; `ATOMIC_EXECUTION_GUARANTEE=NO`;
+`HOST_MUST_RECHECK_IMMEDIATELY_BEFORE_EXECUTION=YES`. Git state can change
+after any preflight and before the separate process runs; this policy makes no
+race-free or cross-process serialization claim. An invalidated review returns
+`AUTHORIZATION_INVALIDATED=YES` and `STOP`.
+
+Force push (including `--force-with-lease`), remote configuration changes,
+and recognized credential/authentication changes are denied. File tools
+protect `.git` metadata paths and files named exactly `.gitmodules`; ordinary
+project paths containing `.ssh` text are not protected on that basis. Git
+configuration and SSH files outside the repository are outside file-tool
+scope. These path checks and command classification are not a shell sandbox;
+hosts must stop on interactive authentication and must not work around it.
+
 Final assistant text is stored as `model_claim`; it never sets GREEN. GREEN
 requires successful configured validation tool results after the latest source
 edit. Different failed validation output digests count as new evidence for

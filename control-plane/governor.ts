@@ -6,8 +6,22 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import {
+  GitAuthorityController,
+  classifyGitCommand,
+  isGitAuthenticationMutation,
+  isGitAuthorityStop,
+} from "./git-authority.ts";
+import type {
+  GitAuthorizationReceipt,
+  GitCommitSnapshot,
+  GitPushAuthorizationReview,
+  GitStageSnapshot,
+} from "./git-authority.ts";
 
-export const CAPABILITIES = ["READ", "SEARCH", "EDIT", "CREATE", "DELETE", "VALIDATION", "SHELL_READONLY", "SHELL_MUTATING", "GIT_READONLY", "GIT_MUTATING", "NETWORK", "SYSTEM_MUTATION"] as const;
+export { classifyGitCommand } from "./git-authority.ts";
+
+export const CAPABILITIES = ["READ", "SEARCH", "EDIT", "CREATE", "DELETE", "VALIDATION", "SHELL_READONLY", "SHELL_MUTATING", "GIT_READ", "GIT_STAGE", "GIT_COMMIT", "GIT_PUSH", "GIT_FORCE_PUSH", "GIT_REMOTE_MUTATION", "GIT_AUTH_MUTATION", "GIT_READONLY", "GIT_MUTATING", "NETWORK", "SYSTEM_MUTATION"] as const;
 export type Capability = typeof CAPABILITIES[number];
 export type ExecutionMode = "OBSERVE" | "DISCOVER" | "BOUNDED_EXECUTE" | "PATCH" | "EXPANDED_EXECUTE";
 export type GovernorEventType = "SESSION_START" | "PROMPT_ADMIT" | "TOOL_PRE" | "TOOL_POST" | "VALIDATION_RESULT" | "COMPACTION" | "FINAL_CLAIM" | "SESSION_END";
@@ -57,6 +71,7 @@ export interface AgentGovernorPolicy {
   readonly VALIDATION_COMMANDS: readonly string[];
   readonly TEST_COMMANDS: readonly string[];
   readonly SAFE_GIT_COMMANDS: readonly string[];
+  readonly AUTHORIZED_GIT_STAGE_PATHS?: readonly string[];
 }
 
 export interface GovernorSnapshot {
@@ -123,6 +138,7 @@ const DEFAULTS = {
 } as const;
 
 const POLICY_KEYS = [...Object.keys(DEFAULTS), "MAX_REPEATED_FAILURES", "MAX_TOTAL_CORRECTIONS"];
+POLICY_KEYS.push("AUTHORIZED_GIT_STAGE_PATHS");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -199,6 +215,9 @@ export function parseGovernorPolicy(value: unknown): AgentGovernorPolicy {
   const validationCommands = stringList(value.VALIDATION_COMMANDS ?? DEFAULTS.VALIDATION_COMMANDS, "VALIDATION_COMMANDS");
   const testCommands = stringList(value.TEST_COMMANDS ?? DEFAULTS.TEST_COMMANDS, "TEST_COMMANDS");
   const gitCommands = stringList(value.SAFE_GIT_COMMANDS ?? DEFAULTS.SAFE_GIT_COMMANDS, "SAFE_GIT_COMMANDS");
+  const authorizedGitStagePaths = value.AUTHORIZED_GIT_STAGE_PATHS === undefined
+    ? undefined
+    : relativeFileList(value.AUTHORIZED_GIT_STAGE_PATHS, "AUTHORIZED_GIT_STAGE_PATHS");
   if (gitCommands.some((command) => !(DEFAULTS.SAFE_GIT_COMMANDS as readonly string[]).includes(command))) {
     throw new Error("SAFE_GIT_COMMANDS may contain only the built-in read-only inspection commands");
   }
@@ -278,6 +297,7 @@ export function parseGovernorPolicy(value: unknown): AgentGovernorPolicy {
     VALIDATION_COMMANDS: Object.freeze(validationCommands),
     TEST_COMMANDS: Object.freeze(testCommands),
     SAFE_GIT_COMMANDS: Object.freeze(gitCommands),
+    ...(authorizedGitStagePaths === undefined ? {} : { AUTHORIZED_GIT_STAGE_PATHS: Object.freeze(authorizedGitStagePaths) }),
   });
 }
 
@@ -343,11 +363,11 @@ function getPath(input: Record<string, unknown>): string | undefined {
 export function classifyCommand(command: string, validationCommands: readonly string[] = []): Capability {
   const trimmed = command.trim();
   if (validationCommands.includes(trimmed) && isSafeValidationCommand(trimmed)) return "VALIDATION";
+  if (isGitAuthenticationMutation(trimmed)) return "GIT_AUTH_MUTATION";
+  if (/^git(?:\s|$)/.test(trimmed)) return classifyGitCommand(trimmed);
   if (!trimmed || /[;&|`$<>\\\n\r*?(){}]/.test(trimmed)) return "SHELL_MUTATING";
   const words = trimmed.split(/\s+/);
   if (words[0] === "git") {
-    if (["status", "diff", "log", "show"].includes(words[1]) && words.length === 2) return "GIT_READONLY";
-    if (["status --short", "status --short --branch", "diff --stat", "diff --check"].includes(words.slice(1).join(" "))) return "GIT_READONLY";
     return "GIT_MUTATING";
   }
   if (["pacman", "systemctl", "chmod", "chown", "sudo", "run0", "install"].includes(words[0])) return "SYSTEM_MUTATION";
@@ -428,6 +448,7 @@ export class AgentGovernor {
   readonly #toolDecisions: Array<Readonly<Record<string, unknown>>> = [];
   readonly #validationResults: Array<Readonly<Record<string, unknown>>> = [];
   readonly #seenFailureEvidence = new Set<string>();
+  readonly #gitAuthority: GitAuthorityController;
   #stopReason: string | undefined;
   readonly #persist: (snapshot: GovernorSnapshot) => void;
 
@@ -455,6 +476,7 @@ export class AgentGovernor {
     this.#fingerprint = JSON.stringify(policy);
     this.#policySha256 = policySha256(policy);
     this.#persist = persist;
+    this.#gitAuthority = new GitAuthorityController(this.#root, policy.AUTHORIZED_GIT_STAGE_PATHS ?? []);
     this.#allowedRead = this.#canonicalPolicyPaths(policy.ALLOWED_READ_FILES);
     this.#allowedEdit = this.#canonicalPolicyPaths(policy.ALLOWED_EDIT_FILES);
     this.#authorizedRewrites = this.#canonicalPolicyPaths(policy.AUTHORIZED_REWRITE_FILES);
@@ -464,6 +486,39 @@ export class AgentGovernor {
 
   get policy(): AgentGovernorPolicy {
     return this.#policy;
+  }
+
+  /** Capture a displayable local path snapshot; this does not stage files. */
+  prepareGitStageAuthorization(): GitStageSnapshot {
+    return this.#gitAuthority.prepareGitStageAuthorization();
+  }
+
+  /** Revalidate an operator-reviewed stage snapshot; this is preflight only. */
+  authorizeGitStage(review: GitStageSnapshot, explicitlyAuthorized: boolean): GitAuthorizationReceipt {
+    if (!this.#canAuthorizeGitMutation()) return { allowed: false, reason: "Git staging authorization is unavailable in this mode or role" };
+    return this.#recordGitAuthorizationReceipt(this.#gitAuthority.authorizeGitStage(review, explicitlyAuthorized));
+  }
+
+  /** Capture the current staged diff and exact message for host review. */
+  prepareGitCommitAuthorization(commitMessage: string): GitCommitSnapshot {
+    return this.#gitAuthority.prepareGitCommitAuthorization(commitMessage);
+  }
+
+  /** Revalidate an explicitly approved snapshot; host execution remains separate. */
+  authorizeGitCommit(review: GitCommitSnapshot, explicitlyAuthorized: boolean): GitAuthorizationReceipt {
+    if (!this.#canAuthorizeGitMutation()) return { allowed: false, reason: "Git commit authorization is unavailable in this mode or role" };
+    return this.#recordGitAuthorizationReceipt(this.#gitAuthority.authorizeGitCommit(review, explicitlyAuthorized));
+  }
+
+  /** Capture branch, upstream, remote identity, HEAD, and ahead/behind for review. */
+  prepareGitPushAuthorization(): GitPushAuthorizationReview {
+    return this.#gitAuthority.prepareGitPushAuthorization();
+  }
+
+  /** Revalidate a separately approved push snapshot; this is not an atomic push. */
+  authorizeGitPush(review: GitPushAuthorizationReview, explicitlyAuthorized: boolean): GitAuthorizationReceipt {
+    if (!this.#canAuthorizeGitMutation()) return { allowed: false, reason: "Git push authorization is unavailable in this mode or role" };
+    return this.#recordGitAuthorizationReceipt(this.#gitAuthority.authorizeGitPush(review, explicitlyAuthorized));
   }
 
   get policyHash(): string { return this.#policySha256; }
@@ -597,6 +652,7 @@ export class AgentGovernor {
       const target = this.#resolveToolTarget(rawPath);
       if (!target) return this.#reject(`invalid or out-of-repository edit path: ${rawPath}`);
       const file = target.absolute;
+      if (this.#isProtectedGitPath(file)) return this.#reject("Git metadata and submodule remote configuration are not editable through file tools");
       if (!this.#allowedEdit.has(file)) return this.#expansion(rawPath, target.exists ? "EDIT" : "CREATE", evidenceReference, `edit path is outside ALLOWED_EDIT_FILES: ${rawPath}`);
       if ([...this.#pendingMutations.values()].some((item) => item.file === file)) {
         return this.#reject(`another mutation for this file is still pending: ${rawPath}`);
@@ -630,6 +686,16 @@ export class AgentGovernor {
         return { allowed: true, capability, outcome: "CONTINUE" };
       }
       if (capability === "GIT_READONLY") return { allowed: true, capability, outcome: "CONTINUE" };
+      if (capability === "GIT_READ") return this.#checkGitCommand(command, capability);
+      if (["GIT_STAGE", "GIT_COMMIT", "GIT_PUSH", "GIT_FORCE_PUSH", "GIT_REMOTE_MUTATION", "GIT_AUTH_MUTATION", "GIT_MUTATING"].includes(capability)) {
+        if (!this.#canAuthorizeGitMutation()) {
+          return { ...this.#reject(`Git mutation is unavailable in ${mode} mode or ${this.#policy.ROLE} role`), capability, outcome: "STOP" };
+        }
+        if (capability === "GIT_STAGE" && this.#workingDirectory !== this.#root) {
+          return { ...this.#reject("Git staging requires the repository root as the working directory"), capability, outcome: "STOP" };
+        }
+        return this.#checkGitCommand(command, capability);
+      }
       if (capability === "SHELL_READONLY") {
         const words = command.split(/\s+/);
         const target = this.#resolveAnyToolTarget(words.at(-1) ?? "");
@@ -702,6 +768,38 @@ export class AgentGovernor {
   stop(reason: string): void {
     this.#stopReason = reason;
     this.#save();
+  }
+
+  #canAuthorizeGitMutation(): boolean {
+    return !["OBSERVE", "DISCOVER"].includes(this.#policy.MODE) && !["REVIEW", "VISION"].includes(this.#policy.ROLE);
+  }
+
+  #isProtectedGitPath(file: string): boolean {
+    const relative = path.relative(this.#root, file);
+    const segments = relative.split(path.sep);
+    return segments.includes(".git") || path.basename(file) === ".gitmodules";
+  }
+
+  #checkGitCommand(command: string, capability: Capability): GovernorDecision {
+    const decision = this.#gitAuthority.checkCommand(command);
+    if (isGitAuthorityStop(decision)) {
+      this.#stopReason = decision.reason ?? "Git authorization was invalidated";
+      this.#save();
+    }
+    return {
+      allowed: decision.allowed,
+      capability,
+      ...(decision.reason ? { reason: decision.reason } : {}),
+      outcome: decision.outcome ?? (decision.allowed ? "CONTINUE" : "STOP"),
+    };
+  }
+
+  #recordGitAuthorizationReceipt(receipt: GitAuthorizationReceipt): GitAuthorizationReceipt {
+    if (receipt.authorizationInvalidated) {
+      this.#stopReason = receipt.reason ?? "Git authorization preflight was invalidated";
+      this.#save();
+    }
+    return receipt;
   }
 
   #canonicalPolicyPaths(files: readonly string[]): Set<string> {

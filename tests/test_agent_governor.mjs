@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { AgentGovernor, parseGovernorPolicy, parseQualificationPolicy, policySha256, classifyCommand } from "../control-plane/governor.ts";
+import { AgentGovernor, parseGovernorPolicy, parseQualificationPolicy, policySha256, classifyCommand, classifyGitCommand } from "../control-plane/governor.ts";
 import registerPiExtension, { guardToolCall } from "../.pi/extensions/neuralengine-guard.ts";
 
 const TEST_COMMAND = "uv run pytest tests/test_agent_governor.py -q";
@@ -585,7 +586,7 @@ test("shell and Git capabilities reject mutations and constrain read paths", (t)
   const instance = governor(root);
   assert.equal(classifyCommand("rg value src/worker.py"), "SHELL_READONLY");
   assert.equal(classifyCommand(TEST_COMMAND, [TEST_COMMAND]), "VALIDATION");
-  assert.equal(classifyCommand("git status"), "GIT_READONLY");
+  assert.equal(classifyCommand("git status"), "GIT_READ");
   assert.equal(classifyCommand("git reset --hard"), "GIT_MUTATING");
   assert.equal(classifyCommand("rm src/worker.py"), "DELETE");
   assert.equal(instance.checkToolCall("bash", { command: "rg value src/worker.py" }, "rg").allowed, true);
@@ -593,6 +594,20 @@ test("shell and Git capabilities reject mutations and constrain read paths", (t)
   assert.equal(instance.checkToolCall("bash", { command: "git status" }, "git-read").allowed, true);
   assert.equal(instance.checkToolCall("bash", { command: "git commit -m bad" }, "git-write").allowed, false);
   assert.equal(instance.checkToolCall("bash", { command: "sed -i s/a/b/ src/worker.py" }, "sed").allowed, false);
+});
+
+test("explicit file scopes cannot edit Git metadata or submodule remote configuration", (t) => {
+  const root = repository(t);
+  mkdirSync(path.join(root, ".ssh"));
+  mkdirSync(path.join(root, "src", ".ssh-notes"));
+  const instance = governor(root, {
+    ALLOWED_EDIT_FILES: [".git/config", ".gitmodules", ".ssh/config", "src/.ssh-notes/README.md"],
+    ALLOW_NEW_FILES: true,
+  });
+  assert.equal(instance.checkToolCall("write", { path: ".git/config", content: "[remote]\n" }, "edit-git-config").allowed, false);
+  assert.equal(instance.checkToolCall("write", { path: ".gitmodules", content: "[submodule]\n" }, "edit-gitmodules").allowed, false);
+  assert.equal(instance.checkToolCall("write", { path: ".ssh/config", content: "project data\n" }, "edit-project-ssh-name").allowed, true);
+  assert.equal(instance.checkToolCall("write", { path: "src/.ssh-notes/README.md", content: "project data\n" }, "edit-ssh-notes").allowed, true);
 });
 
 test("an approved policy revision resumes counters but a self-claim cannot expand scope", (t) => {
@@ -753,4 +768,240 @@ test("workspace root rejects a different checkout and a symlink escape", (t) => 
   symlinkSync(other, path.join(root, "src/outside"));
   const discover = governor(root, { MODE: "DISCOVER" });
   assert.equal(discover.checkToolCall("read", { path: "src/outside" }, "escape").allowed, false);
+});
+
+
+function fixtureGitBuffer(root, ...args) {
+  return execFileSync("git", args, {
+    cwd: root,
+    encoding: "buffer",
+    env: {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function fixtureGit(root, ...args) {
+  return fixtureGitBuffer(root, ...args).toString("utf8").trim();
+}
+
+function localGitFixture(t) {
+  const root = repository(t);
+  fixtureGit(root, "init", "--initial-branch=main");
+  fixtureGit(root, "config", "user.name", "NeuralEngine Fixture");
+  fixtureGit(root, "config", "user.email", "fixture@example.invalid");
+  writeFileSync(path.join(root, "src", "worker.py"), "value = 1\n");
+  fixtureGit(root, "add", "--", "src/worker.py");
+  fixtureGit(root, "commit", "-m", "fixture base");
+  const baseHead = fixtureGit(root, "rev-parse", "HEAD");
+  const baseTree = fixtureGit(root, "rev-parse", "HEAD^{tree}");
+  fixtureGit(root, "remote", "add", "origin", path.join(root, "unused-remote.git"));
+  fixtureGit(root, "config", "branch.main.remote", "origin");
+  fixtureGit(root, "config", "branch.main.merge", "refs/heads/main");
+  fixtureGit(root, "update-ref", "refs/remotes/origin/main", baseHead);
+  const createCommit = (parent, tree, message) =>
+    fixtureGit(root, "commit-tree", tree, "-p", parent, "-m", message);
+  return { root, baseHead, baseTree, createCommit, git: (...args) => fixtureGit(root, ...args) };
+}
+
+function gitGovernor(root, overrides = {}) {
+  return new AgentGovernor(policy({ WORKSPACE_ROOT: root, ...overrides }), root);
+}
+
+test("Git reads remain subject to OBSERVE mode while available in bounded mode", (t) => {
+  const root = repository(t);
+  const commands = [
+    "git status",
+    "git diff",
+    "git log",
+    "git show",
+    "git branch --show-current",
+    "git rev-parse HEAD",
+    "git remote -v",
+    "git rev-list HEAD",
+  ];
+  const observe = gitGovernor(root, { MODE: "OBSERVE" });
+  for (const [index, command] of commands.entries()) {
+    assert.equal(classifyGitCommand(command), "GIT_READ", command);
+    const decision = observe.checkToolCall("bash", { command }, "observe-git-read-" + index);
+    assert.equal(decision.allowed, false, command);
+    assert.match(decision.reason, /OBSERVE accepts file evidence only/);
+  }
+
+  const bounded = gitGovernor(root, { MODE: "BOUNDED_EXECUTE" });
+  assert.equal(bounded.checkToolCall("bash", { command: "git status" }, "bounded-git-status").allowed, true);
+});
+
+test("default Git reader captures the staged diff and invalidates changed content and HEAD", (t) => {
+  const { root, git } = localGitFixture(t);
+  writeFileSync(path.join(root, "src", "worker.py"), "value = 2\n");
+  git("add", "--", "src/worker.py");
+
+  const instance = gitGovernor(root);
+  const review = instance.prepareGitCommitAuthorization("reviewed change");
+  const expectedDiff = fixtureGitBuffer(root, "diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", "--no-color");
+  assert.deepEqual(review.stagedPaths, ["src/worker.py"]);
+  assert.deepEqual(review.unstagedPaths, []);
+  assert.equal(review.stagedDiffSha256, createHash("sha256").update(expectedDiff).digest("hex"));
+  assert.equal(instance.authorizeGitCommit(review, true).allowed, true);
+  assert.equal(instance.checkToolCall("bash", {
+    command: "git push --no-follow-tags --recurse-submodules=no origin HEAD:refs/heads/main",
+  }, "commit-review-does-not-authorize-push").allowed, false);
+
+  writeFileSync(path.join(root, "src", "worker.py"), "value = 3\n");
+  git("add", "--", "src/worker.py");
+  const changedContent = instance.checkToolCall("bash", {
+    command: 'git commit -m "reviewed change"',
+  }, "commit-after-content-change");
+  assert.equal(changedContent.allowed, false);
+  assert.equal(changedContent.outcome, "STOP");
+  assert.match(changedContent.reason, /AUTHORIZATION_INVALIDATED=YES/);
+  assert.equal(instance.stopped, true);
+
+  const second = gitGovernor(root);
+  const headReview = second.prepareGitCommitAuthorization("head change");
+  assert.equal(second.authorizeGitCommit(headReview, true).allowed, true);
+  const currentHead = git("rev-parse", "HEAD");
+  const tree = git("rev-parse", "HEAD^{tree}");
+  const advancedHead = git("commit-tree", tree, "-p", currentHead, "-m", "fixture head advance");
+  git("update-ref", "refs/heads/main", advancedHead);
+  const changedHead = second.checkToolCall("bash", {
+    command: 'git commit -m "head change"',
+  }, "commit-after-head-change");
+  assert.equal(changedHead.allowed, false);
+  assert.equal(changedHead.outcome, "STOP");
+  assert.match(changedHead.reason, /AUTHORIZATION_INVALIDATED=YES/);
+});
+
+test("default Git reader reports local ahead/behind counts and invalidates branch, remote, or HEAD changes", (t) => {
+  for (const change of ["branch", "remote", "remote-config", "head", "behind"]) {
+    const { root, baseHead, baseTree, createCommit, git } = localGitFixture(t);
+    const localHead = createCommit(baseHead, baseTree, "fixture local commit");
+    git("update-ref", "refs/heads/main", localHead);
+
+    const instance = gitGovernor(root);
+    const review = instance.prepareGitPushAuthorization();
+    assert.equal(review.ahead, 1);
+    assert.equal(review.behind, 0);
+
+    if (change === "behind") {
+      const remoteHead = createCommit(baseHead, baseTree, "fixture remote commit");
+      git("update-ref", "refs/remotes/origin/main", remoteHead);
+      const diverged = instance.prepareGitPushAuthorization();
+      assert.equal(diverged.ahead, 1);
+      assert.equal(diverged.behind, 1);
+      assert.equal(instance.authorizeGitPush(diverged, true).allowed, false);
+      continue;
+    }
+
+    assert.equal(instance.authorizeGitPush(review, true).allowed, true);
+    if (change === "branch") {
+      git("branch", "other", "HEAD");
+      git("switch", "other");
+      git("config", "branch.other.remote", "origin");
+      git("config", "branch.other.merge", "refs/heads/other");
+      git("update-ref", "refs/remotes/origin/other", baseHead);
+    } else if (change === "remote") {
+      git("remote", "set-url", "origin", path.join(root, "changed-remote.git"));
+    } else if (change === "remote-config") {
+      git("config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/alternate/*");
+    } else {
+      const nextHead = createCommit(localHead, baseTree, "fixture second local commit");
+      git("update-ref", "refs/heads/main", nextHead);
+    }
+    const result = instance.checkToolCall("bash", {
+      command: "git push --no-follow-tags --recurse-submodules=no origin HEAD:refs/heads/main",
+    }, "push-after-" + change + "-change");
+    assert.equal(result.allowed, false, change);
+    assert.equal(result.outcome, "STOP", change);
+    assert.match(result.reason, /AUTHORIZATION_INVALIDATED=YES/, change);
+    assert.equal(instance.stopped, true, change);
+  }
+});
+
+test("fetch preflight permits remote-tracking-only refspecs and denies local-branch refspecs", (t) => {
+  const { root, git } = localGitFixture(t);
+  const safe = gitGovernor(root, { MODE: "BOUNDED_EXECUTE" });
+  assert.equal(safe.checkToolCall("bash", { command: "git fetch origin" }, "fetch-remote-tracking-only").allowed, true);
+
+  git("config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/heads/*");
+  const unsafe = gitGovernor(root, { MODE: "BOUNDED_EXECUTE" });
+  const deniedFetch = unsafe.checkToolCall("bash", { command: "git fetch origin" }, "fetch-local-branch-refspec");
+  assert.equal(deniedFetch.allowed, false);
+  assert.match(deniedFetch.reason, /local branch/);
+});
+
+test("a changed local remote configuration invalidates approval-time push preflight and stops", (t) => {
+  const { root, baseHead, baseTree, createCommit, git } = localGitFixture(t);
+  git("update-ref", "refs/heads/main", createCommit(baseHead, baseTree, "fixture local commit"));
+  const instance = gitGovernor(root);
+  const review = instance.prepareGitPushAuthorization();
+  git("remote", "set-url", "origin", path.join(root, "changed-before-approval.git"));
+  const receipt = instance.authorizeGitPush(review, true);
+  assert.equal(receipt.allowed, false);
+  assert.equal(receipt.authorizationInvalidated, true);
+  assert.match(receipt.reason, /AUTHORIZATION_INVALIDATED=YES/);
+  assert.equal(instance.stopped, true);
+});
+
+test("staging is bounded and broad staging uses one reviewed local Git snapshot", (t) => {
+  const { root } = localGitFixture(t);
+  writeFileSync(path.join(root, "src", "worker.py"), "value = 2\n");
+  const scoped = gitGovernor(root, { AUTHORIZED_GIT_STAGE_PATHS: ["src/worker.py"] });
+  assert.equal(scoped.checkToolCall("bash", {
+    command: "git add -- src/worker.py",
+  }, "stage-explicit-path").allowed, true);
+  assert.equal(scoped.checkToolCall("bash", {
+    command: "git add -- tests/test_worker.py",
+  }, "stage-outside-scope").allowed, false);
+
+  const broad = gitGovernor(root);
+  const review = broad.prepareGitStageAuthorization();
+  assert.equal(broad.authorizeGitStage(review, false).allowed, false);
+  assert.equal(broad.authorizeGitStage(review, true).allowed, true);
+  assert.equal(broad.checkToolCall("bash", { command: "git add -A" }, "stage-broad-reviewed").allowed, true);
+  assert.equal(broad.checkToolCall("bash", { command: "git add ." }, "stage-broad-reuse").allowed, false);
+
+  const stale = gitGovernor(root);
+  const staleReview = stale.prepareGitStageAuthorization();
+  assert.equal(stale.authorizeGitStage(staleReview, true).allowed, true);
+  writeFileSync(path.join(root, "tests", "new.py"), "value = 1\n");
+  const invalidated = stale.checkToolCall("bash", { command: "git add --all" }, "stage-after-change");
+  assert.equal(invalidated.allowed, false);
+  assert.equal(invalidated.outcome, "STOP");
+  assert.match(invalidated.reason, /AUTHORIZATION_INVALIDATED=YES/);
+  assert.equal(stale.stopped, true);
+});
+
+test("force push, remote mutation, authentication mutation, and protected paths stay denied", (t) => {
+  const { root, baseHead, baseTree, createCommit, git } = localGitFixture(t);
+  const localHead = createCommit(baseHead, baseTree, "fixture local commit");
+  git("update-ref", "refs/heads/main", localHead);
+  const instance = gitGovernor(root);
+  const denied = [
+    ["git push --force origin HEAD:refs/heads/main", "GIT_FORCE_PUSH"],
+    ["git push -f", "GIT_FORCE_PUSH"],
+    ["git push --force-with-lease", "GIT_FORCE_PUSH"],
+    ["git remote add upstream /tmp/unused.git", "GIT_REMOTE_MUTATION"],
+    ["git remote remove origin", "GIT_REMOTE_MUTATION"],
+    ["git remote set-url origin /tmp/unused.git", "GIT_REMOTE_MUTATION"],
+    ["git config remote.origin.url /tmp/unused.git", "GIT_REMOTE_MUTATION"],
+    ["git config --global credential.helper store", "GIT_AUTH_MUTATION"],
+    ["git config --global http.sslVerify false", "GIT_AUTH_MUTATION"],
+    ["git config --global core.sshCommand ssh", "GIT_AUTH_MUTATION"],
+    ["git credential approve", "GIT_AUTH_MUTATION"],
+    ["ssh-keygen -p -f ~/.ssh/id_ed25519", "GIT_AUTH_MUTATION"],
+    ["gh auth login", "GIT_AUTH_MUTATION"],
+  ];
+  for (const [index, [command, operation]] of denied.entries()) {
+    assert.equal(classifyGitCommand(command), operation, command);
+    assert.equal(instance.checkToolCall("bash", { command }, "denied-" + index).allowed, false, command);
+  }
+
+  const noScope = gitGovernor(root);
+  for (const command of ["git add .", "git add -A", "git add --all"]) {
+    assert.equal(noScope.checkToolCall("bash", { command }, "broad-" + command).allowed, false, command);
+  }
 });
