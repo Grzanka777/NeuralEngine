@@ -16,6 +16,7 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parent.parent
 PI_ENTRYPOINT = Path.home() / ".local" / "bin" / "pi"
 ROLE_ALIASES = {"general": "GENERAL", "code": "CODE", "patch": "GPTOSS", "gptoss": "GPTOSS"}
+GUARD_EXTENSION = Path(".pi/extensions/neuralengine-guard.ts")
 
 
 class LocalPiError(RuntimeError):
@@ -34,7 +35,7 @@ def _load_adapter() -> ModuleType:
     return module
 
 
-def _reject_role_overrides(arguments: Sequence[str]) -> None:
+def _reject_role_overrides(arguments: Sequence[str], *, guard_required: bool = False) -> None:
     for argument in arguments:
         if argument == "--":
             break
@@ -42,6 +43,25 @@ def _reject_role_overrides(arguments: Sequence[str]) -> None:
             raise LocalPiError("provider is selected by the role; do not override --provider")
         if argument == "--model" or argument.startswith("--model="):
             raise LocalPiError("model is selected by the role; do not override --model")
+        if guard_required and (
+            argument in {"--extension", "-e", "--no-extensions", "-ne"}
+            or argument.startswith("--extension=")
+        ):
+            raise LocalPiError(
+                "bounded CODE/PATCH requires the project Guard; do not override extension loading"
+            )
+
+
+def _guard_extension_path() -> Path:
+    path = ROOT / GUARD_EXTENSION
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(ROOT.resolve(strict=True))
+    except (OSError, ValueError) as error:
+        raise LocalPiError(f"required Guard extension is unavailable: {path}") from error
+    if not resolved.is_file():
+        raise LocalPiError(f"required Guard extension is not a file: {path}")
+    return resolved
 
 
 def _policy_path(role: str, requested: str | None) -> Path:
@@ -81,8 +101,10 @@ def _environment(role: str, policy: Path | None) -> dict[str, str]:
 
 def _run_role(role: str, pi_arguments: Sequence[str], requested_policy: str | None) -> int:
     adapter = _load_adapter()
-    _reject_role_overrides(pi_arguments)
-    policy = _policy_path(role, requested_policy) if role in {"CODE", "GPTOSS"} else None
+    guard_required = role in {"CODE", "GPTOSS"}
+    _reject_role_overrides(pi_arguments, guard_required=guard_required)
+    policy = _policy_path(role, requested_policy) if guard_required else None
+    guard_extension = _guard_extension_path() if guard_required else None
     if role == "GENERAL" and requested_policy is not None:
         raise LocalPiError("GENERAL does not use a bounded mutation policy")
     executable = PI_ENTRYPOINT.resolve(strict=True)
@@ -97,6 +119,7 @@ def _run_role(role: str, pi_arguments: Sequence[str], requested_policy: str | No
         adapter.PROVIDERS[role],
         "--model",
         adapter.MODELS[role],
+        *([] if guard_extension is None else ["--extension", str(guard_extension)]),
         *pi_arguments,
     ]
     completed: subprocess.CompletedProcess[str] | None = None
@@ -164,7 +187,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             index += 1
             continue
         if value == "--":
-            pi_arguments.extend(values[index + 1 :])
+            pi_arguments.extend(values[index:])
             break
         pi_arguments.append(value)
         index += 1
