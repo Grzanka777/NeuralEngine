@@ -56,8 +56,12 @@ Every AI agent must:
 * Read repository instructions and required project context before editing.
 * Work only within the authorized task scope.
 * Preserve explicitly stated non-goals.
-* Treat `/home/grzanka/Work/NeuralEngine` as the verified authoritative
+* Treat `/home/grzanka/work/NeuralEngine` as the verified authoritative
   checkout for NeuralEngine work.
+* Treat `/home/grzanka/work/NeuralEngine-pi` as a linked git worktree of the
+  same repository, used only for bounded Pi integration work. It is not a
+  second independent source of repository authority; the authoritative
+  checkout above remains the source of truth.
 * Treat `/run/media/grzanka/777/projekty/NeuralEngine` as legacy
   archive/reference only; do not read project state from it unless explicitly
   requested.

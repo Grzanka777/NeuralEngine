@@ -13,7 +13,7 @@ const protectedCommands: ProtectedCommand[] = [
 	{
 		reason: "Git mutation requires separate explicit authorization",
 		pattern:
-			/\bgit\s+(?:add\b|apply\s+--cached\b|rm\s+--cached\b|commit\b|push\b|merge\b|tag\b|reset\s+--hard\b|clean\b)/i,
+			/\bgit\s+(?:(?:-[Cc]\s+\S+|--(?:git-dir|work-tree|namespace|exec-path|config-env)\s+\S+|--?[A-Za-z][\w-]*(?:=\S+)?)\s+)*(?:add\b|apply\s+--cached\b|rm\s+--cached\b|commit\b|push\b|merge\b|tag\b|reset\s+--hard\b|clean\b)/i,
 	},
 	{
 		reason: "NeuralEngine durable-state mutation requires separate explicit authorization",
