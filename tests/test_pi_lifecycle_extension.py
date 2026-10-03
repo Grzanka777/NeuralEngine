@@ -109,18 +109,37 @@ def test_provider_to_role_mapping_contract() -> None:
     assert provider_to_role["local-gptoss"] == "GPTOSS"
 
 
-def _run_node_harness_script(script: str) -> subprocess.CompletedProcess[str]:
-    """Execute a Node test script with experimental TypeScript support enabled."""
+def _run_node_harness_script(script: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    """Run unchanged lifecycle logic against test-owned roots, never the host checkout."""
+    canonical = tmp_path / "canonical"
+    marker = canonical / "scripts/pi-model"
+    marker.parent.mkdir(parents=True)
+    marker.touch()
+    home = tmp_path / "home"
+    home.mkdir()
+    extension = tmp_path / "lifecycle.ts"
+    source = EXTENSION_PATH.read_text(encoding="utf-8")
+    declaration = 'export const CANONICAL_ROOT = "/home/grzanka/Work/NeuralEngine";'
+    assert source.count(declaration) == 1
+    extension.write_text(
+        source.replace(declaration, f"export const CANONICAL_ROOT = {json.dumps(str(canonical))};"),
+        encoding="utf-8",
+    )
+    script = script.replace(
+        '"./integrations/pi/extensions/neuralengine-model-lifecycle.ts"',
+        json.dumps(extension.as_uri()),
+    )
     return subprocess.run(
         ["node", "--experimental-strip-types", "-e", script],
         cwd=ROOT,
+        env={**os.environ, "HOME": str(home), "NEURALENGINE_PI_PROJECT_ROOT": str(canonical)},
         capture_output=True,
         text=True,
         check=False,
     )
 
 
-def test_node_switch_json_started_and_borrowed_lifecycle() -> None:
+def test_node_switch_json_started_and_borrowed_lifecycle(tmp_path: Path) -> None:
     """Test machine API STARTED and BORROWED handling using real Node harness."""
     script = """
     import assert from "node:assert/strict";
@@ -217,11 +236,11 @@ def test_node_switch_json_started_and_borrowed_lifecycle() -> None:
       process.exit(1);
     });
     """
-    res = _run_node_harness_script(script)
+    res = _run_node_harness_script(script, tmp_path)
     assert res.returncode == 0, f"Node test failed:\n{res.stdout}\n{res.stderr}"
 
 
-def test_node_borrowed_ownership_does_not_stop_on_shutdown() -> None:
+def test_node_borrowed_ownership_does_not_stop_on_shutdown(tmp_path: Path) -> None:
     """Test that BORROWED ownership is never stopped by the extension."""
     script = """
     import assert from "node:assert/strict";
@@ -284,11 +303,11 @@ def test_node_borrowed_ownership_does_not_stop_on_shutdown() -> None:
       process.exit(1);
     });
     """
-    res = _run_node_harness_script(script)
+    res = _run_node_harness_script(script, tmp_path)
     assert res.returncode == 0, f"Node test failed:\n{res.stdout}\n{res.stderr}"
 
 
-def test_node_machine_json_validation_rejections() -> None:
+def test_node_machine_json_validation_rejections(tmp_path: Path) -> None:
     """Test rejection of malformed JSON, wrong api_version, and invalid fields."""
     script = """
     import assert from "node:assert/strict";
@@ -363,11 +382,11 @@ def test_node_machine_json_validation_rejections() -> None:
       pid: 100
     })), /unsupported api_version/);
     """
-    res = _run_node_harness_script(script)
+    res = _run_node_harness_script(script, tmp_path)
     assert res.returncode == 0, f"Node test failed:\n{res.stdout}\n{res.stderr}"
 
 
-def test_node_role_transitions() -> None:
+def test_node_role_transitions(tmp_path: Path) -> None:
     """Test local-to-local, local-to-cloud, and cloud-to-local transitions."""
     script = """
     import assert from "node:assert/strict";
@@ -470,15 +489,17 @@ def test_node_role_transitions() -> None:
       process.exit(1);
     });
     """
-    res = _run_node_harness_script(script)
+    res = _run_node_harness_script(script, tmp_path)
     assert res.returncode == 0, f"Node test failed:\n{res.stdout}\n{res.stderr}"
 
 
-def test_node_global_root_resolution() -> None:
+def test_node_global_root_resolution(tmp_path: Path) -> None:
     """Test that findProjectRoot resolves canonical root from /tmp, ~, and honors env override."""
     script = """
     import assert from "node:assert/strict";
     import os from "node:os";
+    import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+    import { join } from "node:path";
     import {
       findProjectRoot,
       CANONICAL_ROOT
@@ -497,6 +518,31 @@ def test_node_global_root_resolution() -> None:
     process.env.NEURALENGINE_PI_PROJECT_ROOT = CANONICAL_ROOT;
     const rootWithOverride = findProjectRoot("/tmp");
     assert.equal(rootWithOverride, CANONICAL_ROOT);
+
+    // 4. Global config takes precedence over the canonical fallback.
+    delete process.env.NEURALENGINE_PI_PROJECT_ROOT;
+    const configured = join(os.homedir(), "configured");
+    mkdirSync(join(configured, "scripts"), { recursive: true });
+    writeFileSync(join(configured, "scripts", "pi-model"), "");
+    const config = join(os.homedir(), ".config", "neuralengine", "root");
+    mkdirSync(join(os.homedir(), ".config", "neuralengine"), { recursive: true });
+    writeFileSync(config, configured);
+    assert.equal(findProjectRoot("/tmp"), configured);
+
+    // 5. An explicit valid override takes precedence over global config.
+    process.env.NEURALENGINE_PI_PROJECT_ROOT = CANONICAL_ROOT;
+    assert.equal(findProjectRoot("/tmp"), CANONICAL_ROOT);
+    delete process.env.NEURALENGINE_PI_PROJECT_ROOT;
+    unlinkSync(config);
+
+    // 6. When the canonical checkout is absent (CI), walk up from cwd.
+    unlinkSync(join(CANONICAL_ROOT, "scripts", "pi-model"));
+    const nested = join(configured, "nested", "work");
+    mkdirSync(nested, { recursive: true });
+    assert.equal(findProjectRoot(nested), configured);
+
+    // 7. Missing roots must fail closed; no real local runtime is accessed.
+    assert.equal(findProjectRoot(os.homedir()), null);
     """
-    res = _run_node_harness_script(script)
+    res = _run_node_harness_script(script, tmp_path)
     assert res.returncode == 0, f"Node test failed:\n{res.stdout}\n{res.stderr}"
