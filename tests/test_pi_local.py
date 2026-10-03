@@ -55,6 +55,13 @@ def _fake_adapter() -> SimpleNamespace:
     return SimpleNamespace(module=FakeAdapter, calls=calls)
 
 
+def _install_guard(root: Path) -> Path:
+    path = root / ".pi/extensions/neuralengine-guard.ts"
+    path.parent.mkdir(parents=True)
+    path.write_text("export default function guard() {}\n", encoding="utf-8")
+    return path
+
+
 @pytest.fixture
 def policy(tmp_path: Path) -> Path:
     path = tmp_path / "policy.json"
@@ -72,6 +79,7 @@ def test_code_runner_selects_exact_provider_model_and_bounded_policy(
     executable = tmp_path / "pi"
     executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     executable.chmod(0o755)
+    guard = _install_guard(tmp_path)
     observed: dict[str, Any] = {}
 
     def fake_run(
@@ -93,6 +101,8 @@ def test_code_runner_selects_exact_provider_model_and_bounded_policy(
         "neural-code",
         "--model",
         "/models/code.gguf",
+        "--extension",
+        str(guard),
         "--print",
         "task",
     ]
@@ -134,6 +144,7 @@ def test_runner_maps_general_and_patch_without_fallback(
 
     policy: str | None = None
     if role == "GPTOSS":
+        guard = _install_guard(tmp_path)
         patch_policy = tmp_path / "patch-policy.json"
         patch_policy.write_text(
             f'{{"ROLE":"PATCH","WORKSPACE_ROOT":"{tmp_path}"}}',
@@ -144,6 +155,7 @@ def test_runner_maps_general_and_patch_without_fallback(
     assert observed["command"][1:5] == ["--provider", provider, "--model", model]
     if role == "GPTOSS":
         assert observed["env"]["NEURAL_PI_BOUNDED_CODE"] == "1"
+        assert observed["command"][5:7] == ["--extension", str(guard)]
     else:
         assert "NEURAL_PI_BOUNDED_CODE" not in observed["env"]
 
@@ -151,6 +163,55 @@ def test_runner_maps_general_and_patch_without_fallback(
 def test_runner_rejects_provider_override(runner: dict[str, Any]) -> None:
     with pytest.raises(runner["LocalPiError"], match="do not override --provider"):
         runner["_reject_role_overrides"](["--provider", "wrong"])
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--no-extensions"],
+        ["-ne"],
+        ["--extension", "other.ts"],
+        ["-e", "other.ts"],
+        ["--extension=other.ts"],
+    ],
+)
+def test_bounded_runner_rejects_extension_loader_overrides(
+    runner: dict[str, Any], arguments: list[str]
+) -> None:
+    with pytest.raises(runner["LocalPiError"], match="requires the project Guard"):
+        runner["_reject_role_overrides"](arguments, guard_required=True)
+
+
+def test_general_preserves_extension_loader_passthrough(runner: dict[str, Any]) -> None:
+    runner["_reject_role_overrides"](["--no-extensions"], guard_required=False)
+
+
+def test_argument_separator_keeps_extension_like_prompt_positional(
+    runner: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: dict[str, Any] = {}
+
+    def fake_run(role: str, arguments: list[str], policy: str | None) -> int:
+        observed.update(role=role, arguments=arguments, policy=policy)
+        return 0
+
+    monkeypatch.setitem(runner["main"].__globals__, "_run_role", fake_run)
+
+    assert runner["main"](["code", "--policy", "policy.json", "--", "--no-extensions"]) == 0
+    assert observed == {
+        "role": "CODE",
+        "arguments": ["--", "--no-extensions"],
+        "policy": "policy.json",
+    }
+
+
+def test_bounded_runner_fails_closed_when_guard_is_missing(
+    runner: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(runner["_guard_extension_path"].__globals__, "ROOT", tmp_path)
+
+    with pytest.raises(runner["LocalPiError"], match="required Guard extension is unavailable"):
+        runner["_guard_extension_path"]()
 
 
 def test_runner_propagates_pi_exit_and_guarded_cleanup(
