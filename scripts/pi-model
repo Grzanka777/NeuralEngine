@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 ROOT = Path(__file__).resolve().parent.parent
 PORTS = {
@@ -50,6 +51,23 @@ class Listener:
     context: int | None = None
     batch: int | None = None
     ubatch: int | None = None
+
+
+Ownership = Literal["STARTED", "BORROWED"]
+
+
+@dataclass(frozen=True)
+class SwitchResult:
+    listener: Listener
+    ownership: Ownership
+
+    @property
+    def expected_profile(self) -> str:
+        return self.listener.profile
+
+    @property
+    def expected_pid(self) -> int:
+        return self.listener.pid
 
 
 def run(*args: str) -> str:
@@ -172,7 +190,7 @@ def command(
     context: int | None = None,
     batch: int | None = None,
     ubatch: int | None = None,
-) -> None:
+) -> str:
     if name in UNFILLED_ROLES:
         raise SwitchError(f"{name} is UNFILLED/unsupported: no model is assigned")
     if name in CHALLENGER_NAMES:
@@ -195,7 +213,42 @@ def command(
             "--expected-pid",
             str(pid),
         ]
-    run(*args)
+    return run(*args)
+
+
+def _start_ownership(name: str, output: str) -> tuple[Ownership, int | None]:
+    lines = output.splitlines()
+    if name in CHALLENGER_NAMES:
+        display_name = CHALLENGER_NAMES[name]
+        started = [
+            re.fullmatch(rf"{re.escape(display_name)} STARTED BY THIS INVOCATION pid=(\d+)", line)
+            for line in lines
+        ]
+        borrowed = [
+            re.fullmatch(rf"{re.escape(display_name)} ALREADY READY pid=(\d+)", line)
+            for line in lines
+        ]
+        started = [match for match in started if match is not None]
+        borrowed = [match for match in borrowed if match is not None]
+        if len(started) == 1 and not borrowed:
+            return "STARTED", int(started[0].group(1))
+        if len(borrowed) == 1 and not started:
+            return "BORROWED", int(borrowed[0].group(1))
+    else:
+        started_marker = f"{name} STARTED BY THIS INVOCATION"
+        borrowed_marker = f"{name} ALREADY READY"
+        started_count = lines.count(started_marker)
+        borrowed_count = lines.count(borrowed_marker)
+        if started_count == 1 and borrowed_count == 0:
+            identities = [
+                re.fullmatch(rf"ownership: {re.escape(name)} pid=(\d+)", line) for line in lines
+            ]
+            identities = [match for match in identities if match is not None]
+            if len(identities) == 1:
+                return "STARTED", int(identities[0].group(1))
+        if borrowed_count == 1 and started_count == 0:
+            return "BORROWED", None
+    raise SwitchError(f"{name} start did not report unambiguous STARTED or BORROWED ownership")
 
 
 def switch(
@@ -204,7 +257,7 @@ def switch(
     context: int | None = None,
     batch: int | None = None,
     ubatch: int | None = None,
-) -> Listener:
+) -> SwitchResult:
     if target in UNFILLED_ROLES:
         raise SwitchError(f"{target} is UNFILLED/unsupported: no model is assigned")
     if target not in PORTS:
@@ -219,6 +272,8 @@ def switch(
                 2048 if batch is None else batch,
                 1024 if ubatch is None else ubatch,
             )
+        ownership: Ownership = "BORROWED"
+        started_pid: int | None = None
         if current is not None and not target_matches:
             # Recheck immediately before the launcher receives its expected PID.
             if identify(scan()) != current:
@@ -230,13 +285,41 @@ def switch(
             if any(pids is not None for pids in scan().values()):
                 raise SwitchError("a listener appeared before start")
             if target == "GPTOSS":
-                command(target, "start", context=context, batch=batch, ubatch=ubatch)
+                output = command(target, "start", context=context, batch=batch, ubatch=ubatch)
             else:
-                command(target, "start")
+                output = command(target, "start")
+            ownership, started_pid = _start_ownership(target, output)
         result = identify(scan())
         if result is None or result.profile != target:
             raise SwitchError(f"{target} identity or exclusivity verification failed")
-        return result
+        if ownership == "STARTED" and result.pid != started_pid:
+            try:
+                assert started_pid is not None
+                command(target, "stop", started_pid)
+            except (OSError, SwitchError) as error:
+                raise SwitchError(
+                    f"{target} started pid={started_pid}, but verification found pid={result.pid}; "
+                    f"exact cleanup was refused: {error}"
+                ) from error
+            raise SwitchError(
+                f"{target} started pid={started_pid}, but verification found pid={result.pid}"
+            )
+        return SwitchResult(result, ownership)
+
+
+def stop_owned(result: SwitchResult) -> bool:
+    """Stop only the exact listener returned as STARTED by this switch."""
+    if result.ownership != "STARTED":
+        return False
+    # Runtime tuning is descriptive; the ownership token is the profile and PID.
+    expected_identity = (result.expected_profile, result.expected_pid)
+    with switch_lock():
+        for _ in range(2):
+            current = identify(scan())
+            if current is None or (current.profile, current.pid) != expected_identity:
+                return False
+        command(result.expected_profile, "stop", result.expected_pid)
+        return True
 
 
 def stop_current() -> Listener | None:
@@ -343,7 +426,83 @@ def status() -> int:
     return 0 if catalog_state == "OK" else 1
 
 
+_MACHINE_API_VERSION = 1
+
+
+def _switch_json(role: str, *, context: int | None, batch: int | None, ubatch: int | None) -> int:
+    """Machine-readable switch: emit a single versioned JSON document on stdout."""
+    try:
+        target = normalize_target(role)
+    except SwitchError as error:
+        print(f"pi-model: {error}", file=sys.stderr)
+        return 2
+    if target in ("STOP", "STATUS", *UNFILLED_ROLES):
+        print(f"pi-model: switch-json does not support target {role!r}", file=sys.stderr)
+        return 2
+    try:
+        result = switch(target, context=context, batch=batch, ubatch=ubatch)
+    except (OSError, SwitchError) as error:
+        print(f"pi-model: {error}", file=sys.stderr)
+        return 1
+    role_label = _role_label(result.listener.profile)
+    doc = {
+        "api_version": _MACHINE_API_VERSION,
+        "operation": "switch",
+        "role": role_label,
+        "ownership": result.ownership,
+        "profile": result.listener.profile,
+        "pid": result.listener.pid,
+        "endpoint": f"http://127.0.0.1:{PORTS[result.listener.profile]}/v1",
+    }
+    print(json.dumps(doc))
+    return 0
+
+
+def _stop_owned_json(profile: str, pid: int) -> int:
+    """Machine-readable stop-owned: delegates to stop_owned() for exact PID/profile cleanup."""
+    profile = profile.upper()
+    if profile == "PATCH":
+        profile = "GPTOSS"
+    if profile not in PORTS:
+        print(f"pi-model: unsupported profile {profile!r}", file=sys.stderr)
+        return 2
+    listener = Listener(profile=profile, pid=pid)
+    result = SwitchResult(listener=listener, ownership="STARTED")
+    try:
+        stopped = stop_owned(result)
+    except (OSError, SwitchError) as error:
+        print(f"pi-model: {error}", file=sys.stderr)
+        return 1
+    doc = {
+        "api_version": _MACHINE_API_VERSION,
+        "operation": "stop_owned",
+        "result": "STOPPED" if stopped else "NOT_OWNED_OR_REPLACED",
+        "profile": profile,
+        "pid": pid,
+    }
+    print(json.dumps(doc))
+    return 0
+
+
 def main() -> int:
+    # Machine subcommands are dispatched first so the legacy human CLI is fully unaffected.
+    if len(sys.argv) >= 2 and sys.argv[1] == "switch-json":
+        sub = argparse.ArgumentParser(prog="pi-model switch-json")
+        sub.add_argument("role", help="GENERAL, CODE, PATCH or GPTOSS")
+        sub.add_argument("--context", type=int)
+        sub.add_argument("--batch", type=int)
+        sub.add_argument("--ubatch", type=int)
+        args = sub.parse_args(sys.argv[2:])
+        return _switch_json(args.role, context=args.context, batch=args.batch, ubatch=args.ubatch)
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "stop-owned-json":
+        sub = argparse.ArgumentParser(prog="pi-model stop-owned-json")
+        sub.add_argument("--profile", required=True, help="GENERAL, CODE, PATCH or GPTOSS")
+        sub.add_argument("--pid", type=int, required=True, help="exact PID to stop")
+        args = sub.parse_args(sys.argv[2:])
+        return _stop_owned_json(args.profile, args.pid)
+
+    # Legacy human-readable CLI — unchanged.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("target", help="GENERAL, CODE, PATCH/GPTOSS, VISION, STATUS or STOP")
     parser.add_argument("--context", type=int)
@@ -378,8 +537,9 @@ def main() -> int:
     if target == "STOP":
         print("ALL LOCAL MODEL ENDPOINTS STOPPED")
     else:
-        display = "PATCH" if args.target.upper() == "PATCH" else result.profile
-        print(f"{display} READY pid={result.pid} port={PORTS[result.profile]}")
+        listener = result.listener
+        display = "PATCH" if args.target.upper() == "PATCH" else listener.profile
+        print(f"{display} READY pid={listener.pid} port={PORTS[listener.profile]}")
     return 0
 
 

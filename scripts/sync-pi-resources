@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Install GLOBAL Pi resources declared by integrations/pi/manifest.json."""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = Path("integrations/pi/manifest.json")
+
+
+class DistributionError(ValueError):
+    """The Pi distribution manifest or its current state is invalid."""
+
+
+@dataclass(frozen=True)
+class Resource:
+    name: str
+    scope: str
+    source: Path
+    destination: Path | None
+
+
+@dataclass(frozen=True)
+class CopyAction:
+    name: str
+    source: Path
+    destination: Path
+
+
+def _relative_path(value: Any, label: str) -> Path:
+    if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
+        raise DistributionError(f"{label} must be a non-empty POSIX relative path")
+    path = PurePosixPath(value)
+    windows_path = PureWindowsPath(value)
+    components = value.split("/")
+    if (
+        path.is_absolute()
+        or windows_path.is_absolute()
+        or windows_path.drive
+        or any(part in {"", ".", ".."} for part in components)
+    ):
+        raise DistributionError(f"{label} must not be absolute or traverse directories: {value!r}")
+    return Path(*components)
+
+
+def _load_resources(root: Path) -> list[Resource]:
+    manifest_path = root / MANIFEST
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise DistributionError(f"Pi distribution manifest is missing: {manifest_path}") from error
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise DistributionError(f"cannot read Pi distribution manifest: {error}") from error
+
+    if not isinstance(raw, dict) or set(raw) != {"version", "resources"}:
+        raise DistributionError("manifest must contain exactly version and resources")
+    if type(raw["version"]) is not int or raw["version"] != 1:
+        raise DistributionError(f"unsupported Pi distribution manifest version: {raw['version']!r}")
+    entries = raw["resources"]
+    if not isinstance(entries, list) or not entries:
+        raise DistributionError("manifest resources must be a non-empty list")
+
+    root_resolved = root.resolve()
+    names: set[str] = set()
+    sources: set[Path] = set()
+    destinations: list[tuple[str, Path]] = []
+    resources: list[Resource] = []
+    for index, entry in enumerate(entries):
+        label = f"resources[{index}]"
+        if not isinstance(entry, dict):
+            raise DistributionError(f"{label} must be an object")
+        scope = entry.get("scope")
+        expected_keys = {"name", "scope", "source"}
+        if scope == "GLOBAL":
+            expected_keys.add("destination")
+        elif scope != "PROJECT_LOCAL":
+            raise DistributionError(f"{label}.scope must be GLOBAL or PROJECT_LOCAL")
+        if set(entry) != expected_keys:
+            raise DistributionError(f"{label} has invalid fields for scope {scope}")
+
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip() or name in names:
+            raise DistributionError(f"{label}.name must be non-empty and unique")
+        names.add(name)
+        source_relative = _relative_path(entry.get("source"), f"{label}.source")
+        source = root / source_relative
+        try:
+            resolved_source = source.resolve(strict=True)
+        except OSError as error:
+            raise DistributionError(
+                f"source does not exist for {name}: {source_relative}"
+            ) from error
+        if not resolved_source.is_relative_to(root_resolved):
+            raise DistributionError(f"source escapes the repository for {name}: {source_relative}")
+        if not resolved_source.is_file() and not resolved_source.is_dir():
+            raise DistributionError(f"source is not a regular file or directory for {name}")
+        if source.is_symlink():
+            raise DistributionError(f"source must not be a symlink for {name}: {source_relative}")
+        if source_relative in sources:
+            raise DistributionError(f"multiple resources use the same source: {source_relative}")
+        sources.add(source_relative)
+
+        destination: Path | None = None
+        if scope == "GLOBAL":
+            destination = _relative_path(entry.get("destination"), f"{label}.destination")
+            if destination in {Path("."), Path("..")}:  # defensive; rejected by parser today
+                raise DistributionError(f"invalid global destination for {name}")
+            destinations.append((name, destination))
+        resources.append(Resource(name, scope, source, destination))
+
+    for index, (name, destination) in enumerate(destinations):
+        for other_name, other in destinations[index + 1 :]:
+            if destination == other or destination in other.parents or other in destination.parents:
+                raise DistributionError(
+                    f"global destinations overlap: {name} ({destination}) and "
+                    f"{other_name} ({other})"
+                )
+    return resources
+
+
+def _copy_actions(resources: list[Resource]) -> list[CopyAction]:
+    actions: list[CopyAction] = []
+    for resource in resources:
+        source = resource.source
+        if source.is_file():
+            if resource.destination is not None:
+                actions.append(CopyAction(resource.name, source, resource.destination))
+            continue
+
+        if resource.destination is None:
+            continue
+        for current, directories, filenames in os.walk(source, followlinks=False):
+            directory = Path(current)
+            for entry in directories:
+                if (directory / entry).is_symlink():
+                    raise DistributionError(
+                        f"directory source contains a symlink for {resource.name}: "
+                        f"{directory / entry}"
+                    )
+            for filename in filenames:
+                source_file = directory / filename
+                if source_file.is_symlink() or not source_file.is_file():
+                    raise DistributionError(
+                        f"directory source contains a non-regular file for {resource.name}: "
+                        f"{source_file}"
+                    )
+                relative = source_file.relative_to(source)
+                actions.append(
+                    CopyAction(resource.name, source_file, resource.destination / relative)
+                )
+    return actions
+
+
+def _reject_destination_symlinks(path: Path, root: Path) -> None:
+    try:
+        relative = path.relative_to(root)
+    except ValueError as error:
+        raise DistributionError(f"destination escapes the global Pi root: {path}") from error
+    current = root
+    if current.is_symlink():
+        raise DistributionError(f"global Pi root must not be a symlink: {current}")
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise DistributionError(f"destination path contains a symlink: {current}")
+
+
+def _install_file(action: CopyAction, global_root: Path) -> bool:
+    destination = global_root / action.destination
+    _reject_destination_symlinks(destination, global_root)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() and not destination.is_file():
+        raise DistributionError(f"destination is not a regular file: {destination}")
+    source_bytes = action.source.read_bytes()
+    if destination.exists() and destination.read_bytes() == source_bytes:
+        return False
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=destination.parent, prefix=f".{destination.name}.", delete=False
+        ) as temporary:
+            temporary.write(source_bytes)
+            temporary_path = Path(temporary.name)
+        os.chmod(temporary_path, stat.S_IMODE(action.source.stat().st_mode))
+        os.replace(temporary_path, destination)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return True
+
+
+def _verify_resource(resource: Resource, actions: list[CopyAction], global_root: Path) -> None:
+    if resource.destination is None:
+        return
+    resource_root = global_root / resource.destination
+    _reject_destination_symlinks(resource_root, global_root)
+    expected_files: set[Path] = set()
+    for action in actions:
+        if action.name != resource.name:
+            continue
+        destination = global_root / action.destination
+        expected_files.add(destination)
+        if not destination.is_file() or action.source.read_bytes() != destination.read_bytes():
+            raise DistributionError(f"copy drift detected for {resource.name}: {destination}")
+
+    if resource.source.is_dir() and resource_root.exists():
+        expected_directories: set[Path] = set()
+        for file_path in expected_files:
+            parent = file_path.parent
+            while parent != resource_root:
+                expected_directories.add(parent)
+                parent = parent.parent
+        expected_entries = expected_files | expected_directories
+        actual_entries: set[Path] = set()
+        for path in resource_root.rglob("*"):
+            if path.is_symlink():
+                raise DistributionError(f"installed resource contains a symlink: {path}")
+            if path.is_file() or path.is_dir():
+                actual_entries.add(path)
+        extra = sorted(actual_entries - expected_entries)
+        if extra:
+            names = ", ".join(str(path.relative_to(global_root)) for path in extra)
+            raise DistributionError(
+                f"copy drift detected for {resource.name}; extra files: {names}"
+            )
+        missing = sorted(expected_entries - actual_entries)
+        if missing:
+            names = ", ".join(str(path.relative_to(global_root)) for path in missing)
+            raise DistributionError(
+                f"copy drift detected for {resource.name}; missing paths: {names}"
+            )
+
+
+def main() -> int:
+    home = os.environ.get("HOME")
+    if not home or not Path(home).is_absolute():
+        print("HOME must be set to an absolute path to install Pi resources", file=sys.stderr)
+        return 2
+
+    try:
+        resources = _load_resources(ROOT)
+        actions = _copy_actions(resources)
+        global_root = Path(home) / ".pi" / "agent"
+        pi_root = global_root.parent
+        if pi_root.is_symlink() or global_root.is_symlink():
+            raise DistributionError("global Pi install directories must not be symlinks")
+        global_root.mkdir(parents=True, exist_ok=True)
+        changed: set[str] = set()
+        for action in actions:
+            if _install_file(action, global_root):
+                changed.add(action.name)
+        for resource in resources:
+            if resource.scope != "GLOBAL":
+                continue
+            _verify_resource(resource, actions, global_root)
+            state = "installed" if resource.name in changed else "unchanged"
+            print(f"{state}: {resource.name}")
+    except (DistributionError, OSError) as error:
+        print(f"sync-pi-resources: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

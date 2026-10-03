@@ -1,16 +1,16 @@
 {
-  "enabledModels": [
-    "deepseek/*"
+  "defaultProvider": "neural-general",
+  "defaultModel": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+  "defaultThinkingLevel": "off",
+  "skills": [
+    "skills/neuralengine-development",
+    "skills/neuralengine-roles",
+    "skills/local-models"
   ],
   "extensions": [
     "extensions/neuralengine-guard.ts"
   ],
-  "skills": [
-    "skills/neuralengine-development",
-    "skills/neuralengine-roles",
-    "../integrations/opencode/command-protocol"
-  ],
   "prompts": [
-    "../integrations/opencode/command-protocol/commands"
+    "prompts"
   ]
 }

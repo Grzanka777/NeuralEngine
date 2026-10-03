@@ -19,7 +19,7 @@ def adapter() -> dict[str, Any]:
     return runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/pi-model"))
 
 
-def _fake_adapter() -> SimpleNamespace:
+def _fake_adapter(*, ownership: str = "STARTED", pid: int = 123) -> SimpleNamespace:
     calls: list[tuple[str, str]] = []
 
     class FakeAdapter:
@@ -46,11 +46,17 @@ def _fake_adapter() -> SimpleNamespace:
         @staticmethod
         def switch(role: str) -> SimpleNamespace:
             calls.append(("switch", role))
-            return SimpleNamespace(profile=role)
+            listener = SimpleNamespace(profile=role, pid=pid)
+            return SimpleNamespace(
+                listener=listener,
+                ownership=ownership,
+                expected_profile=role,
+                expected_pid=pid,
+            )
 
         @staticmethod
-        def stop_current() -> None:
-            calls.append(("stop", ""))
+        def stop_owned(result: SimpleNamespace) -> None:
+            calls.append(("stop_owned", f"{result.expected_profile}:{result.expected_pid}"))
 
     return SimpleNamespace(module=FakeAdapter, calls=calls)
 
@@ -108,7 +114,7 @@ def test_code_runner_selects_exact_provider_model_and_bounded_policy(
     ]
     assert observed["env"]["NEURAL_PI_BOUNDED_CODE"] == "1"
     assert observed["env"]["NEURAL_PI_POLICY_FILE"] == "policy.json"
-    assert fake.calls == [("switch", "CODE"), ("stop", "")]
+    assert fake.calls == [("switch", "CODE"), ("stop_owned", "CODE:123")]
 
 
 @pytest.mark.parametrize(
@@ -233,7 +239,50 @@ def test_runner_propagates_pi_exit_and_guarded_cleanup(
     )
 
     assert runner["_run_role"]("GENERAL", [], None) == 7
-    assert fake.calls == [("switch", "GENERAL"), ("stop", "")]
+    assert fake.calls == [("switch", "GENERAL"), ("stop_owned", "GENERAL:123")]
+
+
+def test_runner_preserves_borrowed_runtime(
+    runner: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _fake_adapter(ownership="BORROWED")
+    executable = tmp_path / "pi"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    namespace = runner["_run_role"].__globals__
+    monkeypatch.setitem(namespace, "ROOT", tmp_path)
+    monkeypatch.setitem(namespace, "PI_ENTRYPOINT", executable)
+    monkeypatch.setitem(namespace, "_load_adapter", lambda: fake.module)
+    monkeypatch.setitem(
+        namespace["subprocess"].__dict__,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0),
+    )
+
+    assert runner["_run_role"]("GENERAL", [], None) == 0
+    assert fake.calls == [("switch", "GENERAL")]
+
+
+def test_runner_cleans_owned_runtime_when_pi_is_interrupted(
+    runner: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _fake_adapter()
+    executable = tmp_path / "pi"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    namespace = runner["_run_role"].__globals__
+    monkeypatch.setitem(namespace, "ROOT", tmp_path)
+    monkeypatch.setitem(namespace, "PI_ENTRYPOINT", executable)
+    monkeypatch.setitem(namespace, "_load_adapter", lambda: fake.module)
+
+    def interrupt(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise KeyboardInterrupt
+
+    monkeypatch.setitem(namespace["subprocess"].__dict__, "run", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        runner["_run_role"]("GENERAL", [], None)
+    assert fake.calls == [("switch", "GENERAL"), ("stop_owned", "GENERAL:123")]
 
 
 def test_vision_is_fail_closed(runner: dict[str, Any], capsys: pytest.CaptureFixture[str]) -> None:

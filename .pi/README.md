@@ -12,6 +12,20 @@ The switcher snapshots active ports 18080, 18081, and 18086, and treats ports 18
 
 The active challenger state directory is `~/.local/state/neural-challenger`. Logs in the former `qwen-challenger` state directory are historical and remain untouched.
 
+**Pi distribution.** `integrations/pi/` is the canonical source for GLOBAL Pi resources. `integrations/pi/manifest.json` records GLOBAL and PROJECT_LOCAL resources. Run `uv run --no-sync python scripts/sync-pi-resources` to install only GLOBAL resources under `~/.pi/agent/`; it preserves other files and verifies copied bytes. Keep each GLOBAL resource out of the project's `.pi/` auto-load directories so exactly one copy is active. Project guard, local-models skill, prompts, and settings stay under `.pi/`.
+
+**Backend lifecycle.** The canonical version-controlled source is `integrations/pi/extensions/neuralengine-model-lifecycle.ts`; install it with `uv run --no-sync python scripts/sync-pi-resources` to `~/.pi/agent/extensions/neuralengine-model-lifecycle.ts`. `.pi/extensions` is not used for this source because Pi auto-loads it as a project extension and would duplicate the global extension inside NeuralEngine. Keep exactly one lifecycle extension active in every Pi session: the global copy. The extension reacts to `model_select` and uses `scripts/pi-model switch-json <ROLE>` to start or borrow runtimes, and `scripts/pi-model stop-owned-json --profile <profile> --pid <pid>` on `session_shutdown` to stop runtimes owned by that session (`STARTED`), while preserving pre-existing runtimes (`BORROWED`).
+
+Alternatively, `scripts/pi-local` acts as a role runner that prepares the backend before launching Pi. If neither the extension nor `scripts/pi-local` is used, the corresponding local server must be running manually via the canonical lifecycle commands:
+
+| Role | Start | Stop | Status |
+|------|-------|------|--------|
+| GENERAL | `scripts/llm switch general` | `scripts/llm stop` | `scripts/llm identity` |
+| CODE | `scripts/llm switch code` | `scripts/llm stop` | `scripts/llm identity` |
+| PATCH | `scripts/challenger start gptoss` | `scripts/challenger stop gptoss` | `scripts/challenger status gptoss` |
+
+A `Connection error` from Pi against a local provider when lifecycle automation is inactive means the backend is not running. Use `scripts/pi-model status` to inspect the current runtime state before diagnosing further.
+
 The existing guard blocks common Brain writes and unauthorized Git operations through Pi's built-in tools. Request bounded CODE mode with `NEURAL_PI_BOUNDED_CODE=1` and provide `NEURAL_PI_POLICY_FILE=/absolute/or/repo-relative/task-policy.json`. A policy path by itself also enables bounded mode for compatibility. If bounded mode is requested without a policy, or the policy cannot be read or validated, Pi stops before accepting a prompt and rejects tool calls. With neither setting present, ordinary non-bounded workflows keep their existing behavior. The policy is loaded once per session, copied into immutable state, and its counters are stored in Pi's non-model-visible session entries. A changed policy on resume stops the task; start a new session for a new scope.
 
 Use exact repository-relative file paths. A small policy example:
