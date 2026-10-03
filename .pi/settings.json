@@ -1,0 +1,5 @@
+{
+  "defaultProvider": "neural-general",
+  "defaultModel": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+  "defaultThinkingLevel": "off"
+}

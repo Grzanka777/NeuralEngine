@@ -111,8 +111,6 @@ def _run_role(role: str, pi_arguments: Sequence[str], requested_policy: str | No
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise LocalPiError(f"upstream Pi executable is unavailable: {PI_ENTRYPOINT}")
 
-    current = adapter.identify(adapter.scan())
-    owns_runtime = current is None or current.profile != role
     command = [
         str(executable),
         "--provider",
@@ -124,19 +122,20 @@ def _run_role(role: str, pi_arguments: Sequence[str], requested_policy: str | No
     ]
     completed: subprocess.CompletedProcess[str] | None = None
     cleanup_error: Exception | None = None
-    switched = False
+    selected = None
     try:
         selected = adapter.switch(role)
-        if selected.profile != role:
-            raise LocalPiError(f"selected profile {selected.profile} does not match {role}")
-        switched = True
+        if selected.listener.profile != role:
+            raise LocalPiError(
+                f"selected profile {selected.listener.profile} does not match {role}"
+            )
         completed = subprocess.run(command, cwd=ROOT, env=_environment(role, policy), check=False)
     except (OSError, adapter.SwitchError) as error:
         raise LocalPiError(str(error)) from error
     finally:
-        if owns_runtime and switched:
+        if selected is not None and selected.ownership == "STARTED":
             try:
-                adapter.stop_current()
+                adapter.stop_owned(selected)
             except (OSError, adapter.SwitchError) as error:
                 cleanup_error = error
     if cleanup_error is not None:
