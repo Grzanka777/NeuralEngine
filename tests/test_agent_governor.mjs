@@ -11,14 +11,14 @@ import registerPiExtension, { guardToolCall } from "../.pi/extensions/neuralengi
 
 const TEST_COMMAND = "uv run pytest tests/test_agent_governor.py -q";
 
-test("Pi project auto-discovery loads the guard, while lifecycle source stays global", () => {
+test("Pi project auto-discovery retains Guard and global cloud policy", () => {
   const extensionFiles = readdirSync(new URL("../.pi/extensions/", import.meta.url))
     .filter((file) => /\.(?:[cm]?js|ts)$/.test(file))
     .sort();
 
   assert.deepEqual(extensionFiles, ["neuralengine-guard.ts"]);
   assert.equal(
-    existsSync(new URL("../integrations/pi/extensions/neuralengine-model-lifecycle.ts", import.meta.url)),
+    existsSync(new URL("../integrations/pi/extensions/deepseek-only.ts", import.meta.url)),
     true,
   );
   assert.equal(existsSync(new URL("../control-plane/governor.ts", import.meta.url)), true);

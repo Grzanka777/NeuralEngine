@@ -14,7 +14,7 @@ import pytest
 
 
 def load_challenger() -> ModuleType:
-    path = Path(__file__).resolve().parents[1] / "scripts/challenger"
+    path = Path(__file__).resolve().parents[1] / "tests/fixtures/retired_pi/challenger"
     loader = importlib.machinery.SourceFileLoader("challenger", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     assert spec is not None
@@ -39,9 +39,11 @@ def test_gptoss_profile_uses_requested_native_runtime_defaults() -> None:
     profile = challenger.PROFILES["gptoss"]
     assert (
         profile.expected_sha256
-        == json.loads((Path(__file__).resolve().parents[1] / "llm-manifest.json").read_text())[
-            "roles"
-        ]["PATCH"]["model_sha256"]
+        == json.loads(
+            (
+                Path(__file__).resolve().parents[1] / "tests/fixtures/retired_pi/llm-manifest.json"
+            ).read_text()
+        )["roles"]["PATCH"]["model_sha256"]
     )
     assert profile.expected_sha256 is not None
     assert (profile.port, profile.model.name) == (18086, "gpt-oss-20b-MXFP4.gguf")

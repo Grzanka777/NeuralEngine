@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small, explicit launcher for the frozen local LLM profiles."""
+"""Sole local runtime manager for GENERAL, CODE, and VISION."""
 
 from __future__ import annotations
 
@@ -30,15 +30,19 @@ def _configured_path(name: str, default: Path) -> Path:
 
 GENERAL_MODEL = _configured_path(
     "NEURALENGINE_GENERAL_MODEL",
-    Path("/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf"),
-)
-GENERAL_MTP = _configured_path(
-    "NEURALENGINE_GENERAL_MTP",
-    Path("/models/gguf/qwen3.6-35b-a3b/mtp/mtp-Qwen3.6-35B-A3B-Q4_0.gguf"),
+    Path("/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf"),
 )
 CODE_MODEL = _configured_path(
     "NEURALENGINE_CODE_MODEL",
-    Path("/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf"),
+    Path("/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf"),
+)
+VISION_MODEL = _configured_path(
+    "NEURALENGINE_VISION_MODEL",
+    Path("/models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"),
+)
+VISION_MMPROJ = _configured_path(
+    "NEURALENGINE_VISION_MMPROJ",
+    Path("/models/gguf/gemma4-26b-a4b/mmproj-BF16.gguf"),
 )
 LLAMA_SERVER = _configured_path(
     "NEURALENGINE_LLAMA_SERVER",
@@ -48,7 +52,7 @@ GENERAL_HOST = "127.0.0.1"
 GENERAL_PORT = 18081
 CODE_HOST = "127.0.0.1"
 CODE_PORT = 18080
-UNFILLED_ROLES = {"VISION"}
+VISION_PORT = 18082
 CONFLICT_PORTS = (18080, 18081, 18082, 18086, 18087)
 HEALTH_TIMEOUT_SECONDS = 300
 HEALTH_POLL_SECONDS = 1
@@ -65,74 +69,12 @@ class LauncherError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class GeneralProfile:
-    """The immutable production GENERAL profile."""
+    """Nemotron GENERAL baseline; no speculative assets."""
 
     model: Path = GENERAL_MODEL
-    mtp: Path = GENERAL_MTP
     runtime: Path = LLAMA_SERVER
     host: str = GENERAL_HOST
     port: int = GENERAL_PORT
-
-    def arguments(self) -> tuple[str, ...]:
-        """Return the frozen llama-server arguments after the executable."""
-
-        return (
-            "-m",
-            str(self.model),
-            "-dev",
-            "Vulkan0",
-            "-ngl",
-            "999",
-            "-c",
-            "65536",
-            "-b",
-            "2048",
-            "-ub",
-            "1024",
-            "-np",
-            "1",
-            "-fa",
-            "on",
-            "--cache-prompt",
-            "--spec-type",
-            "draft-mtp",
-            "--spec-draft-model",
-            str(self.mtp),
-            "--spec-draft-device",
-            "Vulkan0",
-            "--spec-draft-ngl",
-            "999",
-            "--spec-draft-n-max",
-            "3",
-            "--metrics",
-            "--host",
-            self.host,
-            "--port",
-            str(self.port),
-        )
-
-    def command(self) -> tuple[str, ...]:
-        """Return the complete frozen command line."""
-
-        return (str(self.runtime), *self.arguments())
-
-    def endpoint(self) -> str:
-        """Return the OpenAI-compatible endpoint."""
-
-        return f"http://{self.host}:{self.port}/v1"
-
-
-DEFAULT_PROFILE = GeneralProfile()
-
-
-@dataclass(frozen=True, slots=True)
-class CodeProfile:
-    """The verified Nemotron Q5 CODE profile."""
-
-    model: Path = CODE_MODEL
-    runtime: Path = LLAMA_SERVER
-    host: str = CODE_HOST
-    port: int = CODE_PORT
 
     def arguments(self) -> tuple[str, ...]:
         return (
@@ -168,7 +110,86 @@ class CodeProfile:
         return f"http://{self.host}:{self.port}/v1"
 
 
+DEFAULT_PROFILE = GeneralProfile()
+
+
+@dataclass(frozen=True, slots=True)
+class CodeProfile(GeneralProfile):
+    """Qwen3-Coder CODE baseline."""
+
+    model: Path = CODE_MODEL
+    port: int = CODE_PORT
+
+    def arguments(self) -> tuple[str, ...]:
+        return (
+            "-m",
+            str(self.model),
+            "-dev",
+            "Vulkan0",
+            "-ngl",
+            "999",
+            "-c",
+            "32768",
+            "-b",
+            "2048",
+            "-ub",
+            "1024",
+            "-fa",
+            "on",
+            "--jinja",
+            "--parallel",
+            "1",
+            "--cache-prompt",
+            "--metrics",
+            "--host",
+            self.host,
+            "--port",
+            str(self.port),
+        )
+
+
 DEFAULT_CODE_PROFILE = CodeProfile()
+
+
+@dataclass(frozen=True, slots=True)
+class VisionProfile(GeneralProfile):
+    """Gemma VISION baseline with projector and reasoning disabled."""
+
+    model: Path = VISION_MODEL
+    mmproj: Path = VISION_MMPROJ
+    port: int = VISION_PORT
+
+    def arguments(self) -> tuple[str, ...]:
+        return (
+            "-m",
+            str(self.model),
+            "--mmproj",
+            str(self.mmproj),
+            "-dev",
+            "Vulkan0",
+            "-ngl",
+            "999",
+            "-c",
+            "32768",
+            "-b",
+            "2048",
+            "-ub",
+            "512",
+            "-fa",
+            "auto",
+            "--jinja",
+            "--parallel",
+            "1",
+            "--reasoning",
+            "off",
+            "--host",
+            self.host,
+            "--port",
+            str(self.port),
+        )
+
+
+DEFAULT_VISION_PROFILE = VisionProfile()
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +273,7 @@ def is_code_process(pid: int, profile: CodeProfile = DEFAULT_CODE_PROFILE) -> bo
     return _process_command_line(pid) == profile.command()
 
 
-def _health_ok(profile: GeneralProfile | CodeProfile) -> bool:
+def _health_ok(profile: GeneralProfile | CodeProfile | VisionProfile) -> bool:
     request = urllib.request.Request(
         f"http://{profile.host}:{profile.port}/health",
         method="GET",
@@ -268,7 +289,7 @@ def _health_ok(profile: GeneralProfile | CodeProfile) -> bool:
 
 
 def wait_for_health(
-    profile: GeneralProfile | CodeProfile = DEFAULT_PROFILE,
+    profile: GeneralProfile | CodeProfile | VisionProfile = DEFAULT_PROFILE,
     *,
     timeout_seconds: float = HEALTH_TIMEOUT_SECONDS,
     poll_seconds: float = HEALTH_POLL_SECONDS,
@@ -338,14 +359,14 @@ def _terminate_started_process(process: subprocess.Popen[bytes]) -> None:
 
 
 def _serve_foreground(
-    profile: GeneralProfile | CodeProfile,
+    profile: GeneralProfile | CodeProfile | VisionProfile,
     *,
     action: str,
     validate: Callable[[], None],
     port_reader: Callable[[int], PortState],
     process_replacer: Callable[[str, Sequence[str]], Any] | None,
     process_factory: Callable[..., subprocess.Popen[Any]] | None,
-    health_waiter: Callable[[GeneralProfile | CodeProfile], bool] | None,
+    health_waiter: Callable[[GeneralProfile | CodeProfile | VisionProfile], bool] | None,
     process_waiter: Callable[[subprocess.Popen[Any]], int | None] | None,
 ) -> None:
     """Run a foreground server after the shared startup lock reaches readiness.
@@ -435,7 +456,6 @@ def detect_verified_running_profile(
 def _validate_general_prerequisites(profile: GeneralProfile, action: str) -> None:
     for label, path in (
         ("model", profile.model),
-        ("MTP model", profile.mtp),
         ("llama-server runtime", profile.runtime),
     ):
         if not path.is_file():
@@ -477,7 +497,9 @@ def start_general(
             identity_checker=lambda pid: check_identity(pid, profile),
             health_check=lambda: check_health(profile),
         )
-        if verified_pid is not None:
+        if verified_pid is not None and not any(
+            read_port(port).listening for port in CONFLICT_PORTS if port != profile.port
+        ):
             print("GENERAL ALREADY READY")
             print(f"endpoint: {profile.endpoint()}")
             print(f"pid: {verified_pid}")
@@ -574,7 +596,9 @@ def start_code(
             identity_checker=lambda pid: check_identity(pid, profile),
             health_check=lambda: check_health(profile),
         )
-        if verified_pid is not None:
+        if verified_pid is not None and not any(
+            read_port(port).listening for port in CONFLICT_PORTS if port != profile.port
+        ):
             print("CODE ALREADY READY")
             print(f"endpoint: {profile.endpoint()}")
             print(f"pid: {verified_pid}")
@@ -631,6 +655,111 @@ def serve_code(
         profile,
         action="CODE",
         validate=lambda: _validate_code_prerequisites(profile, "serve"),
+        port_reader=port_reader or port_state,
+        process_replacer=process_replacer,
+        process_factory=process_factory,
+        health_waiter=health_waiter,
+        process_waiter=process_waiter,
+    )
+
+
+def _validate_vision_prerequisites(profile: VisionProfile, action: str) -> None:
+    _validate_code_prerequisites(profile, action)
+    if not profile.mmproj.is_file():
+        raise LauncherError(f"VISION {action} refused: mmproj does not exist: {profile.mmproj}")
+
+
+def is_vision_process(pid: int, profile: VisionProfile = DEFAULT_VISION_PROFILE) -> bool:
+    return _process_command_line(pid) == profile.command()
+
+
+def _vision_log_path() -> Path:
+    return _code_log_path().with_name("vision.log")
+
+
+def start_vision(
+    profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    process_factory: Callable[..., subprocess.Popen[bytes]] | None = None,
+    health_waiter: Callable[[VisionProfile], bool] | None = None,
+    log_path: Callable[[], Path] | None = None,
+    identity_checker: Callable[[int, VisionProfile], bool] | None = None,
+    health_check: Callable[[VisionProfile], bool] | None = None,
+) -> None:
+    """Launch VISION only when no other local profile owns a conflict port."""
+
+    _validate_vision_prerequisites(profile, "start")
+    read_port = port_reader or port_state
+    check_identity = identity_checker or is_vision_process
+    check_health = health_check or _health_ok
+    own_state = read_port(profile.port)
+    if own_state.listening:
+        verified_pid = detect_verified_running_profile(
+            own_state,
+            identity_checker=lambda pid: check_identity(pid, profile),
+            health_check=lambda: check_health(profile),
+        )
+        if verified_pid is not None and not any(
+            read_port(port).listening for port in CONFLICT_PORTS if port != profile.port
+        ):
+            print("VISION ALREADY READY")
+            print(f"endpoint: {profile.endpoint()}")
+            print(f"pid: {verified_pid}")
+            return
+
+    conflicts = [port for port in CONFLICT_PORTS if read_port(port).listening]
+    if conflicts:
+        raise LauncherError(
+            "VISION start refused: a listener already occupies port(s): "
+            + ", ".join(map(str, conflicts))
+        )
+
+    create_process = process_factory or subprocess.Popen
+    target_log_path = log_path or _vision_log_path
+    log_file_path = target_log_path()
+    try:
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_file_path.open("ab") as log_file:
+            process = create_process(
+                profile.command(),
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except OSError as error:
+        raise LauncherError(f"VISION start failed to launch llama-server: {error}") from error
+
+    wait_health = health_waiter or (lambda selected_profile: wait_for_health(selected_profile))
+    if not wait_health(profile):
+        _terminate_started_process(process)
+        raise LauncherError(
+            "VISION start failed: /health did not become OK within "
+            f"{HEALTH_TIMEOUT_SECONDS} seconds"
+        )
+
+    print("VISION READY")
+    print(f"endpoint: {profile.endpoint()}")
+    print(f"pid: {process.pid}")
+
+
+def serve_vision(
+    profile: VisionProfile = DEFAULT_VISION_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    process_replacer: Callable[[str, Sequence[str]], Any] | None = None,
+    process_factory: Callable[..., subprocess.Popen[Any]] | None = None,
+    health_waiter: Callable[[VisionProfile], bool] | None = None,
+    process_waiter: Callable[[subprocess.Popen[Any]], int | None] | None = None,
+) -> None:
+    """Run VISION in the foreground for an explicitly started systemd unit."""
+
+    _serve_foreground(
+        profile,
+        action="VISION",
+        validate=lambda: _validate_vision_prerequisites(profile, "serve"),
         port_reader=port_reader or port_state,
         process_replacer=process_replacer,
         process_factory=process_factory,
@@ -760,11 +889,14 @@ def status_profiles(
     general_profile: GeneralProfile = DEFAULT_PROFILE,
     *,
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
     port_reader: Callable[[int], PortState] | None = None,
     general_health_check: Callable[[GeneralProfile], bool] | None = None,
     general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
     code_health_check: Callable[[CodeProfile], bool] | None = None,
+    vision_health_check: Callable[[VisionProfile], bool] | None = None,
     code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
 ) -> None:
     """Report supported profile state without changing any process state."""
 
@@ -773,7 +905,6 @@ def status_profiles(
     active_ports = [port for port, state in states.items() if state.listening]
     if not active_ports:
         print("LLM STOPPED")
-        print("VISION: UNFILLED/disabled")
         print("profile: none")
         print("active port: none")
         print("health: unavailable")
@@ -783,13 +914,12 @@ def status_profiles(
     if len(active_ports) != 1:
         print("profile: CONFLICT")
         print(f"active ports: {', '.join(map(str, sorted(active_ports)))}")
-        print("VISION: UNFILLED/disabled")
         return
 
     port = active_ports[0]
     if port == general_profile.port:
         name: str = "GENERAL"
-        profile: GeneralProfile | CodeProfile = general_profile
+        profile: GeneralProfile | CodeProfile | VisionProfile = general_profile
         identity_check = general_identity_checker or is_general_process
         health_check = general_health_check or _health_ok
     elif port == code_profile.port:
@@ -797,10 +927,14 @@ def status_profiles(
         profile = code_profile
         identity_check = code_identity_checker or is_code_process
         health_check = code_health_check or _health_ok
+    elif port == vision_profile.port:
+        name = "VISION"
+        profile = vision_profile
+        identity_check = vision_identity_checker or is_vision_process
+        health_check = vision_health_check or _health_ok
     else:
         print("profile: UNKNOWN")
         print(f"active port: {port}")
-        print("VISION: UNFILLED/disabled")
         _print_status_pid(states[port])
         return
 
@@ -810,7 +944,6 @@ def status_profiles(
     print(f"active port: {profile.port}")
     print(f"port {profile.port}: listening")
     print(f"health: {'OK' if health_check(profile) else 'not OK or unavailable'}")
-    print("VISION: UNFILLED/disabled")
     _print_status_pid(state)
 
 
@@ -818,11 +951,14 @@ def active_profile_state(
     general_profile: GeneralProfile = DEFAULT_PROFILE,
     *,
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
     port_reader: Callable[[int], PortState] | None = None,
     general_health_check: Callable[[GeneralProfile], bool] | None = None,
     general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
     code_health_check: Callable[[CodeProfile], bool] | None = None,
+    vision_health_check: Callable[[VisionProfile], bool] | None = None,
     code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
 ) -> str:
     """Return one exact, machine-readable verified production state.
 
@@ -837,11 +973,14 @@ def active_profile_state(
     identity = active_profile_identity(
         general_profile,
         code_profile=code_profile,
+        vision_profile=vision_profile,
         port_reader=read_port,
         general_health_check=general_health_check,
         general_identity_checker=general_identity_checker,
         code_health_check=code_health_check,
+        vision_health_check=vision_health_check,
         code_identity_checker=code_identity_checker,
+        vision_identity_checker=vision_identity_checker,
     )
     return identity[0] if identity is not None else "UNKNOWN"
 
@@ -850,11 +989,14 @@ def active_profile_identity(
     general_profile: GeneralProfile = DEFAULT_PROFILE,
     *,
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
     port_reader: Callable[[int], PortState] | None = None,
     general_health_check: Callable[[GeneralProfile], bool] | None = None,
     general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
     code_health_check: Callable[[CodeProfile], bool] | None = None,
+    vision_health_check: Callable[[VisionProfile], bool] | None = None,
     code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
 ) -> tuple[str, int] | None:
     """Return the exact verified active profile and PID, or ``None``."""
 
@@ -866,7 +1008,7 @@ def active_profile_identity(
     port = active_ports[0]
     if port == general_profile.port:
         name = "GENERAL"
-        profile: GeneralProfile | CodeProfile = general_profile
+        profile: GeneralProfile | CodeProfile | VisionProfile = general_profile
         identity_check = general_identity_checker or is_general_process
         health_check = general_health_check or _health_ok
     elif port == code_profile.port:
@@ -874,6 +1016,11 @@ def active_profile_identity(
         profile = code_profile
         identity_check = code_identity_checker or is_code_process
         health_check = code_health_check or _health_ok
+    elif port == vision_profile.port:
+        name = "VISION"
+        profile = vision_profile
+        identity_check = vision_identity_checker or is_vision_process
+        health_check = vision_health_check or _health_ok
     else:
         return None
     verified_pid = detect_verified_running_profile(
@@ -910,14 +1057,24 @@ def switch_profile(
     """Switch between verified production profiles while holding the lifecycle lock."""
 
     target_name = target.upper()
-    if target_name in UNFILLED_ROLES:
-        raise LauncherError("SWITCH FAILED: VISION is UNFILLED/disabled; no model is assigned")
-    if target_name not in {"GENERAL", "CODE"}:
+    if target_name not in {"GENERAL", "CODE", "VISION"}:
         raise LauncherError(f"SWITCH FAILED: unsupported target profile: {target}")
 
     read_state = state_reader or active_profile_state
-    stop_current = stopper or stop_active_profiles
-    start_target = starter or (start_general if target_name == "GENERAL" else start_code)
+
+    def stop_current() -> None:
+        if stopper is not None:
+            stopper()
+            return
+        identity = active_profile_identity()
+        if identity is None:
+            raise LauncherError("switch refused: active ownership could not be verified")
+        stop_active_profiles(expected_profile=identity[0], expected_pid=identity[1])
+
+    start_target = (
+        starter
+        or {"GENERAL": start_general, "CODE": start_code, "VISION": start_vision}[target_name]
+    )
 
     with lifecycle_lock(lock_path):
         current = read_state()
@@ -928,7 +1085,7 @@ def switch_profile(
         if current == target_name:
             print(f"{target_name} ALREADY READY")
             return
-        if current not in {"STOPPED", "GENERAL", "CODE"}:
+        if current not in {"STOPPED", "GENERAL", "CODE", "VISION"}:
             raise LauncherError(f"SWITCH FAILED: unsupported current LLM state: {current}")
 
         try:
@@ -960,13 +1117,14 @@ def start_profile(
     """Start only from STOPPED; return identity only when this call started it."""
 
     target_name = target.upper()
-    if target_name in UNFILLED_ROLES:
-        raise LauncherError("START REFUSED: VISION is UNFILLED/disabled; no model is assigned")
-    if target_name not in {"GENERAL", "CODE"}:
+    if target_name not in {"GENERAL", "CODE", "VISION"}:
         raise LauncherError(f"START REFUSED: unsupported target profile: {target}")
 
     read_state = state_reader or active_profile_state
-    start_target = starter or (start_general if target_name == "GENERAL" else start_code)
+    start_target = (
+        starter
+        or {"GENERAL": start_general, "CODE": start_code, "VISION": start_vision}[target_name]
+    )
     read_identity = identity_reader or active_profile_identity
 
     with lifecycle_lock(lock_path):
@@ -1006,9 +1164,11 @@ def stop_active_profiles(
     general_profile: GeneralProfile = DEFAULT_PROFILE,
     *,
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
     port_reader: Callable[[int], PortState] | None = None,
     general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
     code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
     killer: Callable[[int, int], Any] | None = None,
     closed_waiter: Callable[[int], bool] | None = None,
     expected_profile: str | None = None,
@@ -1020,7 +1180,8 @@ def stop_active_profiles(
     states = {port: read_port(port) for port in CONFLICT_PORTS}
     active_ports = [port for port, state in states.items() if state.listening]
     if len(active_ports) > 1 or (
-        active_ports and active_ports[0] not in {general_profile.port, code_profile.port}
+        active_ports
+        and active_ports[0] not in {general_profile.port, code_profile.port, vision_profile.port}
     ):
         raise LauncherError(
             "stop refused: conflicting or unsupported listener on ports "
@@ -1036,12 +1197,16 @@ def stop_active_profiles(
     port = active_ports[0]
     if port == general_profile.port:
         name = "GENERAL"
-        profile: GeneralProfile | CodeProfile = general_profile
+        profile: GeneralProfile | CodeProfile | VisionProfile = general_profile
         identity_check = general_identity_checker or is_general_process
-    else:
+    elif port == code_profile.port:
         name = "CODE"
         profile = code_profile
         identity_check = code_identity_checker or is_code_process
+    else:
+        name = "VISION"
+        profile = vision_profile
+        identity_check = vision_identity_checker or is_vision_process
     state = states[port]
     if (expected_profile is not None or expected_pid is not None) and (
         expected_profile != name or len(state.pids) != 1 or state.pids[0] != expected_pid
@@ -1108,7 +1273,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("profile", nargs="?", choices=("code", "general", "vision"))
-    parser.add_argument("--expected-profile", choices=("GENERAL", "CODE"))
+    parser.add_argument("--expected-profile", choices=("GENERAL", "CODE", "VISION"))
     parser.add_argument("--expected-pid", type=int)
     return parser
 
@@ -1152,9 +1317,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif args.profile in {None, "general"}:
                 serve_general()
             else:
-                raise LauncherError("VISION is UNFILLED/disabled; no model is assigned")
+                serve_vision()
         elif args.command == "vision":
-            raise LauncherError("VISION is UNFILLED/disabled; no model is assigned")
+            with lifecycle_lock():
+                start_vision()
         elif args.command == "status":
             status_profiles()
         elif args.command == "state":

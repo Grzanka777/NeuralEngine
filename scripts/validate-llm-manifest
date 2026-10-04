@@ -75,7 +75,79 @@ def _expect_single_toggle(
         errors.append(f"{label}: contradictory {disabled} toggle is active")
 
 
-def validate(manifest_path: Path, *, check_hashes: bool = False) -> list[str]:
+def _check_artifact(
+    errors: list[str], label: str, path: Path, digest: str | None, check_hashes: bool
+) -> None:
+    if not path.is_file():
+        errors.append(f"{label} missing: {path}")
+    elif check_hashes:
+        if digest is None:
+            errors.append(f"{label}: SHA256 not recorded")
+        else:
+            with path.open("rb") as handle:
+                if hashlib.file_digest(handle, "sha256").hexdigest() != digest:
+                    errors.append(f"{label}: SHA256 mismatch")
+
+
+def _validate_client_settings(
+    errors: list[str],
+    roles: dict[str, Any],
+    pi_catalog: dict[str, Any],
+    pi_settings: tuple[dict[str, Any], ...],
+    qwen_settings: tuple[dict[str, Any], ...],
+) -> None:
+    """Check routing only; never report credential-bearing configuration objects."""
+    providers = pi_catalog.get("providers", {})
+    if set(providers) - {"deepseek"}:
+        errors.append("Pi contains non-DeepSeek provider entries")
+    for provider in providers.values():
+        if any(model.get("id") != "deepseek-flash" for model in provider.get("models", [])):
+            errors.append("Pi contains a non-flash model entry")
+    for settings in pi_settings:
+        if settings.get("defaultProvider") != "deepseek":
+            errors.append("Pi default provider drift")
+        if settings.get("defaultModel") != "deepseek-flash":
+            errors.append("Pi default model drift")
+    expected = {role["model_path"]: role for role in roles.values()}
+    for settings in qwen_settings:
+        auth_type = settings.get("security", {}).get("auth", {}).get("selectedType")
+        if auth_type is not None and auth_type != "openai":
+            errors.append("Qwen auth routing drift")
+        advisor = settings.get("advisorModel")
+        if advisor and advisor not in expected:
+            errors.append("Qwen contains non-local advisor routing")
+        default_model = settings.get("model", {})
+        if isinstance(default_model, dict) and "baseUrl" in default_model:
+            general = roles["GENERAL"]
+            endpoint = f"http://{general['host']}:{general['port']}/v1"
+            if default_model["baseUrl"] != endpoint:
+                errors.append("Qwen default endpoint drift")
+        if "modelProviders" in settings:
+            provider_map = settings["modelProviders"]
+            if set(provider_map) != {"openai"}:
+                errors.append("Qwen contains cloud provider routing")
+            models = provider_map.get("openai", [])
+            if {model.get("id") for model in models} != set(expected) or len(models) != 3:
+                errors.append("Qwen local role catalog drift")
+            for model in models:
+                role = expected.get(model.get("id"))
+                if role is None:
+                    continue
+                endpoint = f"http://{role['host']}:{role['port']}/v1"
+                if model.get("baseUrl") != endpoint:
+                    errors.append("Qwen local endpoint drift")
+                if model.get("generationConfig", {}).get("contextWindowSize") != role["context"]:
+                    errors.append("Qwen local context drift")
+        model = settings.get("model", {})
+        if isinstance(model, dict):
+            model = model.get("name")
+        if model != roles["GENERAL"]["model_path"]:
+            errors.append("Qwen default model drift")
+
+
+def validate(
+    manifest_path: Path, *, check_hashes: bool = False, check_host: bool = True
+) -> list[str]:
     manifest = _load_json(manifest_path)
     roles = manifest["roles"]
     clients = manifest["clients"]
@@ -86,56 +158,67 @@ def validate(manifest_path: Path, *, check_hashes: bool = False) -> list[str]:
             errors.append(f"{label}: expected {expected!r}, got {actual!r}")
 
     expect("schema", manifest["schema_version"], 1)
-    expect("roles", set(roles), {"GENERAL", "CODE", "PATCH", "VISION"})
-    expect("VISION", roles["VISION"], {"enabled": False, "state": "UNFILLED"})
+    expect("runtime manager", manifest["runtime_manager"], "scripts/llm")
+    expect("roles", set(roles), {"GENERAL", "CODE", "VISION"})
+    expect(
+        "Pi contract",
+        clients["pi"],
+        {
+            "provider": "deepseek",
+            "model": "deepseek-flash",
+            "local_lifecycle": False,
+        },
+    )
+    expect("Qwen local-only", clients["qwen"]["local_only"], True)
+    expect("Qwen default role", clients["qwen"]["default_role"], "GENERAL")
+    expect("Qwen fallback", clients["qwen"]["cloud_fallback"], False)
     launcher = _load_script(REPO / "scripts/llm", "_neuralengine_llm_manifest")
-    expect("unfilled launcher roles", launcher.UNFILLED_ROLES, {"VISION"})
-    expect("installed launcher", (Path.home() / ".local/bin/llm").resolve(), REPO / "scripts/llm")
-    if not (Path.home() / ".local/bin/llm").is_symlink():
-        errors.append("installed llm is not a symlink")
-
-    for name, profile, expected_flags in (
-        (
-            "GENERAL",
-            launcher.DEFAULT_PROFILE,
-            {"-c": 65536, "-b": 2048, "-ub": 1024, "-ngl": 999, "-fa": "on"},
-        ),
-        (
-            "CODE",
-            launcher.DEFAULT_CODE_PROFILE,
-            {"-c": 32768, "-b": 2048, "-ub": 512, "-ngl": 999, "-fa": "auto"},
-        ),
+    for name, profile, port, ubatch, fa in (
+        ("GENERAL", launcher.DEFAULT_PROFILE, 18081, 512, "auto"),
+        ("CODE", launcher.DEFAULT_CODE_PROFILE, 18080, 1024, "on"),
+        ("VISION", launcher.DEFAULT_VISION_PROFILE, 18082, 512, "auto"),
     ):
         role = roles[name]
         args = profile.arguments()
-
         expect(f"{name} enabled", role["enabled"], True)
         expect(f"{name} state", role["state"], "ACTIVE")
         expect(f"{name} model", str(profile.model), role["model_path"])
         expect(f"{name} model ID", role["expected_v1_models_id"], role["model_path"])
         expect(f"{name} runtime", str(profile.runtime), role["runtime_binary"])
         expect(f"{name} host", profile.host, role["host"])
-        expect(f"{name} port", profile.port, role["port"])
+        expect(f"{name} port", profile.port, port)
+        expect(f"{name} manifest port", role["port"], port)
         expect(f"{name} backend", role["backend"], "Vulkan")
-        expect(f"{name} device", _flag_value(args, "-dev"), role["device"])
         expect(f"{name} runtime build", str(profile.runtime.parent.parent), role["runtime_build"])
-        for flag, expected in expected_flags.items():
-            expect(f"{name} {flag}", _flag_value(args, flag), str(expected))
-        for field, flag in (("context", "-c"), ("batch", "-b"), ("ubatch", "-ub"), ("ngl", "-ngl")):
-            expect(f"{name} manifest {field}", role[field], int(_flag_value(args, flag) or -1))
-        model = Path(role["model_path"])
-        if not model.is_file():
-            errors.append(f"{name} model missing: {model}")
-        elif check_hashes:
-            with model.open("rb") as handle:
-                expect(
-                    f"{name} SHA256",
-                    hashlib.file_digest(handle, "sha256").hexdigest(),
-                    role["model_sha256"],
-                )
-        runtime = Path(role["runtime_binary"])
-        if not runtime.is_file():
-            errors.append(f"{name} runtime missing: {runtime}")
+        for field, flag, baseline in (
+            ("context", "-c", 32768),
+            ("batch", "-b", 2048),
+            ("ubatch", "-ub", ubatch),
+            ("ngl", "-ngl", 999),
+            ("device", "-dev", "Vulkan0"),
+            ("flash_attention", "-fa", fa),
+            ("parallel", "--parallel", 1),
+        ):
+            expect(f"{name} manifest {field}", role[field], baseline)
+            _expect_single_flag(
+                errors, args, label=f"{name} {flag}", flag=flag, expected=str(baseline)
+            )
+        expect(f"{name} jinja", role["jinja"], True)
+        _expect_single_toggle(
+            errors, args, label=f"{name} --jinja", enabled="--jinja", disabled="--no-jinja"
+        )
+        expect(f"{name} MTP", role["mtp"], {"enabled": False})
+        if any(arg.startswith("--spec-") for arg in args):
+            errors.append(f"{name} contains speculative flags outside the baseline")
+        expect(f"Qwen {name} context", clients["qwen"]["contexts"][name], 32768)
+        _check_artifact(
+            errors,
+            f"{name} model",
+            Path(role["model_path"]),
+            role.get("model_sha256"),
+            check_hashes,
+        )
+        _check_artifact(errors, f"{name} runtime", Path(role["runtime_binary"]), None, False)
         cache = Path(role["runtime_build"]) / "CMakeCache.txt"
         if not cache.is_file():
             errors.append(f"{name} runtime build cache missing")
@@ -144,172 +227,41 @@ def validate(manifest_path: Path, *, check_hashes: bool = False) -> list[str]:
             for setting in ("GGML_VULKAN:BOOL=ON", "GGML_HIP:BOOL=OFF", "GGML_BACKEND_DL:BOOL=OFF"):
                 if setting not in settings:
                     errors.append(f"{name} build drift: {setting}")
-
-    general = roles["GENERAL"]
-    code = roles["CODE"]
-    general_args = launcher.DEFAULT_PROFILE.arguments()
-    code_args = launcher.DEFAULT_CODE_PROFILE.arguments()
-    expect("GENERAL MTP", general["mtp"]["enabled"], True)
-    expect("GENERAL MTP path", str(launcher.DEFAULT_PROFILE.mtp), general["mtp"]["path"])
-    for flag, value in (
-        ("--spec-type", general["mtp"]["type"]),
-        ("--spec-draft-device", general["mtp"]["device"]),
-        ("--spec-draft-ngl", general["mtp"]["ngl"]),
-        ("--spec-draft-n-max", general["mtp"]["n_max"]),
-    ):
-        expect("GENERAL " + flag, general_args[general_args.index(flag) + 1], str(value))
-    expect("CODE MTP", code["mtp"], {"enabled": False})
-    if any(arg.startswith("--spec-") for arg in code_args):
-        errors.append("CODE contains unverified speculative flags")
-    _expect_single_flag(errors, code_args, label="CODE --parallel", flag="--parallel", expected="1")
-    _expect_single_toggle(
-        errors,
-        code_args,
-        label="CODE --jinja",
-        enabled="--jinja",
-        disabled="--no-jinja",
-    )
-    mtp = Path(general["mtp"]["path"])
-    if not mtp.is_file():
-        errors.append("GENERAL MTP missing")
-    elif check_hashes:
-        with mtp.open("rb") as handle:
-            expect(
-                "GENERAL MTP SHA256",
-                hashlib.file_digest(handle, "sha256").hexdigest(),
-                general["mtp"]["sha256"],
+        if name == "VISION":
+            expect("VISION reasoning", role["reasoning"], "off")
+            _expect_single_flag(
+                errors, args, label="VISION reasoning", flag="--reasoning", expected="off"
             )
-
-    patch = roles["PATCH"]
-    challenger = _load_script(REPO / "scripts/challenger", "_neuralengine_patch_manifest")
-    patch_profile = challenger.PROFILES["gptoss"]
-    expect("PATCH enabled", patch["enabled"], True)
-    expect("PATCH specialist state", patch["state"], "SPECIALIST")
-    expect("PATCH not CODE", patch["mapped_to_code"], False)
-    expect("PATCH model", str(patch_profile.model), patch["model_path"])
-    expect("PATCH port", patch_profile.port, patch["port"])
-    expect("PATCH launcher", patch["launcher"], "scripts/challenger gptoss")
-    expect("PATCH expected SHA", patch_profile.expected_sha256, patch["model_sha256"])
-    if patch_profile.expected_sha256 is None:
-        errors.append("PATCH launcher leaves expected_sha256 unset")
-    patch_model = patch["model_path"]
-    if check_hashes:
-        model = Path(patch_model)
-        if not model.is_file():
-            errors.append(f"PATCH model missing: {model}")
-        else:
-            with model.open("rb") as handle:
-                expect(
-                    "PATCH SHA256",
-                    hashlib.file_digest(handle, "sha256").hexdigest(),
-                    patch["model_sha256"],
-                )
-
-    general_unit = (Path.home() / ".config/systemd/user/llm-general.service").read_text()
-    code_unit = (Path.home() / ".config/systemd/user/llm-code.service").read_text()
-    if "ExecStart=/home/grzanka/Work/NeuralEngine/scripts/llm serve\n" not in general_unit:
-        errors.append("GENERAL systemd unit drift")
-    if "ExecStart=/home/grzanka/Work/NeuralEngine/scripts/llm serve code\n" not in code_unit:
-        errors.append("CODE systemd unit drift")
-
-    pi = _load_json(Path.home() / ".pi/agent/models.json")["providers"]
-    qwen = _load_json(Path.home() / ".qwen/settings.json")
-    openai = qwen["modelProviders"]["openai"]
-    opencode = _load_json(Path.home() / ".config/opencode/opencode.json")
-    project = _load_json(REPO / "opencode.json")
-    for name, role, provider, pi_context, qwen_context, opencode_context, oc_provider, oc_model in (
-        (
-            "GENERAL",
-            general,
-            "neural-general",
-            clients["pi_general_context"],
-            clients["qwen_general_context"],
-            clients["opencode_general_context"],
-            "llama-general",
-            "qwen3.6-general-local",
-        ),
-        (
-            "CODE",
-            code,
-            "neural-code",
-            clients["pi_code_context"],
-            clients["qwen_code_context"],
-            clients["opencode_code_context"],
-            "llama-code",
-            "nemotron-q5-code-local",
-        ),
-    ):
-        endpoint = f"http://{role['host']}:{role['port']}/v1"
-        pi_provider = pi[provider]
-        expect(f"Pi {name} endpoint", pi_provider["baseUrl"], endpoint)
-        expect(f"Pi {name} ID", pi_provider["models"][0]["id"], role["expected_v1_models_id"])
-        expect(f"Pi {name} context", pi_provider["models"][0]["contextWindow"], pi_context)
-        local_qwen = [item for item in openai if item.get("baseUrl") == endpoint]
-        expect(f"Qwen {name} provider count", len(local_qwen), 1)
-        if local_qwen:
-            expect(f"Qwen {name} ID", local_qwen[0]["id"], role["expected_v1_models_id"])
-            expect(
-                f"Qwen {name} context",
-                local_qwen[0]["generationConfig"]["contextWindowSize"],
-                qwen_context,
+            _expect_single_flag(
+                errors, args, label="VISION mmproj", flag="--mmproj", expected=role["mmproj_path"]
             )
-        oc = opencode["provider"][oc_provider]
-        expect(f"OpenCode {name} endpoint", oc["options"]["baseURL"], endpoint)
-        expect(
-            f"OpenCode {name} context", oc["models"][oc_model]["limit"]["context"], opencode_context
+            _check_artifact(
+                errors,
+                "VISION mmproj",
+                Path(role["mmproj_path"]),
+                role.get("mmproj_sha256"),
+                check_hashes,
+            )
+        elif "--mmproj" in args:
+            errors.append(f"{name} unexpectedly enables mmproj")
+    if check_host:
+        installed = Path.home() / ".local/bin/llm"
+        expect("installed launcher", installed.resolve(), REPO / "scripts/llm")
+        if not installed.is_symlink():
+            errors.append("installed llm is not a symlink")
+        _validate_client_settings(
+            errors,
+            roles,
+            _load_json(Path.home() / ".pi/agent/models.json"),
+            (
+                _load_json(Path.home() / ".pi/agent/settings.json"),
+                _load_json(REPO / ".pi/settings.json"),
+            ),
+            (
+                _load_json(Path.home() / ".qwen/settings.json"),
+                _load_json(REPO / ".qwen/settings.json"),
+            ),
         )
-    patch_endpoint = f"http://127.0.0.1:{patch['port']}/v1"
-    pi_patch = pi.get("local-gptoss")
-    if not isinstance(pi_patch, dict):
-        errors.append("Pi PATCH provider local-gptoss is missing")
-    else:
-        expect("Pi PATCH endpoint", pi_patch.get("baseUrl"), patch_endpoint)
-        patch_models = pi_patch.get("models")
-        if not isinstance(patch_models, list) or not patch_models:
-            errors.append("Pi PATCH provider has no model mapping")
-        else:
-            expect("Pi PATCH model ID", patch_models[0].get("id"), patch_model)
-    for provider_name in ("neural-general", "neural-code"):
-        provider_models = pi.get(provider_name, {}).get("models", [])
-        if any(item.get("id") == patch_model for item in provider_models if isinstance(item, dict)):
-            errors.append(f"Pi {provider_name} incorrectly maps PATCH")
-    if any(
-        item.get("id") == patch_model or item.get("baseUrl") == patch_endpoint for item in openai
-    ):
-        errors.append("Qwen Code incorrectly maps PATCH")
-    expect("OpenCode default", opencode["model"], "llama-general/qwen3.6-general-local")
-    expect(
-        "OpenCode coder model",
-        opencode["agents"]["coder"]["model"],
-        "llama-code/nemotron-q5-code-local",
-    )
-    if opencode["agents"]["coder"].get("disabled") is True:
-        errors.append("OpenCode coder remains disabled")
-    if "model" in project or "provider" in project:
-        errors.append("project OpenCode overrides inherited models")
-    if patch_model in json.dumps(opencode):
-        errors.append("OpenCode incorrectly maps PATCH")
-    expect(
-        "OpenCode GENERAL override",
-        clients["opencode_general_context_policy"],
-        "documented-client-override",
-    )
-    if "32768" not in (REPO / "README.md").read_text():
-        errors.append("OpenCode 32K exception is not documented")
-    if any("vision" in name.lower() for name in (*pi, *opencode["provider"])):
-        errors.append("VISION provider remains active")
-    if (Path.home() / ".config/opencode/agents/vision.md").exists():
-        errors.append("OpenCode VISION agent is still discoverable")
-    fish = (Path.home() / ".config/fish/conf.d/qwen-code-runtime.fish").read_text()
-    if f"__qwen_profile_run CODE {code['model_path']} $argv" not in fish:
-        errors.append("Qwen qc helper does not use CODE")
-    opencode_fish = (Path.home() / ".config/fish/config.fish").read_text()
-    code_override = (
-        'OPENCODE_CONFIG_CONTENT \'{"model":"llama-code/nemotron-q5-code-local",'
-        '"default_agent":"coder"}\''
-    )
-    if code_override not in opencode_fish:
-        errors.append("OpenCode occ helper does not select CODE")
     return errors
 
 

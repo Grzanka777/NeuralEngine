@@ -2,10 +2,10 @@
   "version": 1,
   "resources": [
     {
-      "name": "neuralengine-model-lifecycle",
+      "name": "deepseek-only",
       "scope": "GLOBAL",
-      "source": "integrations/pi/extensions/neuralengine-model-lifecycle.ts",
-      "destination": "extensions/neuralengine-model-lifecycle.ts"
+      "source": "integrations/pi/extensions/deepseek-only.ts",
+      "destination": "extensions/deepseek-only.ts"
     },
     {
       "name": "command-protocol",
@@ -17,11 +17,6 @@
       "name": "neuralengine-guard",
       "scope": "PROJECT_LOCAL",
       "source": ".pi/extensions/neuralengine-guard.ts"
-    },
-    {
-      "name": "local-models",
-      "scope": "PROJECT_LOCAL",
-      "source": ".pi/skills/local-models"
     },
     {
       "name": "prompt-arch",

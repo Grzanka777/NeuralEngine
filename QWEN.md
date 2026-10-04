@@ -64,17 +64,24 @@ semantics in a skill or agent.
   separate explicit user authorization and the existing NeuralEngine
   mechanism.
 
-## Frozen Qwen integration boundary
+## Local role integration boundary
 
-Qwen Code is a thin NeuralEngine client. `qg` selects LOCAL GENERAL (65536)
-and `qc` selects Nemotron Q5 CODE (32768) through the existing `scripts/llm`
-lifecycle. VISION is `UNFILLED/disabled`; `qv` fails closed and does not select a substitute.
+Qwen Code uses only three local roles through scripts/llm:
+GENERAL = Nemotron Q5 on port 18081; CODE = Qwen3-Coder UD-Q4_K_XL on
+port 18080; VISION = Gemma 4 Q4 with mmproj on port 18082. All baseline
+contexts are 32768. VISION explicitly disables reasoning and MTP.
+The Gemma catalog entry declares `generationConfig.modalities.image = true`;
+use `qv --prompt "@/path/to/image.png Describe the visible content."` to
+attach a local image through Qwen's image input pipeline.
 
-The supported Qwen local profiles are `local-general` and `local-code`. The production launcher
-preserves GPT-OSS as the explicit PATCH/challenger on port 18086 and treats
-retired endpoints on port 18087 as conflicts, so a production model does not
-start beside an unknown or challenger listener.
+qg, qc, and qv select model and endpoint and append the corresponding
+project agent instruction body to the main session prompt. Model binding and
+instruction binding are separate contracts. Wrapper arguments cannot replace
+routing, role instructions, advisor, or fallback policy. There is no cloud
+fallback. Direct CLI and Desktop use the local GENERAL default, but do not
+own runtime lifecycle; use qg/qc/qv for automatic owned start/stop.
 
-Do not change the existing `qg` workflow or Brain/Knowledge promotion. Brain
-and Knowledge may be read; durable writes require separate explicit
-authorization, as above.
+scripts/llm is the sole local runtime manager. One profile may run at a time.
+Wrappers preserve borrowed processes and stop only their exact owned PID and
+profile on normal exit. Command Protocol and Brain authorization boundaries
+above remain unchanged. Pi handles explicitly requested cloud work separately.

@@ -4,7 +4,46 @@
   },
   "model": {
     "maxToolCalls": 20,
-    "maxSubagentDepth": 1
+    "maxSubagentDepth": 1,
+    "name": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
+    "baseUrl": "http://127.0.0.1:18081/v1"
   },
-  "$version": 4
+  "$version": 4,
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
+        "name": "local-general",
+        "description": "Local GENERAL baseline.",
+        "envKey": "QWEN_LOCAL_API_KEY",
+        "baseUrl": "http://127.0.0.1:18081/v1",
+        "generationConfig": {
+          "contextWindowSize": 32768
+        }
+      },
+      {
+        "id": "/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf",
+        "name": "local-code",
+        "description": "Local CODE baseline.",
+        "envKey": "QWEN_LOCAL_API_KEY",
+        "baseUrl": "http://127.0.0.1:18080/v1",
+        "generationConfig": {
+          "contextWindowSize": 32768
+        }
+      },
+      {
+        "id": "/models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        "name": "local-vision",
+        "description": "Local VISION baseline.",
+        "envKey": "QWEN_LOCAL_API_KEY",
+        "baseUrl": "http://127.0.0.1:18082/v1",
+        "generationConfig": {
+          "contextWindowSize": 32768,
+          "modalities": {
+            "image": true
+          }
+        }
+      }
+    ]
+  }
 }

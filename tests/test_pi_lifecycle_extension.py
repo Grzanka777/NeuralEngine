@@ -10,14 +10,13 @@ Validates that the extension:
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXTENSION_PATH = ROOT / "integrations/pi/extensions/neuralengine-model-lifecycle.ts"
+EXTENSION_PATH = ROOT / "tests/fixtures/retired_pi/neuralengine-model-lifecycle.ts"
 SYNC_SCRIPT = ROOT / "scripts/sync-pi-resources"
 
 
@@ -25,55 +24,25 @@ def test_extension_source_is_canonical_and_outside_project_autoload() -> None:
     """The lifecycle source is versioned outside Pi's project auto-load path."""
     assert EXTENSION_PATH.is_file()
     assert EXTENSION_PATH.relative_to(ROOT).as_posix() == (
-        "integrations/pi/extensions/neuralengine-model-lifecycle.ts"
+        "tests/fixtures/retired_pi/neuralengine-model-lifecycle.ts"
     )
     assert not (ROOT / ".pi" / "extensions" / EXTENSION_PATH.name).exists()
 
 
-def test_sync_installs_one_global_copy_from_the_canonical_source(tmp_path: Path) -> None:
-    """Sync creates only the managed global extension and copies exact bytes."""
-    home = tmp_path / "home"
-    global_dir = home / ".pi" / "agent" / "extensions"
-    unrelated = global_dir / "unrelated-extension.ts"
-
+def test_sync_excludes_retired_lifecycle(tmp_path: Path) -> None:
+    """Normal installation must never reactivate the historical manager."""
     result = subprocess.run(
         [sys.executable, str(SYNC_SCRIPT)],
         cwd=ROOT,
-        env={**os.environ, "HOME": str(home)},
+        env={**os.environ, "HOME": str(tmp_path / "home")},
         capture_output=True,
         text=True,
         check=False,
     )
-
     assert result.returncode == 0, result.stderr
-    installed = global_dir / EXTENSION_PATH.name
-    assert installed.read_bytes() == EXTENSION_PATH.read_bytes()
-
-    unrelated.write_bytes(b"leave this extension alone\n")
-    result = subprocess.run(
-        [sys.executable, str(SYNC_SCRIPT)],
-        cwd=ROOT,
-        env={**os.environ, "HOME": str(home)},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert installed.read_bytes() == EXTENSION_PATH.read_bytes()
-    assert unrelated.read_bytes() == b"leave this extension alone\n"
-    assert sorted(path.name for path in global_dir.glob("neuralengine-model-lifecycle.*")) == [
-        EXTENSION_PATH.name
-    ]
-    manifest = json.loads((ROOT / "integrations/pi/manifest.json").read_text(encoding="utf-8"))
-    lifecycle_resource = next(
-        resource
-        for resource in manifest["resources"]
-        if resource["name"] == "neuralengine-model-lifecycle"
-    )
-    assert lifecycle_resource["source"] == (
-        "integrations/pi/extensions/neuralengine-model-lifecycle.ts"
-    )
+    extensions = tmp_path / "home/.pi/agent/extensions"
+    assert not (extensions / EXTENSION_PATH.name).exists()
+    assert (extensions / "deepseek-only.ts").is_file()
 
 
 def test_extension_source_does_not_contain_human_parsing_or_direct_scripts() -> None:
@@ -128,7 +97,7 @@ def test_node_switch_json_started_and_borrowed_lifecycle() -> None:
       parseSwitchJson,
       parseStopOwnedJson,
       findProjectRoot
-    } from "./integrations/pi/extensions/neuralengine-model-lifecycle.ts";
+    } from "./tests/fixtures/retired_pi/neuralengine-model-lifecycle.ts";
 
     const handlers = new Map();
     const execCalls = [];
@@ -225,7 +194,7 @@ def test_node_borrowed_ownership_does_not_stop_on_shutdown() -> None:
     """Test that BORROWED ownership is never stopped by the extension."""
     script = """
     import assert from "node:assert/strict";
-    import register from "./integrations/pi/extensions/neuralengine-model-lifecycle.ts";
+    import register from "./tests/fixtures/retired_pi/neuralengine-model-lifecycle.ts";
 
     const handlers = new Map();
     const execCalls = [];
@@ -295,7 +264,7 @@ def test_node_machine_json_validation_rejections() -> None:
     import {
       parseSwitchJson,
       parseStopOwnedJson
-    } from "./integrations/pi/extensions/neuralengine-model-lifecycle.ts";
+    } from "./tests/fixtures/retired_pi/neuralengine-model-lifecycle.ts";
 
     // 1. Malformed JSON
     assert.throws(() => parseSwitchJson("not-json"), /malformed JSON/);
@@ -371,7 +340,7 @@ def test_node_role_transitions() -> None:
     """Test local-to-local, local-to-cloud, and cloud-to-local transitions."""
     script = """
     import assert from "node:assert/strict";
-    import register from "./integrations/pi/extensions/neuralengine-model-lifecycle.ts";
+    import register from "./tests/fixtures/retired_pi/neuralengine-model-lifecycle.ts";
 
     const handlers = new Map();
     const execCalls = [];
@@ -482,7 +451,7 @@ def test_node_global_root_resolution() -> None:
     import {
       findProjectRoot,
       CANONICAL_ROOT
-    } from "./integrations/pi/extensions/neuralengine-model-lifecycle.ts";
+    } from "./tests/fixtures/retired_pi/neuralengine-model-lifecycle.ts";
 
     // 1. From /tmp without env override -> resolves CANONICAL_ROOT
     delete process.env.NEURALENGINE_PI_PROJECT_ROOT;

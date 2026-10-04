@@ -1,4 +1,4 @@
-"""The production launcher and PATCH challenger share one startup lock."""
+"""Independent local runtime clients share one startup lock."""
 
 from __future__ import annotations
 
@@ -36,12 +36,12 @@ def _wait_for_entered(process: subprocess.Popen[str], timeout: float = 5.0) -> N
     assert process.stdout.readline().strip() == "entered"
 
 
-@pytest.mark.parametrize("first,second", [("llm", "challenger"), ("challenger", "llm")])
+@pytest.mark.parametrize("first,second", [("general", "code"), ("code", "vision")])
 def test_llm_and_challenger_serialize_cross_entrypoint_startup(
     tmp_path: Path, first: str, second: str
 ) -> None:
     state_home = tmp_path / "state"
-    scripts = {"llm": ROOT / "scripts/llm", "challenger": ROOT / "scripts/challenger"}
+    scripts = dict.fromkeys(("general", "code", "vision"), ROOT / "scripts/llm")
     lock_path = state_home / "neuralengine/lifecycle.lock"
     env = {**__import__("os").environ, "XDG_STATE_HOME": str(state_home)}
 

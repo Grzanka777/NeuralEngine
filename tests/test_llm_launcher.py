@@ -30,24 +30,23 @@ def test_production_roles_and_challenger_conflict_port_are_exact() -> None:
     assert launcher.GENERAL_PORT == 18081
     assert launcher.CODE_PORT == 18080
     assert launcher.CONFLICT_PORTS == (18080, 18081, 18082, 18086, 18087)
-    assert {"VISION"} == launcher.UNFILLED_ROLES
-    assert str(launcher.GENERAL_MODEL).startswith("/models/gguf/qwen3.6-35b-a3b/")
-    assert str(launcher.CODE_MODEL).startswith("/models/gguf/nemotron-3-nano-30b-a3b/")
+    assert str(launcher.GENERAL_MODEL).startswith("/models/gguf/nemotron-3-nano-30b-a3b/")
+    assert str(launcher.CODE_MODEL).startswith("/models/gguf/qwen3-coder-30b-a3b/")
     assert 18082 in launcher.CONFLICT_PORTS
 
 
-def test_unfilled_vision_is_disabled_and_never_starts(
-    capsys: Any, monkeypatch: pytest.MonkeyPatch
+def test_vision_routes_to_supported_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(
-        launcher,
-        "lifecycle_lock",
-        lambda *args, **kwargs: pytest.fail("unfilled role must be rejected before locking"),
-    )
-    assert launcher.main(["vision"]) == 1
-    assert launcher.main(["start", "vision"]) == 1
-    assert launcher.main(["switch", "vision"]) == 1
-    assert capsys.readouterr().err.count("VISION is UNFILLED") == 3
+    events: list[str] = []
+    monkeypatch.setattr(launcher, "_lifecycle_lock_path", lambda: tmp_path / "lock")
+    monkeypatch.setattr(launcher, "start_vision", lambda: events.append("vision"))
+    monkeypatch.setattr(launcher, "start_profile", lambda role: events.append(f"start:{role}"))
+    monkeypatch.setattr(launcher, "switch_profile", lambda role: events.append(f"switch:{role}"))
+    assert launcher.main(["vision"]) == 0
+    assert launcher.main(["start", "vision"]) == 0
+    assert launcher.main(["switch", "vision"]) == 0
+    assert events == ["vision", "start:vision", "switch:vision"]
 
 
 def _acquire_lock_in_child(lock_path: str, acquired: Any) -> None:
@@ -57,12 +56,11 @@ def _acquire_lock_in_child(lock_path: str, acquired: Any) -> None:
 
 def _profile(tmp_path: Path) -> Any:
     model = tmp_path / "model.gguf"
-    mtp = tmp_path / "mtp.gguf"
     runtime = tmp_path / "llama-server"
-    for path in (model, mtp, runtime):
+    for path in (model, runtime):
         path.touch()
     runtime.chmod(runtime.stat().st_mode | 0o111)
-    return launcher.GeneralProfile(model=model, mtp=mtp, runtime=runtime)
+    return launcher.GeneralProfile(model=model, runtime=runtime)
 
 
 def _code_profile(tmp_path: Path) -> Any:
@@ -215,7 +213,7 @@ def test_launcher_artifact_paths_can_be_relocated_without_changing_profiles(
 ) -> None:
     configured_paths = {
         "NEURALENGINE_GENERAL_MODEL": tmp_path / "general.gguf",
-        "NEURALENGINE_GENERAL_MTP": tmp_path / "general-mtp.gguf",
+        "NEURALENGINE_VISION_MMPROJ": tmp_path / "mmproj.gguf",
         "NEURALENGINE_LLAMA_SERVER": tmp_path / "llama-server",
     }
     for name, path in configured_paths.items():
@@ -224,7 +222,7 @@ def test_launcher_artifact_paths_can_be_relocated_without_changing_profiles(
     configured = _load_launcher("neural_engine_llm_launcher_configured")
 
     assert configured_paths["NEURALENGINE_GENERAL_MODEL"] == configured.GENERAL_MODEL
-    assert configured_paths["NEURALENGINE_GENERAL_MTP"] == configured.GENERAL_MTP
+    assert configured_paths["NEURALENGINE_VISION_MMPROJ"] == configured.VISION_MMPROJ
     assert configured_paths["NEURALENGINE_LLAMA_SERVER"] == configured.LLAMA_SERVER
     assert configured.DEFAULT_PROFILE.runtime == configured.LLAMA_SERVER
     assert configured.DEFAULT_PROFILE.arguments()[1] == str(configured.GENERAL_MODEL)
@@ -332,7 +330,11 @@ def test_health_wait_times_out_without_success() -> None:
 
 
 def test_profiles_use_production_context_limits() -> None:
-    profiles = ((launcher.DEFAULT_PROFILE, "65536"), (launcher.DEFAULT_CODE_PROFILE, "32768"))
+    profiles = (
+        (launcher.DEFAULT_PROFILE, "32768"),
+        (launcher.DEFAULT_CODE_PROFILE, "32768"),
+        (launcher.DEFAULT_VISION_PROFILE, "32768"),
+    )
 
     for profile, expected_context in profiles:
         arguments = profile.arguments()
@@ -378,7 +380,6 @@ def test_status_reports_conflicting_supported_ports(capsys: Any) -> None:
     output = capsys.readouterr().out
     assert "profile: CONFLICT" in output
     assert "active ports: 18080, 18081" in output
-    assert "VISION: UNFILLED/disabled" in output
 
 
 def test_status_does_not_identify_an_unverified_code_listener(capsys: Any) -> None:
@@ -390,7 +391,6 @@ def test_status_does_not_identify_an_unverified_code_listener(capsys: Any) -> No
     )
 
     output = capsys.readouterr().out
-    assert "VISION: UNFILLED/disabled" in output
     assert "profile: unknown" in output
     assert "profile: CODE" not in output
 
@@ -668,7 +668,7 @@ def test_vision_port_is_unknown_and_never_signalled() -> None:
         )
 
     assert launcher.active_profile_state(port_reader=port_reader) == "UNKNOWN"
-    with pytest.raises(launcher.LauncherError, match="unsupported listener.*18082"):
+    with pytest.raises(launcher.LauncherError, match="not the verified VISION profile"):
         launcher.stop_active_profiles(port_reader=port_reader, killer=killer)
     assert signalled is False
 
@@ -935,11 +935,9 @@ def test_main_returns_zero_when_general_already_ready(
     profile = _profile(tmp_path)
 
     monkeypatch.setenv("NEURALENGINE_GENERAL_MODEL", str(profile.model))
-    monkeypatch.setenv("NEURALENGINE_GENERAL_MTP", str(profile.mtp))
     monkeypatch.setenv("NEURALENGINE_LLAMA_SERVER", str(profile.runtime))
     configured = _load_launcher("neural_engine_llm_launcher_general_ready_cli")
     assert configured.DEFAULT_PROFILE.model == profile.model
-    assert configured.DEFAULT_PROFILE.mtp == profile.mtp
     assert configured.DEFAULT_PROFILE.runtime == profile.runtime
 
     monkeypatch.setattr(
@@ -1051,3 +1049,78 @@ def test_detect_verified_running_profile_returns_none_when_health_fails() -> Non
         health_check=lambda: False,
     )
     assert result is None
+
+
+@pytest.mark.parametrize("name,port", [("GENERAL", 18081), ("CODE", 18080), ("VISION", 18082)])
+def test_all_roles_require_exact_identity_and_health(name: str, port: int) -> None:
+    def reader(candidate: int) -> Any:
+        return launcher.PortState(
+            listening=candidate == port, pids=(7101,) if candidate == port else ()
+        )
+
+    checks = {
+        f"{name.lower()}_identity_checker": lambda pid, _: pid == 7101,
+        f"{name.lower()}_health_check": lambda _: True,
+    }
+    assert launcher.active_profile_identity(port_reader=reader, **checks) == (name, 7101)
+    checks[f"{name.lower()}_identity_checker"] = lambda *_: False
+    assert launcher.active_profile_state(port_reader=reader, **checks) == "UNKNOWN"
+
+
+def test_vision_requires_mmproj_before_start(tmp_path: Path) -> None:
+    profile = launcher.VisionProfile(
+        model=tmp_path / "gemma.gguf",
+        mmproj=tmp_path / "missing.gguf",
+        runtime=tmp_path / "llama-server",
+    )
+    profile.model.touch()
+    profile.runtime.touch(mode=0o700)
+    with pytest.raises(launcher.LauncherError, match="mmproj does not exist"):
+        launcher.start_vision(profile, process_factory=lambda *_: pytest.fail("must not spawn"))
+
+
+def test_vision_baseline_disables_reasoning_and_mtp() -> None:
+    args = launcher.DEFAULT_VISION_PROFILE.arguments()
+    assert args[args.index("--reasoning") + 1] == "off"
+    assert args[args.index("--mmproj") + 1] == str(launcher.VISION_MMPROJ)
+    assert not any("spec" in arg or "mtp" in arg for arg in args)
+
+
+def test_switch_passes_exact_ownership_to_stop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    states = iter(("GENERAL", "STOPPED", "CODE"))
+    stops: list[dict[str, Any]] = []
+    monkeypatch.setattr(launcher, "active_profile_identity", lambda: ("GENERAL", 7201))
+    monkeypatch.setattr(launcher, "stop_active_profiles", lambda **kw: stops.append(kw))
+    launcher.switch_profile(
+        "code",
+        state_reader=lambda: next(states),
+        starter=lambda: None,
+        lock_path=tmp_path / "lock",
+    )
+    assert stops == [{"expected_profile": "GENERAL", "expected_pid": 7201}]
+
+
+@pytest.mark.parametrize("role", ["general", "code", "vision"])
+def test_already_ready_does_not_ignore_second_listener(tmp_path: Path, role: str) -> None:
+    if role == "general":
+        profile = _profile(tmp_path)
+    elif role == "code":
+        profile = _code_profile(tmp_path)
+    else:
+        base = _profile(tmp_path)
+        mmproj = tmp_path / "mmproj.gguf"
+        mmproj.touch()
+        profile = launcher.VisionProfile(model=base.model, runtime=base.runtime, mmproj=mmproj)
+    with pytest.raises(launcher.LauncherError, match="18087"):
+        getattr(launcher, f"start_{role}")(
+            profile,
+            port_reader=lambda port: launcher.PortState(
+                listening=port in {profile.port, 18087},
+                pids=(8001,),
+            ),
+            identity_checker=lambda *_: True,
+            health_check=lambda *_: True,
+            process_factory=lambda *_: pytest.fail("must not spawn"),
+        )

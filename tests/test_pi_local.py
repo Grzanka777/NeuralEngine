@@ -11,12 +11,16 @@ import pytest
 
 @pytest.fixture
 def runner() -> dict[str, Any]:
-    return runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/pi-local"))
+    return runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "tests/fixtures/retired_pi/pi-local")
+    )
 
 
 @pytest.fixture
 def adapter() -> dict[str, Any]:
-    return runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/pi-model"))
+    return runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "tests/fixtures/retired_pi/pi-model")
+    )
 
 
 def _fake_adapter(*, ownership: str = "STARTED", pid: int = 123) -> SimpleNamespace:

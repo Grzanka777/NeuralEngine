@@ -13,7 +13,9 @@ import pytest
 
 @pytest.fixture
 def adapter() -> dict[str, Any]:
-    return runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/pi-model"))
+    return runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "tests/fixtures/retired_pi/pi-model")
+    )
 
 
 def test_supported_pi_topology_is_exact(adapter: dict[str, Any]) -> None:
@@ -254,69 +256,14 @@ def test_stop_owned_never_stops_borrowed_runtime(
     assert adapter["stop_owned"](result) is False
 
 
-def test_installed_pi_catalog_has_only_supported_local_mappings() -> None:
+def test_installed_pi_catalog_has_no_local_mappings() -> None:
     catalog_path = Path.home() / ".pi" / "agent" / "models.json"
     if not catalog_path.is_file():
         pytest.skip("host Pi model catalog is not installed")
     providers = json.loads(catalog_path.read_text())["providers"]
-    supported = {
-        "neural-general": {
-            "baseUrl": "http://127.0.0.1:18081/v1",
-            "api": "openai-completions",
-            "apiKey": "local",
-            "models": [
-                {
-                    "id": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
-                    "name": "NeuralEngine GENERAL",
-                    "contextWindow": 65536,
-                    "maxTokens": 8192,
-                }
-            ],
-        },
-        "local-gptoss": {
-            "baseUrl": "http://127.0.0.1:18086/v1",
-            "api": "openai-completions",
-            "apiKey": "local",
-            "models": [
-                {
-                    "id": "/models/gguf/gpt-oss-20b/gpt-oss-20b-MXFP4.gguf",
-                    "name": "GPT-OSS 20B MXFP4 (local challenger)",
-                    "input": ["text"],
-                    "contextWindow": 32768,
-                    "maxTokens": 4096,
-                    "reasoning": True,
-                    "compat": {"supportsReasoningEffort": True},
-                }
-            ],
-        },
-        "neural-code": {
-            "baseUrl": "http://127.0.0.1:18080/v1",
-            "api": "openai-completions",
-            "apiKey": "local",
-            "models": [
-                {
-                    "id": (
-                        "/models/gguf/nemotron-3-nano-30b-a3b/"
-                        "nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf"
-                    ),
-                    "name": "NeuralEngine CODE / Nemotron Q5",
-                    "contextWindow": 32768,
-                    "maxTokens": 7000,
-                }
-            ],
-        },
-    }
-    assert {name: providers[name] for name in supported} == supported
-    assert set(providers) == {"neural-general", "neural-code", "local-gptoss"}
-    gptoss = providers["local-gptoss"]
-    assert gptoss["baseUrl"] == "http://127.0.0.1:18086/v1"
-    assert len(gptoss["models"]) == 1
-    model = gptoss["models"][0]
-    assert model["id"] == "/models/gguf/gpt-oss-20b/gpt-oss-20b-MXFP4.gguf"
-    assert (model["contextWindow"], model["maxTokens"]) == (32768, 4096)
-    assert model["reasoning"] is True
-    assert model["compat"]["supportsReasoningEffort"] is True
-    assert "neural-vision" not in providers
+    assert set(providers) <= {"deepseek"}
+    if "deepseek" in providers:
+        assert all(model["id"] == "deepseek-flash" for model in providers["deepseek"]["models"])
 
 
 def test_vision_is_unfilled_before_listener_discovery(
