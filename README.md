@@ -62,60 +62,53 @@ OpenCode/llama/model prerequisites, and defines the read-only health sequence.
 
 ## Current Capabilities
 
-### Frozen local LLM launcher
+### Active LLM stack
 
-The repository includes a small terminal-first launcher for Qwen3.6 GENERAL
-and Nemotron Q5 CODE. VISION is UNFILLED/disabled; the launcher refuses it and
-does not select a replacement model. It performs
-prerequisite, port, health, and verified process checks without enabling a
-service or starting anything during login or boot. The installed `llm` command
-is a symlink to the repository implementation, so it cannot drift independently:
+`llm-manifest.json` is the authority for active local roles, model assets,
+endpoints, and client contracts. `scripts/llm` is the sole local runtime
+manager; it allows one local profile to run at a time. Run the static contract
+gate with `scripts/llm-regression-gate fast`; use `--repo-only` when host model
+files are unavailable. The gate does not start models or make network requests.
+See [`docs/llm-regression-gate.md`](docs/llm-regression-gate.md) for its scope
+and output.
 
-```bash
-ln -s /home/grzanka/Work/NeuralEngine/scripts/llm ~/.local/bin/llm
-```
+Current checkpoint summary (2026-10-05; consult the manifest for current
+values):
 
-Use it from fish or another shell:
+| Client or role | Current contract |
+| --- | --- |
+| Pi | Cloud-only DeepSeek `deepseek-flash`; no local model catalog or lifecycle. |
+| Qwen Code | Local-only, with cloud fallback disabled; routes to the active local roles below. |
+| GENERAL | Nemotron 3 Nano 30B-A3B Q5_K_M at `http://127.0.0.1:18081/v1`. |
+| CODE | Qwen3-Coder 30B-A3B UD-Q4_K_XL at `http://127.0.0.1:18080/v1`. |
+| VISION | Gemma 4 26B-A4B Q4_K_XL plus `mmproj` at `http://127.0.0.1:18082/v1`. |
+
+All three local roles are active in this checkpoint. MTP is disabled for each;
+VISION requires its projector asset. PATCH is not an active local role in the
+current contract.
+
+From fish or another shell, the launcher supports:
 
 ```text
 llm general
 llm code
+llm vision
 llm switch general
 llm switch code
+llm switch vision
 llm status
 llm state
 llm identity
 llm stop
 ```
 
-`llm state` is a machine-readable ownership check and prints exactly one of
-`STOPPED`, `GENERAL`, `CODE`, or `UNKNOWN`. It reports a profile only when
-its listener, process command line, and health endpoint are all verified.
-`llm status` reports VISION as `UNFILLED/disabled`.
 `llm switch <profile>` serializes state inspection, verified shutdown, target
 startup, and target verification with a user-level lifecycle lock. It refuses
 unknown, foreign, or conflicting state and does not perform automatic rollback.
-`llm identity` is a read-only machine-readable check that prints `PROFILE PID`,
-`STOPPED`, or `UNKNOWN`.
-The inactive user systemd units use `scripts/llm serve` for GENERAL and
-`scripts/llm serve code` for CODE in the foreground when started explicitly.
-`llm-manifest.json` records both verified profiles and the separate GPT-OSS
-PATCH specialist. Run `python scripts/validate-llm-manifest` for a read-only
-configuration drift check; add `--hash` to rehash the GGUF files.
-
-The launcher reports these OpenAI-compatible endpoints after `/health` becomes
-ready:
-
-```text
-CODE:    http://127.0.0.1:18080/v1
-GENERAL: http://127.0.0.1:18081/v1
-```
-
-CODE uses the previously verified Nemotron Q5 profile at context 32768, batch
-2048, ubatch 512, ngl 999, Vulkan0, and no MTP. Port 18082 remains
-conflict-only while VISION is unfilled. Only one production profile may run at
-a time. OpenCode GENERAL keeps its documented 32768-token client limit while
-the GENERAL server remains at 65536.
+`llm state` and `llm identity` report verified local process state. The
+launcher does not start a service during login or boot. Run the repo-only gate
+for configuration validation, or the full local gate to include required
+model-file inventory.
 
 ### Manual OpenCode fresh-session handoff
 
@@ -164,15 +157,14 @@ from `29000`. `--check` exits `0` for HEALTHY/NOTICE, `10` for HANDOFF, `20`
 for CRITICAL, and `30` if session selection or context observation is
 unavailable or ambiguous.
 
-OpenCode v2.0.3 stores sessions in `session_v2` and completed response token
-components in `session_message`; older installations use `session` and
-`part`. The adapter reads both layouts and reports the latest completed
-response as `ESTIMATED` (prefixed with `~`), not as a live active-prompt
-total. It fails closed when the current directory maps to more than one
-unarchived session; use `--session` to select a specific session. A persisted
-session is considered observable only while a live local OpenCode process
-exists; after OpenCode exits, `--check` returns `UNKNOWN` with exit `30` rather
-than presenting stale session state. An estimated value never alone produces
+The session observer supports both the `session_v2`/`session_message` layout
+and the older `session`/`part` layout. It reports the latest completed
+response as `ESTIMATED` (prefixed with `~`), not as a live active-prompt total.
+It fails closed when the current directory maps to more than one unarchived
+session; use `--session` to select a specific session. A persisted session is
+considered observable only while a live local OpenCode process exists; after
+OpenCode exits, `--check` returns `UNKNOWN` with exit `30` rather than
+presenting stale session state. An estimated value never alone produces
 `CRITICAL`.
 
 ### Daily OpenCode wrapper
@@ -193,7 +185,7 @@ idempotent cleanup. It invokes `llm stop` only when the same exact identity is
 still verified; pre-existing, conflicting, unknown, or changed ownership is
 preserved.
 
-### OpenCode rolling compatibility
+### OpenCode compatibility adapter
 
 NeuralEngine follows OpenCode as a rolling external platform. After an OpenCode
 update, run the read-only capability preflight:
@@ -203,11 +195,13 @@ neural opencode doctor
 ```
 
 The preflight records the installed OpenCode version for diagnostics and checks
-the executable, resolved user config, selected agent, GENERAL/VISION provider
-and model identifiers, the explicit unfilled CODE state, `llm` lifecycle integration, executable
-`opencode-watch` wrapper, and the explicit NeuralEngine/Brain safety boundary.
-It does not compare against an exact version, start a model, open the OpenCode
-database/service, or write Brain state.
+the executable, resolved user config, selected agent, configured provider/model
+compatibility, `llm` lifecycle integration, executable `opencode-watch`
+wrapper, and the explicit NeuralEngine/Brain safety boundary. OpenCode is an
+optional external client: its adapter checks do not define the active Pi or
+Qwen Code contract, whose authority remains `llm-manifest.json`. The preflight
+does not compare against a pinned OpenCode version, start a model, open the
+OpenCode database/service, or write Brain state.
 
 Interpret the result as follows:
 
@@ -224,12 +218,12 @@ When stronger evidence is needed, request one bounded marker smoke explicitly:
 neural opencode doctor --live-smoke --lane general
 ```
 
-The CODE lane is unsupported and returns a blocked smoke result without
-starting a model. The GENERAL live smoke reuses the existing wrapper and exact
-LLM ownership cleanup; it requires `STOPPED` before launch and must finish
-with `llm state` reported as `STOPPED`. Do not
-pin or downgrade OpenCode, rebaseline prompts, or run token benchmarks merely
-because its version changed.
+Live-smoke lane names describe this optional OpenCode adapter only; they do not
+change which local roles are active in `llm-manifest.json`. The GENERAL live
+smoke reuses the existing wrapper and exact LLM ownership cleanup; it requires
+`STOPPED` before launch and must finish with `llm state` reported as
+`STOPPED`. Do not pin or downgrade OpenCode, rebaseline prompts, or run token
+benchmarks merely because its version changed.
 
 The first implemented slice is Observation capture:
 
@@ -586,6 +580,10 @@ selection, Run recording, Evaluation, Proposal creation, and decision linkage
 remain explicit caller actions and do not trigger automatic learning or mutation.
 
 ## Validation
+
+For static validation of active LLM stack bindings, see
+[`docs/llm-regression-gate.md`](docs/llm-regression-gate.md). Use its
+`--repo-only` mode for CI checks that must not depend on local model assets.
 
 Run the full validation suite before considering a change complete:
 

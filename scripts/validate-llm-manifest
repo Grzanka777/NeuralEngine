@@ -95,58 +95,123 @@ def _validate_client_settings(
     pi_catalog: dict[str, Any],
     pi_settings: tuple[dict[str, Any], ...],
     qwen_settings: tuple[dict[str, Any], ...],
+    clients: dict[str, Any] | None = None,
 ) -> None:
     """Check routing only; never report credential-bearing configuration objects."""
+    if clients is None:
+        clients = _load_json(REPO / "llm-manifest.json")["clients"]
+    pi_contract = clients["pi"]
+    qwen_contract = clients["qwen"]
+    expected_pi_provider = pi_contract.get("provider")
+    expected_pi_model = pi_contract.get("model")
     providers = pi_catalog.get("providers", {})
-    if set(providers) - {"deepseek"}:
-        errors.append("Pi contains non-DeepSeek provider entries")
+    if not isinstance(providers, dict):
+        errors.append("Pi provider catalog drift")
+        providers = {}
+    if expected_pi_provider is not None and set(providers) - {expected_pi_provider}:
+        errors.append("Pi contains provider entries outside the manifest contract")
     for provider in providers.values():
-        if any(model.get("id") != "deepseek-flash" for model in provider.get("models", [])):
-            errors.append("Pi contains a non-flash model entry")
+        models = provider.get("models", []) if isinstance(provider, dict) else None
+        if not isinstance(models, list) or any(
+            not isinstance(model, dict) or model.get("id") != expected_pi_model for model in models
+        ):
+            errors.append("Pi contains model entries outside the manifest contract")
     for settings in pi_settings:
-        if settings.get("defaultProvider") != "deepseek":
+        if settings.get("defaultProvider") != expected_pi_provider:
             errors.append("Pi default provider drift")
-        if settings.get("defaultModel") != "deepseek-flash":
+        if settings.get("defaultModel") != expected_pi_model:
             errors.append("Pi default model drift")
-    expected = {role["model_path"]: role for role in roles.values()}
+    expected = {
+        role["model_path"]: role
+        for role in roles.values()
+        if role.get("enabled") is True and role.get("state") == "ACTIVE"
+    }
     for settings in qwen_settings:
-        auth_type = settings.get("security", {}).get("auth", {}).get("selectedType")
-        if auth_type is not None and auth_type != "openai":
-            errors.append("Qwen auth routing drift")
+        security = settings.get("security", {})
+        auth = security.get("auth", {}) if isinstance(security, dict) else {}
+        auth_type = auth.get("selectedType") if isinstance(auth, dict) else None
         advisor = settings.get("advisorModel")
-        if advisor and advisor not in expected:
+        if advisor and (not isinstance(advisor, str) or advisor not in expected):
             errors.append("Qwen contains non-local advisor routing")
+        if not qwen_contract.get("cloud_fallback", True) and settings.get("fallbackModel"):
+            errors.append("Qwen cloud fallback drift")
         default_model = settings.get("model", {})
         if isinstance(default_model, dict) and "baseUrl" in default_model:
-            general = roles["GENERAL"]
-            endpoint = f"http://{general['host']}:{general['port']}/v1"
+            default_role = qwen_contract["default_role"]
+            default = roles.get(default_role, {})
+            endpoint = f"http://{default.get('host')}:{default.get('port')}/v1"
             if default_model["baseUrl"] != endpoint:
                 errors.append("Qwen default endpoint drift")
-        if "modelProviders" in settings:
-            provider_map = settings["modelProviders"]
-            if set(provider_map) != {"openai"}:
+        provider_map = settings.get("modelProviders", {})
+        if not isinstance(provider_map, dict):
+            errors.append("Qwen provider catalog drift")
+            provider_map = {}
+        all_models = [
+            model
+            for models in provider_map.values()
+            if isinstance(models, list)
+            for model in models
+            if isinstance(model, dict)
+        ]
+        if qwen_contract.get("local_only"):
+            actual_ids = [model.get("id") for model in all_models]
+            if set(actual_ids) != set(expected) or len(actual_ids) != len(expected):
                 errors.append("Qwen contains cloud provider routing")
-            models = provider_map.get("openai", [])
-            if {model.get("id") for model in models} != set(expected) or len(models) != 3:
-                errors.append("Qwen local role catalog drift")
-            for model in models:
-                role = expected.get(model.get("id"))
-                if role is None:
-                    continue
-                endpoint = f"http://{role['host']}:{role['port']}/v1"
-                if model.get("baseUrl") != endpoint:
-                    errors.append("Qwen local endpoint drift")
-                if model.get("generationConfig", {}).get("contextWindowSize") != role["context"]:
-                    errors.append("Qwen local context drift")
+        selected_types = {
+            provider_name
+            for provider_name, models in provider_map.items()
+            if isinstance(models, list)
+            and models
+            and all(model.get("id") in expected for model in models if isinstance(model, dict))
+            and all(isinstance(model, dict) and model.get("id") in expected for model in models)
+        }
+        if (
+            auth_type is not None
+            and qwen_contract.get("local_only")
+            and auth_type not in selected_types
+        ):
+            errors.append("Qwen auth routing drift")
+        for model in all_models:
+            role = expected.get(model.get("id"))
+            if role is None:
+                continue
+            endpoint = f"http://{role['host']}:{role['port']}/v1"
+            if model.get("baseUrl") != endpoint:
+                errors.append("Qwen local endpoint drift")
+            generation = model.get("generationConfig", {})
+            if not isinstance(generation, dict) or generation.get("contextWindowSize") != role.get(
+                "context"
+            ):
+                errors.append("Qwen local context drift")
         model = settings.get("model", {})
         if isinstance(model, dict):
             model = model.get("name")
-        if model != roles["GENERAL"]["model_path"]:
+        default_role = qwen_contract.get("default_role")
+        if model != roles.get(default_role, {}).get("model_path"):
             errors.append("Qwen default model drift")
 
 
+def _profile_for_role(launcher: Any, role: str, default_role: str) -> Any | None:
+    """Resolve the runtime profile exposed by scripts/llm for one contract role."""
+
+    named = getattr(launcher, f"DEFAULT_{role}_PROFILE", None)
+    if named is not None:
+        return named
+    default = getattr(launcher, "DEFAULT_PROFILE", None)
+    if role == default_role or (
+        default is not None and type(default).__name__.removesuffix("Profile").upper() == role
+    ):
+        return default
+    return None
+
+
 def validate(
-    manifest_path: Path, *, check_hashes: bool = False, check_host: bool = True
+    manifest_path: Path,
+    *,
+    check_hashes: bool = False,
+    check_host: bool = True,
+    check_host_assets: bool = True,
+    repo_root: Path = REPO,
 ) -> list[str]:
     manifest = _load_json(manifest_path)
     roles = manifest["roles"]
@@ -159,94 +224,147 @@ def validate(
 
     expect("schema", manifest["schema_version"], 1)
     expect("runtime manager", manifest["runtime_manager"], "scripts/llm")
-    expect("roles", set(roles), {"GENERAL", "CODE", "VISION"})
-    expect(
-        "Pi contract",
-        clients["pi"],
-        {
-            "provider": "deepseek",
-            "model": "deepseek-flash",
-            "local_lifecycle": False,
-        },
-    )
-    expect("Qwen local-only", clients["qwen"]["local_only"], True)
-    expect("Qwen default role", clients["qwen"]["default_role"], "GENERAL")
-    expect("Qwen fallback", clients["qwen"]["cloud_fallback"], False)
-    launcher = _load_script(REPO / "scripts/llm", "_neuralengine_llm_manifest")
-    for name, profile, port, ubatch, fa in (
-        ("GENERAL", launcher.DEFAULT_PROFILE, 18081, 512, "auto"),
-        ("CODE", launcher.DEFAULT_CODE_PROFILE, 18080, 1024, "on"),
-        ("VISION", launcher.DEFAULT_VISION_PROFILE, 18082, 512, "auto"),
-    ):
+    if not isinstance(roles, dict) or not roles:
+        errors.append("roles: expected a non-empty object")
+        roles = {}
+    if not isinstance(clients, dict) or not {"pi", "qwen"}.issubset(clients):
+        errors.append("clients: expected Pi and Qwen contracts")
+        clients = {"pi": {}, "qwen": {}}
+    default_role = clients.get("qwen", {}).get("default_role", "")
+    launcher_path = repo_root / "scripts/llm"
+    launcher = _load_script(launcher_path, "_neuralengine_llm_manifest")
+    seen_profiles: set[str] = set()
+    for name, role in roles.items():
+        if not isinstance(role, dict):
+            errors.append(f"{name} role: expected an object")
+            continue
+        profile = _profile_for_role(launcher, name, default_role)
+        active = role.get("enabled") is True and role.get("state") == "ACTIVE"
+        if not active:
+            if profile is not None:
+                errors.append(f"{name} profile: inactive role has an active launcher binding")
+            continue
+        if profile is None:
+            errors.append(f"{name} profile: no active launcher binding")
+            continue
+        seen_profiles.add(name)
         role = roles[name]
-        args = profile.arguments()
-        expect(f"{name} enabled", role["enabled"], True)
-        expect(f"{name} state", role["state"], "ACTIVE")
-        expect(f"{name} model", str(profile.model), role["model_path"])
-        expect(f"{name} model ID", role["expected_v1_models_id"], role["model_path"])
-        expect(f"{name} runtime", str(profile.runtime), role["runtime_binary"])
-        expect(f"{name} host", profile.host, role["host"])
-        expect(f"{name} port", profile.port, port)
-        expect(f"{name} manifest port", role["port"], port)
-        expect(f"{name} backend", role["backend"], "Vulkan")
-        expect(f"{name} runtime build", str(profile.runtime.parent.parent), role["runtime_build"])
-        for field, flag, baseline in (
-            ("context", "-c", 32768),
-            ("batch", "-b", 2048),
-            ("ubatch", "-ub", ubatch),
-            ("ngl", "-ngl", 999),
-            ("device", "-dev", "Vulkan0"),
-            ("flash_attention", "-fa", fa),
-            ("parallel", "--parallel", 1),
+        args = tuple(str(arg) for arg in profile.arguments())
+        expect(f"{name} model", str(profile.model), role.get("model_path"))
+        expect(f"{name} model ID", role.get("expected_v1_models_id"), role.get("model_path"))
+        expect(f"{name} runtime", str(profile.runtime), role.get("runtime_binary"))
+        expect(f"{name} host", profile.host, role.get("host"))
+        expect(f"{name} port", profile.port, role.get("port"))
+        if callable(getattr(profile, "endpoint", None)):
+            expect(
+                f"{name} endpoint",
+                profile.endpoint(),
+                f"http://{role.get('host')}:{role.get('port')}/v1",
+            )
+        expect(
+            f"{name} runtime build",
+            str(Path(profile.runtime).parent.parent),
+            role.get("runtime_build"),
+        )
+        for field, flag in (
+            ("context", "-c"),
+            ("batch", "-b"),
+            ("ubatch", "-ub"),
+            ("ngl", "-ngl"),
+            ("device", "-dev"),
+            ("flash_attention", "-fa"),
+            ("parallel", "--parallel"),
         ):
-            expect(f"{name} manifest {field}", role[field], baseline)
+            if field not in role:
+                errors.append(f"{name} manifest {field}: required profile field is missing")
+                continue
             _expect_single_flag(
-                errors, args, label=f"{name} {flag}", flag=flag, expected=str(baseline)
+                errors, args, label=f"{name} {field}", flag=flag, expected=str(role[field])
             )
-        expect(f"{name} jinja", role["jinja"], True)
-        _expect_single_toggle(
-            errors, args, label=f"{name} --jinja", enabled="--jinja", disabled="--no-jinja"
-        )
-        expect(f"{name} MTP", role["mtp"], {"enabled": False})
-        if any(arg.startswith("--spec-") for arg in args):
-            errors.append(f"{name} contains speculative flags outside the baseline")
-        expect(f"Qwen {name} context", clients["qwen"]["contexts"][name], 32768)
-        _check_artifact(
-            errors,
-            f"{name} model",
-            Path(role["model_path"]),
-            role.get("model_sha256"),
-            check_hashes,
-        )
-        _check_artifact(errors, f"{name} runtime", Path(role["runtime_binary"]), None, False)
-        cache = Path(role["runtime_build"]) / "CMakeCache.txt"
-        if not cache.is_file():
-            errors.append(f"{name} runtime build cache missing")
+        if "jinja" not in role or not isinstance(role["jinja"], bool):
+            errors.append(f"{name} manifest jinja: expected a boolean profile field")
         else:
-            settings = cache.read_text()
-            for setting in ("GGML_VULKAN:BOOL=ON", "GGML_HIP:BOOL=OFF", "GGML_BACKEND_DL:BOOL=OFF"):
-                if setting not in settings:
-                    errors.append(f"{name} build drift: {setting}")
-        if name == "VISION":
-            expect("VISION reasoning", role["reasoning"], "off")
-            _expect_single_flag(
-                errors, args, label="VISION reasoning", flag="--reasoning", expected="off"
+            enabled = "--jinja" if role["jinja"] else "--no-jinja"
+            disabled = "--no-jinja" if role["jinja"] else "--jinja"
+            _expect_single_toggle(
+                errors, args, label=f"{name} jinja", enabled=enabled, disabled=disabled
             )
+        if "reasoning" in role:
             _expect_single_flag(
-                errors, args, label="VISION mmproj", flag="--mmproj", expected=role["mmproj_path"]
-            )
-            _check_artifact(
                 errors,
-                "VISION mmproj",
-                Path(role["mmproj_path"]),
-                role.get("mmproj_sha256"),
-                check_hashes,
+                args,
+                label=f"{name} reasoning",
+                flag="--reasoning",
+                expected=str(role["reasoning"]),
+            )
+        if "mmproj_path" in role:
+            _expect_single_flag(
+                errors, args, label=f"{name} mmproj", flag="--mmproj", expected=role["mmproj_path"]
             )
         elif "--mmproj" in args:
             errors.append(f"{name} unexpectedly enables mmproj")
+        mtp = role.get("mtp", {})
+        if not isinstance(mtp, dict) or not isinstance(mtp.get("enabled"), bool):
+            errors.append(f"{name} MTP: expected an enabled boolean in the manifest")
+        elif not mtp["enabled"] and any(arg.startswith("--spec-") for arg in args):
+            errors.append(f"{name} enables MTP outside the manifest contract")
+        elif mtp["enabled"]:
+            _expect_single_flag(
+                errors,
+                args,
+                label=f"{name} MTP path",
+                flag="--spec-draft-model",
+                expected=str(mtp.get("path", "")),
+            )
+        if check_host_assets:
+            if not isinstance(role.get("model_path"), str):
+                errors.append(f"{name} model path: required asset path is missing")
+                continue
+            _check_artifact(
+                errors,
+                f"{name} model",
+                Path(role["model_path"]),
+                role.get("model_sha256"),
+                check_hashes,
+            )
+            _check_artifact(errors, f"{name} runtime", Path(role["runtime_binary"]), None, False)
+            if "mmproj_path" in role:
+                _check_artifact(
+                    errors,
+                    f"{name} mmproj",
+                    Path(role["mmproj_path"]),
+                    role.get("mmproj_sha256"),
+                    check_hashes,
+                )
+            if mtp.get("enabled"):
+                _check_artifact(
+                    errors,
+                    f"{name} MTP",
+                    Path(mtp["path"]),
+                    mtp.get("sha256"),
+                    check_hashes,
+                )
+        if name in clients.get("qwen", {}).get("contexts", {}):
+            expect(
+                f"Qwen {name} context",
+                clients["qwen"]["contexts"][name],
+                role.get("context"),
+            )
+    for name, profile_constant in vars(launcher).items():
+        if name == "DEFAULT_PROFILE":
+            profile_role = default_role
+        elif name.startswith("DEFAULT_") and name.endswith("_PROFILE"):
+            profile_role = name.removeprefix("DEFAULT_").removesuffix("_PROFILE")
+        else:
+            continue
+        if (
+            callable(getattr(profile_constant, "arguments", None))
+            and profile_role not in seen_profiles
+        ):
+            errors.append(f"{profile_role} launcher profile has no manifest role")
     if check_host:
         installed = Path.home() / ".local/bin/llm"
-        expect("installed launcher", installed.resolve(), REPO / "scripts/llm")
+        expect("installed launcher", installed.resolve(), repo_root / "scripts/llm")
         if not installed.is_symlink():
             errors.append("installed llm is not a symlink")
         _validate_client_settings(
@@ -255,12 +373,13 @@ def validate(
             _load_json(Path.home() / ".pi/agent/models.json"),
             (
                 _load_json(Path.home() / ".pi/agent/settings.json"),
-                _load_json(REPO / ".pi/settings.json"),
+                _load_json(repo_root / ".pi/settings.json"),
             ),
             (
                 _load_json(Path.home() / ".qwen/settings.json"),
-                _load_json(REPO / ".qwen/settings.json"),
+                _load_json(repo_root / ".qwen/settings.json"),
             ),
+            clients,
         )
     return errors
 

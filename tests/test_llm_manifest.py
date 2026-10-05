@@ -171,7 +171,7 @@ def test_cloud_qwen_and_local_pi_catalog_are_rejected() -> None:
     _validator()._validate_client_settings(
         errors, roles, {"providers": {"local": {}}}, (pi,), (qwen,)
     )
-    assert "Pi contains non-DeepSeek provider entries" in errors
+    assert "Pi contains provider entries outside the manifest contract" in errors
     assert "Qwen contains cloud provider routing" in errors
 
 

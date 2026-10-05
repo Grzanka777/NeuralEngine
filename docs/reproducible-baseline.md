@@ -13,7 +13,10 @@ An authorized product checkpoint must contain:
 - the existing `src/neural_engine/**` package, including the OpenCode
   compatibility, handoff, context, ports, and local-adapter modules;
 - the corresponding deterministic tests under `tests/`;
-- `scripts/llm` and `scripts/opencode-watch`;
+- `llm-manifest.json`, `scripts/llm`, `scripts/llm-regression-gate`, and
+  `scripts/opencode-watch`;
+- the repo-owned Pi and Qwen Code bindings, including
+  `integrations/pi/manifest.json`;
 - the operator documentation, including this contract and the current README.
 
 The following are deliberately outside the product baseline: `AGENTS.md`
@@ -23,18 +26,21 @@ the live Brain, and live shell configuration.
 
 ## 2. What stays external
 
-The following state is supplied by the host or an operator-managed artifact:
+The repository defines the active LLM contract in `llm-manifest.json`; host
+artifacts and settings remain operator-managed:
 
-- Python 3.14 or newer and `uv`;
-- the rolling OpenCode executable and its user configuration;
-- the OpenCode lifecycle plugin and default agent file;
-- the `llama-server` executable and six GGUF/MTP/projector artifacts;
+- Python and `uv` for the selected repository checkpoint;
+- the rolling OpenCode executable and optional user configuration;
+- the `llama-server` executable selected by the active manifest;
+- model and auxiliary files required by active roles in the manifest;
 - the selected NeuralEngine home and its Brain contents;
 - optional fish convenience functions.
 
-External state must not be copied wholesale into Git. In particular, do not
-copy OpenCode databases, mutable session state, credentials, model files, or
-Brain records into the repository.
+MTP files are required only when an active role's manifest entry enables MTP.
+In the 2026-10-05 checkpoint described below, MTP is disabled for all active
+roles. External state must not be copied wholesale into Git. In particular, do
+not copy OpenCode databases, mutable session state, credentials, model files,
+or Brain records into the repository.
 
 ## 3. What must be installed or provided
 
@@ -65,49 +71,63 @@ script and is validated with `bash -n`.
 
 ## 4. Capabilities and paths that must exist
 
-The OpenCode and local-model paths must satisfy the contracts below:
+### Repository LLM contract
 
-| Capability | Required contract |
+`llm-manifest.json` is the authority for active roles, model assets, endpoints,
+launcher profiles, and Pi/Qwen client contracts. `scripts/llm` implements the
+local runtime contract; the Pi and Qwen configurations are derived bindings.
+Use `scripts/llm-regression-gate fast` for static repository checks plus local
+asset inventory, or `scripts/llm-regression-gate fast --repo-only` for CI-safe
+repository checks without host model files. Both modes are read-only and do
+not start a model or make network requests. See
+[`llm-regression-gate.md`](llm-regression-gate.md) for output and exit codes.
+
+Current checkpoint summary (2026-10-05; the manifest remains authoritative):
+
+| Client or role | Active contract in this checkpoint |
+| --- | --- |
+| Pi | Cloud-only DeepSeek `deepseek-flash`; no local catalog or local lifecycle. |
+| Qwen Code | Local-only, default role GENERAL, cloud fallback disabled. |
+| GENERAL | Nemotron 3 Nano 30B-A3B Q5_K_M at `http://127.0.0.1:18081/v1`. |
+| CODE | Qwen3-Coder 30B-A3B UD-Q4_K_XL at `http://127.0.0.1:18080/v1`. |
+| VISION | Gemma 4 26B-A4B Q4_K_XL with required `mmproj` at `http://127.0.0.1:18082/v1`. |
+
+All three local roles are active in this checkpoint, with one local model active
+at a time. `scripts/llm` is the sole local runtime manager. MTP is disabled for
+each active role, and PATCH is not an active local role.
+
+### Host-specific prerequisites
+
+The host must provide the runtime and every asset required by the selected
+manifest. The current inventory check requires each active model and auxiliary
+asset to be a non-empty regular file; MTP is checked only when enabled in the
+manifest. These host facts are not a second repository contract.
+
+| Capability | Host requirement |
 | --- | --- |
 | `neural` | An executable installed from the selected candidate source. |
-| `llm` | An executable copy of `scripts/llm` on `PATH`; it must report `STOPPED` before a no-start validation. |
-| `opencode-watch` | An executable copy of `scripts/opencode-watch` on `PATH`. |
-| `opencode` | An executable rolling OpenCode command on `PATH`; exact version is diagnostic, not a gate. |
-| `llama-server` | An executable compatible with the launcher arguments and local Vulkan profile. |
-| Local endpoints | CODE `127.0.0.1:18080`, GENERAL `127.0.0.1:18081`, VISION `127.0.0.1:18082`; only one profile runs at a time. |
+| `llm` | An executable installation of `scripts/llm` on `PATH`. |
+| `opencode-watch` | An executable installation of `scripts/opencode-watch` on `PATH`, if the optional OpenCode wrapper is used. |
+| `opencode` | An external rolling OpenCode command, if the optional OpenCode integration is used; its version is diagnostic. |
+| `llama-server` | An executable at the runtime path selected by the active manifest. |
+| Local models | The active model and auxiliary asset paths selected by the active manifest. |
+| Local endpoints | The host and ports selected by active manifest roles; the checkpoint values are listed above. |
 | Neural home | One existing absolute directory selected by `NEURAL_HOME`, or the default `~/.neural`; no fallback is used for an invalid override. |
 
-The launcher preserves the verified profile arguments, model selection,
-quantization, context size, batching, and speculative settings. Relocation is
-limited to explicit path environment variables; it is not a profile redesign:
+The launcher currently recognizes these host path overrides:
 
 ```text
 NEURALENGINE_LLAMA_SERVER
 NEURALENGINE_GENERAL_MODEL
-NEURALENGINE_GENERAL_MTP
 NEURALENGINE_CODE_MODEL
 NEURALENGINE_VISION_MODEL
 NEURALENGINE_VISION_MMPROJ
-NEURALENGINE_VISION_MTP
 ```
 
-Unset variables retain the current host defaults:
-
-```text
-llama-server: /home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server
-GENERAL model: /models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf
-GENERAL MTP:   /models/gguf/qwen3.6-35b-a3b/mtp/mtp-Qwen3.6-35B-A3B-Q4_0.gguf
-CODE model:    /models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf
-VISION model:  /models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf
-VISION mmproj: /models/gguf/gemma4-26b-a4b/mmproj-BF16.gguf
-VISION MTP:   /models/gguf/gemma4-26b-a4b/MTP/mtp-gemma-4-26B-A4B-it-Q8_0.gguf
-```
-
-On another equivalent host, set every required override to an absolute path
-before invoking `llm`. Do not mix artifacts from different profiles or silently
-substitute a different model. The six model paths must be regular files and
-the runtime path must be executable. Record optional SHA-256 evidence outside
-Git when an operator needs to prove artifact identity.
+Their defaults and active asset paths are defined by the current runtime and
+manifest. When relocating to another host, configure the paths there and keep
+the derived client settings consistent with the repository contract. Do not
+copy old model paths or enable MTP based on a previous baseline.
 
 ## 5. Production installation of `neural`
 
@@ -171,52 +191,41 @@ that directory first on `PATH`. `opencode-watch` accepts `OPENCODE_BIN` and
 `LLM_PATH` overrides for testing or relocation; normal use resolves `opencode`
 from `PATH` and `llm` from `$HOME/.local/bin/llm`.
 
-## 7. OpenCode config, plugin, and agent contract
+## 7. Pi, Qwen Code, and optional OpenCode integration
 
-OpenCode is a rolling external platform. The required compatibility contract is
-capability-based:
+The active Pi and Qwen Code contracts are declared in `llm-manifest.json`.
+Their user/project configuration is derived state and must be checked against
+that manifest rather than used as an independent source of expected values.
 
-- `opencode` is executable and responds to `--version`;
-- the resolved user config is valid JSON and sets
-  `default_agent` to `arch-data-engineer`;
-- the config defines these provider/model IDs:
-  `llama-general/qwen3.6-general-local`,
-  `llama-code/qwen3-coder-local`, and
-  `llama-vision/gemma4-vision-local`;
-- the model endpoints use the local ports from section 4;
-- `agents/arch-data-engineer.md` exists and is readable below the resolved
-  OpenCode config directory;
-- `plugin/llm-autostart.js` is readable, maps each exact provider/model ID to
-  `general`, `code`, or `vision`, and calls the executable launcher as
-  `llm switch <role>` through `Bun.spawnSync`;
-- the plugin and wrapper do not directly read or write the NeuralEngine Brain.
+- Pi uses the manifest's cloud provider and model; it has no local model
+  catalog or local runtime lifecycle.
+- Qwen Code is local-only, defaults to the manifest's GENERAL role, and has no
+  cloud fallback. Its role catalog and endpoints are derived from active roles.
 
-The plugin's `const LLM = "..."` value must point to the installed executable
-launcher. A sanitized configuration may use a placeholder while being
-assembled, but the placeholder must be replaced before validation. Do not copy
-the live config, plugin, or agent file without reviewing it for secrets and
-host-specific state. A minimal configuration must retain the exact IDs above;
-OpenCode's exact version and automatic update policy are not product pins.
+OpenCode is a separate rolling external client. Its user configuration and
+provider/model IDs are host-managed compatibility inputs, not the authority for
+Pi/Qwen roles or local model selection. Use `neural opencode doctor` to inspect
+the optional OpenCode integration on a host; do not copy old provider IDs from
+previous reconstruction notes into the current LLM contract.
 
-## 8. llama.cpp and model artifacts
+## 8. Local runtime and model assets
 
-The launcher requires one `llama-server` executable plus these external
-artifacts:
+`scripts/llm` is the sole local runtime manager and permits only one local
+profile to be active at a time. The selected runtime, model paths, role
+arguments, and required auxiliary assets are defined by `llm-manifest.json`;
+`scripts/llm` implements that contract. This document does not pin a parallel
+runtime configuration.
 
-| Lane | Artifacts |
-| --- | --- |
-| GENERAL | one Qwen3.6 GGUF and its MTP GGUF |
-| CODE | one Qwen3-Coder GGUF |
-| VISION | one Gemma 4 GGUF, one `mmproj` GGUF, and one MTP GGUF |
+For the 2026-10-05 checkpoint, GENERAL and CODE each require one model file;
+VISION requires one model file and its `mmproj`. No role currently requires an
+MTP file. The host-bound `MODEL_INVENTORY` check in the full fast gate verifies
+these active contract assets without starting the runtime. The repository-only
+mode skips inventory and reports it as `NOT_RUN`.
 
-The exact current-default paths and relocation variables are listed in section
-4. A reconstruction must provide all files required by the selected lanes,
-check regular-file/executable capabilities before starting, and leave the
-launcher in `STOPPED` state after validation. The repository does not provide
-the llama.cpp build, download instructions, model payloads, or a model hash
-manifest; those are operator-owned external prerequisites. Do not change the
-verified llama-server build, GPU/runtime stack, or launcher profile arguments as
-part of baseline reconstruction.
+The exact runtime build, backend, file paths, and profile parameters are
+host-specific checkpoint values. Keep them in the manifest/runtime contract
+and use the gate to detect drift. The previous baseline documented Qwen3.6/MTP
+asset paths; those are historical and must not be restored as current settings.
 
 ## 9. Selecting and restoring `NEURAL_HOME`
 
@@ -267,14 +276,15 @@ failed restore as an empty Brain.
 
 ## 10. Canonical daily entrypoint
 
-The repository baseline uses the direct installed wrapper:
+The optional OpenCode wrapper entrypoint is:
 
 ```bash
 opencode-watch
 ```
 
-It forwards the original OpenCode arguments, owns only the LLM lifecycle it
-can verify, and performs idempotent cleanup. It does not start a background
+It forwards the original OpenCode arguments and delegates local runtime
+inspection and any exact-identity shutdown to `scripts/llm`. It is a client
+wrapper, not a second local runtime manager. It does not start a background
 watcher or perform automatic OpenCode adaptation. `ow` and `neural-open` may be
 defined as optional fish convenience functions, but they are not required for
 the reproducible baseline and the repository does not modify the live fish
@@ -282,8 +292,17 @@ configuration.
 
 ## 11. Reconstruction health checks
 
-Run these checks in order after installing the selected candidate and external
-prerequisites:
+Run the static gate before host-specific checks. CI can use the repository-only
+mode without local model files; the full mode also checks the local model
+inventory. Neither mode starts a model or queries an endpoint.
+
+```bash
+scripts/llm-regression-gate fast --repo-only
+scripts/llm-regression-gate fast
+```
+
+After installing the selected candidate and external prerequisites, run the
+remaining checks in order:
 
 ```bash
 python -m py_compile /absolute/path/to/candidate/scripts/llm
@@ -296,7 +315,6 @@ llm state
 
 The expected final state is `llm state` → `STOPPED`. `neural status`,
 `neural doctor`, and `neural opencode doctor` are read-only checks. The
-OpenCode preflight reports the installed version for diagnostics but gates on
-the executable, config, model IDs, plugin, wrapper, and safety boundary rather
-than an exact version. Do not use the health sequence to start a model or to
-write the Brain.
+OpenCode preflight reports the installed version for diagnostics and gates on
+capabilities rather than a fixed version. Do not use the health sequence to
+start a model or to write the Brain.
