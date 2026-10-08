@@ -1,9 +1,11 @@
 # LLM Fast Regression Gate
 
-`scripts/llm-regression-gate fast` checks active LLM stack configuration against
-the current repository contract. It reads repository files and, in full local
-scope, checks that required host model assets are present. It does not start a
-runtime or make network requests.
+`llm-manifest.json` is the sole local model, role, endpoint, and runtime
+configuration authority. `scripts/llm` loads its runtime profiles and owns
+start, stop, switch, health, and identity behavior. Qwen and Pi settings are
+generated projections; neither client owns runtime lifecycle. `Pi` is the
+primary local/cloud harness, Qwen Code is optional compatibility support, and
+OpenCode is parked without local routes.
 
 ## Run modes
 
@@ -12,37 +14,28 @@ scripts/llm-regression-gate fast
 scripts/llm-regression-gate fast --json
 scripts/llm-regression-gate fast --repo-only
 scripts/llm-regression-gate fast --repo-only --json
+scripts/validate-llm-manifest --repo-only
+scripts/sync-llm-client-projections --check
 ```
 
-The default local mode evaluates `REPO_BOUND` and `HOST_BOUND` checks. Its
-`MODEL_INVENTORY` check verifies each active contract asset is a non-empty
-regular file, including auxiliary assets required by that contract. Missing
-host assets fail the check.
+The fast gate is static and read-only. It checks the schema, undecided
+`LOCAL_GENERAL`, `LOCAL_CODE`, and `LOCAL_VISION` assignments, explicit
+`MODEL_MAX_CTX`, `RUNTIME_CTX`, `SLOT_CTX`, and `CLIENT_EFFECTIVE_CTX` layers,
+manifest-derived client projections, lifecycle ownership, parked OpenCode
+routes, the LOCAL_CODE Qwen3.8 qualification scope, and benchmark freeze state. It does not start a model,
+query an endpoint, call a cloud model, probe a GPU, or create a listener.
 
-`--repo-only` evaluates only `REPO_BOUND` checks. It reports the host-bound
-`MODEL_INVENTORY` check as `NOT_RUN`; this mode is suitable for CI that has no
-local model files.
+`--repo-only` skips host model inventory and user-level configuration. It is
+suitable for CI without model files. Full mode checks user Qwen/Pi/OpenCode
+configuration and the host model artifacts. The gate validates local provider
+routes while preserving Pi's built-in cloud catalog and DeepSeek default.
 
-## What it checks
-
-The active role, model, endpoint, and profile expectations come from
-`llm-manifest.json`. The gate compares derived launcher, Qwen, and Pi
-configuration against that contract. It also checks the active Command Protocol
-and guard bindings and resolves references found in active configuration.
-Archived, benchmark, and review evidence does not participate in active
-reference resolution.
-
-Check types are explicit in both text and JSON output:
-
-- `REPO_BOUND` checks cover the manifest, role and endpoint matrices, host
-  configuration, lifecycle ownership configuration, Command Protocol and guard
-  bindings, and active reference resolution.
-- `HOST_BOUND` currently covers only `MODEL_INVENTORY`.
-
-The gate is static. It does not start a model server, query endpoints, call a
-cloud model, inspect runtime identity or PIDs, probe a GPU, run inference, or
-create a listener. Use a separate runtime qualification workflow for those
-checks.
+`scripts/sync-llm-client-projections` materializes the Qwen model/provider
+catalog and the Pi model allowlist from the manifest, including each route's
+context window and output-token cap. The Qwen wrapper exports the same
+manifest-derived cap as `QWEN_CODE_MAX_OUTPUT_TOKENS`; Pi projects it as
+`maxTokens`. It preserves unrelated settings and current cloud defaults. Use
+`--check` to detect drift without writing.
 
 ## Results
 
@@ -54,4 +47,6 @@ scope, duration, typed check results, and findings. Exit codes are:
 | `0` | All checks in the requested scope passed. |
 | `1` | A contract or asset check failed. |
 | `2` | The manifest or command input is invalid. |
-| `3` | A required repository input could not be read. |
+
+The separate runtime qualification workflow owns inference and benchmarks.
+This migration keeps `R2.3=NOT_RUN` and benchmarks frozen.

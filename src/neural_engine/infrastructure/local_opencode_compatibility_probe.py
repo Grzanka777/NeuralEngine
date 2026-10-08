@@ -13,7 +13,6 @@ from neural_engine.ports.opencode_compatibility import (
 
 _REQUIRED_MODELS: tuple[tuple[str, str, bool], ...] = (
     ("llama-general", "qwen3.6-general-local", True),
-    ("llama-code", "qwen3-coder-local", True),
     ("llama-vision", "gemma4-vision-local", False),
 )
 _LLM_DECLARATION = re.compile(r"const\s+LLM\s*=\s*['\"]([^'\"]+)['\"]")
@@ -85,6 +84,7 @@ class LocalOpencodeCompatibilityProbe:
             config_observation,
             self._agent_observation(config),
             *self._model_observations(config),
+            self._code_role_observation(config, plugin_text),
             plugin_observation,
             self._vision_lifecycle_observation(plugin_text, llm_path),
             self._wrapper_observation(wrapper_path),
@@ -112,7 +112,12 @@ class LocalOpencodeCompatibilityProbe:
             return None
         if result.returncode != 0:
             return None
-        output = (result.stdout or result.stderr).strip()
+        stdout_trimmed = result.stdout.strip()
+        stderr_trimmed = result.stderr.strip()
+
+        # Prefer stdout if it contains non-whitespace text, otherwise use stderr
+        output = stdout_trimmed if stdout_trimmed else stderr_trimmed
+
         if not output:
             return None
         match = _VERSION_PREFIX.search(output)
@@ -167,6 +172,47 @@ class LocalOpencodeCompatibilityProbe:
             for provider, model, critical in _REQUIRED_MODELS
         )
 
+    def _code_role_observation(
+        self,
+        config: dict[str, object],
+        plugin_text: str | None,
+    ) -> OpencodeCapabilityObservation:
+        agent_texts: list[str] = []
+        for agent_path in self._agent_directory.glob("*.md"):
+            try:
+                agent_texts.append(agent_path.read_text(encoding="utf-8"))
+            except OSError, UnicodeDecodeError:
+                continue
+        agent_definitions = config.get("agents", config.get("agent"))
+        coder_config = (
+            agent_definitions.get("coder") if isinstance(agent_definitions, dict) else None
+        )
+        coder_agent_present = isinstance(coder_config, dict) or any(
+            agent_path.stem == "coder" for agent_path in self._agent_directory.glob("*.md")
+        )
+        coder_agent_disabled = (
+            isinstance(coder_config, dict) and coder_config.get("disabled") is True
+        )
+        has_active_coder_agent = coder_agent_present and not coder_agent_disabled
+        providers = config.get("provider")
+        has_code_provider = isinstance(providers, dict) and "llama-code" in providers
+        config_text = json.dumps(config)
+        has_model_mapping = has_code_provider or any(
+            re.search(r"llama-code/\S+", text) is not None
+            for text in (config_text, *agent_texts, plugin_text or "")
+        )
+        has_mapping = has_model_mapping or has_active_coder_agent
+        return OpencodeCapabilityObservation(
+            "CODE role",
+            not has_mapping,
+            (
+                "UNFILLED/unsupported; no CODE provider or model is assigned"
+                if not has_mapping
+                else "stale CODE model mapping or enabled coder agent is configured"
+            ),
+            has_mapping,
+        )
+
     @staticmethod
     def _model_configured(config: dict[str, object], provider: str, model: str) -> bool:
         providers = config.get("provider")
@@ -199,9 +245,11 @@ class LocalOpencodeCompatibilityProbe:
         required_markers = (
             'Bun.spawnSync([LLM, "switch", role]',
             '"llama-general/qwen3.6-general-local"',
-            '"llama-code/qwen3-coder-local"',
         )
-        integration_ok = all(marker in source for marker in required_markers)
+        has_code_model_mapping = re.search(r"llama-code/\S+", source) is not None
+        integration_ok = all(marker in source for marker in required_markers) and not (
+            has_code_model_mapping
+        )
         llm_ok = llm_path is not None and llm_path.is_file() and os.access(llm_path, os.X_OK)
         return (
             source,
@@ -302,13 +350,13 @@ class LocalOpencodeLiveSmokeRunner:
         *,
         lane: str,
     ) -> tuple[bool, str]:
+        if lane == "code":
+            return False, "CODE role is UNFILLED/unsupported; no model is assigned"
+        if lane != "general":
+            return False, f"unsupported live-smoke lane: {lane}"
         if evidence.wrapper_path is None or evidence.llm_path is None:
             return False, "live smoke prerequisites are unavailable"
-        model_id = dict(evidence.model_ids).get(
-            "llama-general/qwen3.6-general-local"
-            if lane == "general"
-            else "llama-code/qwen3-coder-local"
-        )
+        model_id = dict(evidence.model_ids).get("llama-general/qwen3.6-general-local")
         if model_id is None:
             return False, f"{lane} model is not configured"
         try:
@@ -326,11 +374,7 @@ class LocalOpencodeLiveSmokeRunner:
             "run",
             "--standalone",
             "--model",
-            (
-                "llama-general/qwen3.6-general-local"
-                if lane == "general"
-                else "llama-code/qwen3-coder-local"
-            ),
+            "llama-general/qwen3.6-general-local",
             "say only: NEURALENGINE_OPENCODE_COMPAT_SMOKE_OK",
         )
         try:

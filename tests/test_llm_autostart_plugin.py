@@ -12,5 +12,5 @@ def test_local_model_plugin_routes_through_llm_switch() -> None:
     assert 'Bun.spawnSync([LLM, "switch", role]' in source
     assert "Bun.spawnSync([LLM, role]" not in source
     assert '"llama-general/qwen3.6-general-local"' in source
-    assert '"llama-code/qwen3-coder-local"' in source
+    assert '"llama-code/' not in source
     assert '"llama-vision/gemma4-vision-local"' in source

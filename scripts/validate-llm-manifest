@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only drift check for the local production LLM manifest."""
+"""Read-only authority and drift validation for the local LLM stack."""
 
 from __future__ import annotations
 
@@ -13,10 +13,17 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
+LOCAL_ROLES = ("LOCAL_GENERAL", "LOCAL_CODE", "LOCAL_VISION")
+PROFILE_BINDINGS = {
+    "current-general": "DEFAULT_PROFILE",
+    "current-code": "DEFAULT_CODE_PROFILE",
+    "current-qwen3-coder": "DEFAULT_QWEN3_CODER_PROFILE",
+    "current-vision": "DEFAULT_VISION_PROFILE",
+}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text())
+    value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"{path}: expected a JSON object")
     return value
@@ -33,20 +40,14 @@ def _load_script(path: Path, name: str) -> Any:
     return module
 
 
-def _flag_value(args: tuple[str, ...], flag: str) -> str | None:
-    return args[args.index(flag) + 1] if flag in args else None
+def _sha256(path: Path) -> str:
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
 def _expect_single_flag(
-    errors: list[str],
-    args: tuple[str, ...],
-    *,
-    label: str,
-    flag: str,
-    expected: str,
+    errors: list[str], args: tuple[str, ...], *, label: str, flag: str, expected: str
 ) -> None:
-    """Require one unambiguous option/value pair in an active command."""
-
     values = [
         args[index + 1] if index + 1 < len(args) else None
         for index, value in enumerate(args)
@@ -59,150 +60,288 @@ def _expect_single_flag(
 
 
 def _expect_single_toggle(
-    errors: list[str],
-    args: tuple[str, ...],
-    *,
-    label: str,
-    enabled: str,
-    disabled: str,
+    errors: list[str], args: tuple[str, ...], *, label: str, enabled: str, disabled: str
 ) -> None:
-    """Require one enabled toggle and reject its contradictory form."""
-
-    count = args.count(enabled)
-    if count != 1:
-        errors.append(f"{label}: expected exactly one toggle, got {count}")
+    if args.count(enabled) != 1:
+        errors.append(f"{label}: expected exactly one toggle, got {args.count(enabled)}")
     if disabled in args:
         errors.append(f"{label}: contradictory {disabled} toggle is active")
 
 
-def _check_artifact(
-    errors: list[str], label: str, path: Path, digest: str | None, check_hashes: bool
+def _walk_keys(value: Any, path: str = "") -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            current = f"{path}.{key}" if path else str(key)
+            found.append((str(key), current))
+            found.extend(_walk_keys(item, current))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found.extend(_walk_keys(item, f"{path}[{index}]"))
+    return found
+
+
+def _check_asset(
+    errors: list[str], label: str, path_value: Any, digest: Any, check_hashes: bool
 ) -> None:
+    if not isinstance(path_value, str):
+        errors.append(f"{label}: artifact path must be a string")
+        return
+    path = Path(path_value)
     if not path.is_file():
         errors.append(f"{label} missing: {path}")
     elif check_hashes:
-        if digest is None:
-            errors.append(f"{label}: SHA256 not recorded")
-        else:
-            with path.open("rb") as handle:
-                if hashlib.file_digest(handle, "sha256").hexdigest() != digest:
-                    errors.append(f"{label}: SHA256 mismatch")
+        if not isinstance(digest, str):
+            errors.append(f"{label}: SHA256 is missing")
+        elif _sha256(path) != digest:
+            errors.append(f"{label}: SHA256 mismatch")
 
 
-def _validate_client_settings(
+def _validate_runtime_and_roles(
     errors: list[str],
-    roles: dict[str, Any],
-    pi_catalog: dict[str, Any],
-    pi_settings: tuple[dict[str, Any], ...],
-    qwen_settings: tuple[dict[str, Any], ...],
-    clients: dict[str, Any] | None = None,
+    manifest: dict[str, Any],
+    launcher: Any,
+    *,
+    check_host_assets: bool,
+    check_hashes: bool,
 ) -> None:
-    """Check routing only; never report credential-bearing configuration objects."""
-    if clients is None:
-        clients = _load_json(REPO / "llm-manifest.json")["clients"]
-    pi_contract = clients["pi"]
-    qwen_contract = clients["qwen"]
-    expected_pi_provider = pi_contract.get("provider")
-    expected_pi_model = pi_contract.get("model")
-    providers = pi_catalog.get("providers", {})
-    if not isinstance(providers, dict):
-        errors.append("Pi provider catalog drift")
-        providers = {}
-    if expected_pi_provider is not None and set(providers) - {expected_pi_provider}:
-        errors.append("Pi contains provider entries outside the manifest contract")
-    for provider in providers.values():
-        models = provider.get("models", []) if isinstance(provider, dict) else None
-        if not isinstance(models, list) or any(
-            not isinstance(model, dict) or model.get("id") != expected_pi_model for model in models
+    models = manifest.get("models")
+    roles = manifest.get("roles")
+    profiles = manifest.get("runtime_profiles")
+    if not isinstance(models, dict) or not models:
+        errors.append("models: expected a non-empty object")
+        models = {}
+    if not isinstance(roles, dict) or set(roles) != set(LOCAL_ROLES):
+        errors.append("roles: expected exactly LOCAL_GENERAL, LOCAL_CODE, and LOCAL_VISION")
+        roles = roles if isinstance(roles, dict) else {}
+    if not isinstance(profiles, dict) or set(profiles) != set(PROFILE_BINDINGS):
+        errors.append(
+            "runtime_profiles: expected the four current deployment compatibility profiles"
+        )
+        profiles = profiles if isinstance(profiles, dict) else {}
+
+    expected_context_keys = {"model_max_ctx", "runtime_ctx", "slot_ctx", "client_effective_ctx"}
+    for role_name in LOCAL_ROLES:
+        role = roles.get(role_name)
+        if not isinstance(role, dict):
+            continue
+        if role.get("assignment") != "UNDECIDED":
+            errors.append(f"{role_name}: final assignment must remain UNDECIDED")
+        profile_name = role.get("current_deployment_profile")
+        expected_projection = (
+            "QUALIFIED_LOCAL_CODE_CANONICAL"
+            if role_name == "LOCAL_CODE"
+            else "CURRENT_DEPLOYMENT_COMPATIBILITY_ONLY"
+        )
+        if role.get("projection_status") != expected_projection:
+            errors.append(f"{role_name}: projection status must be {expected_projection}")
+        if profile_name not in profiles:
+            errors.append(f"{role_name}: unknown current deployment profile {profile_name!r}")
+
+    for profile_name, binding in PROFILE_BINDINGS.items():
+        profile = profiles.get(profile_name)
+        if not isinstance(profile, dict):
+            continue
+        model = models.get(profile.get("model_ref"))
+        if not isinstance(model, dict):
+            errors.append(f"{profile_name}: model_ref does not resolve")
+            continue
+        record = getattr(launcher, binding, None)
+        if record is None:
+            errors.append(f"{profile_name}: scripts/llm has no manifest-derived runtime binding")
+            continue
+        endpoint = profile.get("endpoint", {})
+        runtime = profile.get("runtime", {})
+        if str(record.model) != model.get("artifact_path"):
+            errors.append(f"{profile_name}: launcher model does not match manifest inventory")
+        if str(record.runtime) != runtime.get("binary"):
+            errors.append(f"{profile_name}: launcher runtime does not match manifest")
+        if getattr(record, "runtime_kind", None) != runtime.get("kind", "binary"):
+            errors.append(f"{profile_name}: launcher runtime kind does not match manifest")
+        for field in ("runtime_image", "runtime_image_digest", "container_name"):
+            record_value = getattr(record, field, None)
+            manifest_field = {
+                "runtime_image": "image",
+                "runtime_image_digest": "image_digest",
+                "container_name": "container_name",
+            }[field]
+            manifest_value = runtime.get(manifest_field)
+            if record_value != manifest_value:
+                errors.append(f"{profile_name}: launcher {field} does not match manifest")
+        if record.host != endpoint.get("host") or record.port != endpoint.get("port"):
+            errors.append(f"{profile_name}: launcher endpoint does not match manifest")
+        if callable(getattr(record, "endpoint", None)):
+            expected_endpoint = (
+                f"http://{endpoint.get('host')}:{endpoint.get('port')}{endpoint.get('path')}"
+            )
+            if record.endpoint() != expected_endpoint:
+                errors.append(f"{profile_name}: endpoint projection drift")
+        args = tuple(record.arguments())
+        expected_args = tuple(
+            argument.format_map(
+                {
+                    "model_path": str(record.model),
+                    "projector_path": str(record.mmproj or ""),
+                    "device": record.device,
+                    "runtime_ctx": str(record.runtime_ctx),
+                    "host": record.host,
+                    "port": str(record.port),
+                }
+            )
+            for argument in profile.get("arguments", [])
+        )
+        if args != expected_args:
+            errors.append(f"{profile_name}: launcher arguments are not manifest-derived")
+
+        layers = profile.get("context_layers")
+        if not isinstance(layers, dict) or set(layers) != expected_context_keys:
+            errors.append(f"{profile_name}: context layer schema is incomplete or ambiguous")
+            continue
+        model_ctx = layers.get("model_max_ctx")
+        if not isinstance(model_ctx, dict) or model_ctx.get("model_ref") != profile.get(
+            "model_ref"
         ):
-            errors.append("Pi contains model entries outside the manifest contract")
-    for settings in pi_settings:
-        if settings.get("defaultProvider") != expected_pi_provider:
-            errors.append("Pi default provider drift")
-        if settings.get("defaultModel") != expected_pi_model:
-            errors.append("Pi default model drift")
-    expected = {
-        role["model_path"]: role
-        for role in roles.values()
-        if role.get("enabled") is True and role.get("state") == "ACTIVE"
+            errors.append(f"{profile_name}: model_max_ctx must reference model inventory metadata")
+            continue
+        model_max = model.get("model_max_ctx", {}).get("tokens")
+        runtime_ctx, slot_ctx, client_ctx = (
+            layers.get("runtime_ctx"),
+            layers.get("slot_ctx"),
+            layers.get("client_effective_ctx"),
+        )
+        if any(
+            type(value) is not int or value <= 0
+            for value in (model_max, runtime_ctx, slot_ctx, client_ctx)
+        ):
+            errors.append(f"{profile_name}: context layers must be positive integer token counts")
+        elif client_ctx > min(model_max, runtime_ctx, slot_ctx):
+            errors.append(f"{profile_name}: client_effective_ctx exceeds a capacity layer")
+        max_output_tokens = profile.get("max_output_tokens")
+        if max_output_tokens is not None and (
+            type(max_output_tokens) is not int or max_output_tokens <= 0
+        ):
+            errors.append(f"{profile_name}: max_output_tokens must be a positive integer or null")
+
+        if check_host_assets:
+            _check_asset(
+                errors,
+                f"{profile_name} model",
+                model.get("artifact_path"),
+                model.get("sha256"),
+                check_hashes,
+            )
+            _check_asset(errors, f"{profile_name} runtime", runtime.get("binary"), None, False)
+            projector_ref = profile.get("projector_ref")
+            if projector_ref is not None:
+                projector = models.get(projector_ref, {})
+                _check_asset(
+                    errors,
+                    f"{profile_name} projector",
+                    projector.get("artifact_path"),
+                    projector.get("sha256"),
+                    check_hashes,
+                )
+
+
+def _validate_qwen_projection(errors: list[str], path: Path, manifest: dict[str, Any]) -> None:
+    settings = _load_json(path)
+    routes = []
+    for role_name in manifest["clients"]["qwen"]["local_roles"]:
+        role = manifest["roles"][role_name]
+        profile = manifest["runtime_profiles"][role["current_deployment_profile"]]
+        model = manifest["models"][profile["model_ref"]]
+        endpoint = profile["endpoint"]
+        routes.append(
+            {
+                "id": model["model_id"],
+                "name": role_name,
+                "description": (
+                    "Current deployment compatibility projection; "
+                    "role assignment remains undecided."
+                ),
+                "envKey": "QWEN_LOCAL_API_KEY",
+                "baseUrl": f"http://{endpoint['host']}:{endpoint['port']}{endpoint['path']}",
+                "generationConfig": {
+                    "contextWindowSize": profile["context_layers"]["client_effective_ctx"],
+                    "maxTokens": profile["max_output_tokens"],
+                    **({"modalities": {"image": True}} if model["kind"] == "vision" else {}),
+                },
+            }
+        )
+    providers = settings.get("modelProviders", {})
+    if not isinstance(providers, dict) or providers.get("openai") != routes:
+        errors.append(f"Qwen manifest route projection drift: {path}")
+    default = manifest["roles"][manifest["clients"]["qwen"]["default_role"]]
+    deployment = manifest["runtime_profiles"][default["current_deployment_profile"]]
+    model = manifest["models"][deployment["model_ref"]]
+    base = settings.get("model", {})
+    if isinstance(base, dict):
+        if base.get("name") != model["model_id"]:
+            errors.append(f"Qwen default model projection drift: {path}")
+        endpoint = deployment["endpoint"]
+        if base.get("baseUrl") != f"http://{endpoint['host']}:{endpoint['port']}{endpoint['path']}":
+            errors.append(f"Qwen default endpoint projection drift: {path}")
+    elif base != model["model_id"]:
+        errors.append(f"Qwen default model projection drift: {path}")
+    if settings.get("fallbackModel") and not manifest["clients"]["qwen"].get("cloud_fallback"):
+        errors.append(f"Qwen cloud fallback drift: {path}")
+
+
+def _validate_host_configs(errors: list[str], manifest: dict[str, Any], repo_root: Path) -> None:
+    home = Path.home()
+    for path in (repo_root / ".qwen/settings.json", home / ".qwen/settings.json"):
+        _validate_qwen_projection(errors, path, manifest)
+
+    pi = manifest["clients"]["pi"]
+    provider = pi["provider"]
+    expected_local = {
+        f"{provider}/{manifest['models'][manifest['runtime_profiles'][profile_name]['model_ref']]['model_id']}"
+        for profile_name in pi["local_profiles"]
     }
-    for settings in qwen_settings:
-        security = settings.get("security", {})
-        auth = security.get("auth", {}) if isinstance(security, dict) else {}
-        auth_type = auth.get("selectedType") if isinstance(auth, dict) else None
-        advisor = settings.get("advisorModel")
-        if advisor and (not isinstance(advisor, str) or advisor not in expected):
-            errors.append("Qwen contains non-local advisor routing")
-        if not qwen_contract.get("cloud_fallback", True) and settings.get("fallbackModel"):
-            errors.append("Qwen cloud fallback drift")
-        default_model = settings.get("model", {})
-        if isinstance(default_model, dict) and "baseUrl" in default_model:
-            default_role = qwen_contract["default_role"]
-            default = roles.get(default_role, {})
-            endpoint = f"http://{default.get('host')}:{default.get('port')}/v1"
-            if default_model["baseUrl"] != endpoint:
-                errors.append("Qwen default endpoint drift")
-        provider_map = settings.get("modelProviders", {})
-        if not isinstance(provider_map, dict):
-            errors.append("Qwen provider catalog drift")
-            provider_map = {}
-        all_models = [
-            model
-            for models in provider_map.values()
-            if isinstance(models, list)
-            for model in models
-            if isinstance(model, dict)
-        ]
-        if qwen_contract.get("local_only"):
-            actual_ids = [model.get("id") for model in all_models]
-            if set(actual_ids) != set(expected) or len(actual_ids) != len(expected):
-                errors.append("Qwen contains cloud provider routing")
-        selected_types = {
-            provider_name
-            for provider_name, models in provider_map.items()
-            if isinstance(models, list)
-            and models
-            and all(model.get("id") in expected for model in models if isinstance(model, dict))
-            and all(isinstance(model, dict) and model.get("id") in expected for model in models)
-        }
-        if (
-            auth_type is not None
-            and qwen_contract.get("local_only")
-            and auth_type not in selected_types
+    for path in (repo_root / ".pi/settings.json", home / ".pi/agent/settings.json"):
+        settings = _load_json(path)
+        if settings.get("defaultProvider") != pi["cloud_default_provider"]:
+            errors.append(f"Pi cloud default provider drift: {path}")
+        if settings.get("defaultModel") != pi["cloud_default_model"]:
+            errors.append(f"Pi cloud default model drift: {path}")
+        enabled = settings.get("enabledModels", [])
+        if not isinstance(enabled, list) or not expected_local.issubset(set(enabled)):
+            errors.append(f"Pi local route allowlist drift: {path}")
+        elif {item for item in enabled if item.startswith(f"{provider}/")} != expected_local:
+            errors.append(f"Pi local route contains retired provider IDs: {path}")
+        if f"{pi['cloud_default_provider']}/{pi['cloud_default_model']}" not in enabled:
+            errors.append(f"Pi cloud route is not enabled: {path}")
+
+    models_path = home / ".pi/agent/models.json"
+    if models_path.is_file():
+        models_config = _load_json(models_path)
+        if provider in models_config.get("providers", {}):
+            errors.append(
+                "Pi contains a duplicate local provider route outside the manifest extension"
+            )
+
+    opencode_path = home / ".config/opencode/opencode.json"
+    if opencode_path.is_file():
+        config = _load_json(opencode_path)
+        providers = config.get("provider", {})
+        if any(name.startswith("llama-") for name in providers):
+            errors.append("OpenCode local provider routes remain active")
+        values = [config.get("model")]
+        values.extend(
+            item.get("model")
+            for item in config.get("agents", {}).values()
+            if isinstance(item, dict)
+        )
+        if any(isinstance(value, str) and value.startswith("llama-") for value in values):
+            errors.append("OpenCode local model selection remains active")
+
+    fish = home / ".config/fish/config.fish"
+    if fish.is_file():
+        source = fish.read_text(encoding="utf-8")
+        if any(
+            token in source for token in ("llama-general/", "llama-code/", "llm start", "llm stop")
         ):
-            errors.append("Qwen auth routing drift")
-        for model in all_models:
-            role = expected.get(model.get("id"))
-            if role is None:
-                continue
-            endpoint = f"http://{role['host']}:{role['port']}/v1"
-            if model.get("baseUrl") != endpoint:
-                errors.append("Qwen local endpoint drift")
-            generation = model.get("generationConfig", {})
-            if not isinstance(generation, dict) or generation.get("contextWindowSize") != role.get(
-                "context"
-            ):
-                errors.append("Qwen local context drift")
-        model = settings.get("model", {})
-        if isinstance(model, dict):
-            model = model.get("name")
-        default_role = qwen_contract.get("default_role")
-        if model != roles.get(default_role, {}).get("model_path"):
-            errors.append("Qwen default model drift")
-
-
-def _profile_for_role(launcher: Any, role: str, default_role: str) -> Any | None:
-    """Resolve the runtime profile exposed by scripts/llm for one contract role."""
-
-    named = getattr(launcher, f"DEFAULT_{role}_PROFILE", None)
-    if named is not None:
-        return named
-    default = getattr(launcher, "DEFAULT_PROFILE", None)
-    if role == default_role or (
-        default is not None and type(default).__name__.removesuffix("Profile").upper() == role
-    ):
-        return default
-    return None
+            errors.append("Fish config retains OpenCode local route or lifecycle integration")
 
 
 def validate(
@@ -214,183 +353,113 @@ def validate(
     repo_root: Path = REPO,
 ) -> list[str]:
     manifest = _load_json(manifest_path)
-    roles = manifest["roles"]
-    clients = manifest["clients"]
     errors: list[str] = []
+    if manifest.get("schema_version") != 2:
+        errors.append("schema: expected version 2")
+    authority = manifest.get("authority", {})
+    for key in ("model_inventory", "runtime_profiles", "endpoints", "roles"):
+        if authority.get(key) != "llm-manifest.json":
+            errors.append(f"authority.{key}: must be llm-manifest.json")
+    if (
+        authority.get("lifecycle_owner") != "scripts/llm"
+        or manifest.get("runtime_manager") != "scripts/llm"
+    ):
+        errors.append("lifecycle owner must be scripts/llm")
+    harness = manifest.get("client_harness", {})
+    if harness.get("primary_local_harness") != "Pi":
+        errors.append("primary local harness must be Pi")
+    if harness.get("qwen_code") != "OPTIONAL_COMPATIBILITY_QWEN_SPECIALIST":
+        errors.append("Qwen Code must remain an optional compatibility specialist")
+    if harness.get("opencode") != "PARKED":
+        errors.append("OpenCode must remain parked")
+    if "PATCH" in manifest.get("roles", {}):
+        errors.append("PATCH must not exist as a local model role")
+    if any(key.lower() in {"context", "ctx"} for key, _ in _walk_keys(manifest)):
+        errors.append("manifest contains an ambiguous context or ctx field")
 
-    def expect(label: str, actual: Any, expected: Any) -> None:
-        if actual != expected:
-            errors.append(f"{label}: expected {expected!r}, got {actual!r}")
+    clients = manifest.get("clients", {})
+    for client_name in ("qwen", "pi"):
+        client = clients.get(client_name, {})
+        if client.get("local_roles") != list(LOCAL_ROLES):
+            errors.append(f"clients.{client_name}.local_roles drift")
+        if client.get("local_lifecycle") is not False:
+            errors.append(f"clients.{client_name} must not own local lifecycle")
+    if clients.get("qwen", {}).get("default_role") != "LOCAL_GENERAL":
+        errors.append("Qwen default role drift")
+    if (
+        clients.get("pi", {}).get("cloud_default_provider") != "deepseek"
+        or clients.get("pi", {}).get("cloud_default_model") != "deepseek-flash"
+    ):
+        errors.append("Pi cloud capability/default drift")
+    if clients.get("pi", {}).get("local_profiles") != [
+        "current-code",
+        "current-general",
+        "current-qwen3-coder",
+        "current-vision",
+    ]:
+        errors.append("Pi local profile projection drift")
+    if (
+        clients.get("opencode", {}).get("status") != "PARKED"
+        or clients.get("opencode", {}).get("local_roles") != []
+    ):
+        errors.append("OpenCode must remain parked without local routes")
+    challenger = manifest.get("challengers", {}).get("qwen38", {})
+    if (
+        challenger.get("status") != "QUALIFIED"
+        or challenger.get("eligible_for_role_assignment") is not True
+        or challenger.get("qualified_roles") != ["LOCAL_CODE"]
+    ):
+        errors.append("Qwen3.8 qualification must be scoped to LOCAL_CODE")
+    if manifest.get("roles", {}).get("LOCAL_CODE", {}).get("projection_status") != (
+        "QUALIFIED_LOCAL_CODE_CANONICAL"
+    ):
+        errors.append("LOCAL_CODE must project the qualified Qwen3.8 route")
+    if manifest.get("runtime_profiles", {}).get("current-code", {}).get("model_ref") != (
+        "qwen38-halogen"
+    ):
+        errors.append("current-code must bind qwen38-halogen")
+    qualification = challenger.get("qualification", {})
+    if qualification.get("R2.3") != "NOT_RUN" or qualification.get("benchmarks_frozen") is not True:
+        errors.append("benchmark freeze or R2.3 state drift")
 
-    expect("schema", manifest["schema_version"], 1)
-    expect("runtime manager", manifest["runtime_manager"], "scripts/llm")
-    if not isinstance(roles, dict) or not roles:
-        errors.append("roles: expected a non-empty object")
-        roles = {}
-    if not isinstance(clients, dict) or not {"pi", "qwen"}.issubset(clients):
-        errors.append("clients: expected Pi and Qwen contracts")
-        clients = {"pi": {}, "qwen": {}}
-    default_role = clients.get("qwen", {}).get("default_role", "")
-    launcher_path = repo_root / "scripts/llm"
-    launcher = _load_script(launcher_path, "_neuralengine_llm_manifest")
-    seen_profiles: set[str] = set()
-    for name, role in roles.items():
-        if not isinstance(role, dict):
-            errors.append(f"{name} role: expected an object")
-            continue
-        profile = _profile_for_role(launcher, name, default_role)
-        active = role.get("enabled") is True and role.get("state") == "ACTIVE"
-        if not active:
-            if profile is not None:
-                errors.append(f"{name} profile: inactive role has an active launcher binding")
-            continue
-        if profile is None:
-            errors.append(f"{name} profile: no active launcher binding")
-            continue
-        seen_profiles.add(name)
-        role = roles[name]
-        args = tuple(str(arg) for arg in profile.arguments())
-        expect(f"{name} model", str(profile.model), role.get("model_path"))
-        expect(f"{name} model ID", role.get("expected_v1_models_id"), role.get("model_path"))
-        expect(f"{name} runtime", str(profile.runtime), role.get("runtime_binary"))
-        expect(f"{name} host", profile.host, role.get("host"))
-        expect(f"{name} port", profile.port, role.get("port"))
-        if callable(getattr(profile, "endpoint", None)):
-            expect(
-                f"{name} endpoint",
-                profile.endpoint(),
-                f"http://{role.get('host')}:{role.get('port')}/v1",
-            )
-        expect(
-            f"{name} runtime build",
-            str(Path(profile.runtime).parent.parent),
-            role.get("runtime_build"),
-        )
-        for field, flag in (
-            ("context", "-c"),
-            ("batch", "-b"),
-            ("ubatch", "-ub"),
-            ("ngl", "-ngl"),
-            ("device", "-dev"),
-            ("flash_attention", "-fa"),
-            ("parallel", "--parallel"),
-        ):
-            if field not in role:
-                errors.append(f"{name} manifest {field}: required profile field is missing")
-                continue
-            _expect_single_flag(
-                errors, args, label=f"{name} {field}", flag=flag, expected=str(role[field])
-            )
-        if "jinja" not in role or not isinstance(role["jinja"], bool):
-            errors.append(f"{name} manifest jinja: expected a boolean profile field")
-        else:
-            enabled = "--jinja" if role["jinja"] else "--no-jinja"
-            disabled = "--no-jinja" if role["jinja"] else "--jinja"
-            _expect_single_toggle(
-                errors, args, label=f"{name} jinja", enabled=enabled, disabled=disabled
-            )
-        if "reasoning" in role:
-            _expect_single_flag(
-                errors,
-                args,
-                label=f"{name} reasoning",
-                flag="--reasoning",
-                expected=str(role["reasoning"]),
-            )
-        if "mmproj_path" in role:
-            _expect_single_flag(
-                errors, args, label=f"{name} mmproj", flag="--mmproj", expected=role["mmproj_path"]
-            )
-        elif "--mmproj" in args:
-            errors.append(f"{name} unexpectedly enables mmproj")
-        mtp = role.get("mtp", {})
-        if not isinstance(mtp, dict) or not isinstance(mtp.get("enabled"), bool):
-            errors.append(f"{name} MTP: expected an enabled boolean in the manifest")
-        elif not mtp["enabled"] and any(arg.startswith("--spec-") for arg in args):
-            errors.append(f"{name} enables MTP outside the manifest contract")
-        elif mtp["enabled"]:
-            _expect_single_flag(
-                errors,
-                args,
-                label=f"{name} MTP path",
-                flag="--spec-draft-model",
-                expected=str(mtp.get("path", "")),
-            )
-        if check_host_assets:
-            if not isinstance(role.get("model_path"), str):
-                errors.append(f"{name} model path: required asset path is missing")
-                continue
-            _check_artifact(
-                errors,
-                f"{name} model",
-                Path(role["model_path"]),
-                role.get("model_sha256"),
-                check_hashes,
-            )
-            _check_artifact(errors, f"{name} runtime", Path(role["runtime_binary"]), None, False)
-            if "mmproj_path" in role:
-                _check_artifact(
-                    errors,
-                    f"{name} mmproj",
-                    Path(role["mmproj_path"]),
-                    role.get("mmproj_sha256"),
-                    check_hashes,
-                )
-            if mtp.get("enabled"):
-                _check_artifact(
-                    errors,
-                    f"{name} MTP",
-                    Path(mtp["path"]),
-                    mtp.get("sha256"),
-                    check_hashes,
-                )
-        if name in clients.get("qwen", {}).get("contexts", {}):
-            expect(
-                f"Qwen {name} context",
-                clients["qwen"]["contexts"][name],
-                role.get("context"),
-            )
-    for name, profile_constant in vars(launcher).items():
-        if name == "DEFAULT_PROFILE":
-            profile_role = default_role
-        elif name.startswith("DEFAULT_") and name.endswith("_PROFILE"):
-            profile_role = name.removeprefix("DEFAULT_").removesuffix("_PROFILE")
-        else:
-            continue
-        if (
-            callable(getattr(profile_constant, "arguments", None))
-            and profile_role not in seen_profiles
-        ):
-            errors.append(f"{profile_role} launcher profile has no manifest role")
+    manager_path = repo_root / "scripts/llm"
+    launcher = _load_script(manager_path, "_neuralengine_manifest_validation")
+    _validate_runtime_and_roles(
+        errors, manifest, launcher, check_host_assets=check_host_assets, check_hashes=check_hashes
+    )
     if check_host:
+        _validate_host_configs(errors, manifest, repo_root)
         installed = Path.home() / ".local/bin/llm"
-        expect("installed launcher", installed.resolve(), repo_root / "scripts/llm")
-        if not installed.is_symlink():
-            errors.append("installed llm is not a symlink")
-        _validate_client_settings(
-            errors,
-            roles,
-            _load_json(Path.home() / ".pi/agent/models.json"),
-            (
-                _load_json(Path.home() / ".pi/agent/settings.json"),
-                _load_json(repo_root / ".pi/settings.json"),
-            ),
-            (
-                _load_json(Path.home() / ".qwen/settings.json"),
-                _load_json(repo_root / ".qwen/settings.json"),
-            ),
-            clients,
-        )
+        if not installed.is_file() or _sha256(installed) != _sha256(manager_path):
+            errors.append("installed llm differs from scripts/llm")
+        if not installed.stat().st_mode & 0o111:
+            errors.append("installed llm is not executable")
+
+    qwen_wrapper = (repo_root / "scripts/qwen-role.fish").read_text(encoding="utf-8")
+    if "llm start" in qwen_wrapper or "llm stop" in qwen_wrapper or "127.0.0.1:" in qwen_wrapper:
+        errors.append("Qwen wrapper owns lifecycle or duplicates an endpoint")
+    pi_extension = (repo_root / "integrations/pi/extensions/local-model-projection.ts").read_text(
+        encoding="utf-8"
+    )
+    if any(
+        token in pi_extension
+        for token in ("child_process", "llm start", "llm stop", "18080", "18081", "18082")
+    ):
+        errors.append("Pi extension owns lifecycle or duplicates an endpoint")
+    opencode_wrapper = (repo_root / "scripts/opencode-watch").read_text(encoding="utf-8")
+    if "llm start" in opencode_wrapper or "llm stop" in opencode_wrapper:
+        errors.append("OpenCode wrapper retains LLM lifecycle behavior")
     return errors
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=REPO / "llm-manifest.json")
-    parser.add_argument("--hash", action="store_true", help="rehash the GGUF files")
+    parser.add_argument("--hash", action="store_true", help="rehash current GGUF assets")
+    parser.add_argument("--repo-only", action="store_true", help="skip host config checks")
     args = parser.parse_args()
     try:
-        errors = validate(args.manifest, check_hashes=args.hash)
+        errors = validate(args.manifest, check_hashes=args.hash, check_host=not args.repo_only)
     except (OSError, KeyError, IndexError, TypeError, ValueError, RuntimeError) as error:
         print(f"LLM manifest validation failed: {error}", file=sys.stderr)
         return 1

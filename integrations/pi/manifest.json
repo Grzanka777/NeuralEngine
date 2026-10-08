@@ -2,10 +2,10 @@
   "version": 1,
   "resources": [
     {
-      "name": "deepseek-only",
+      "name": "local-model-projection",
       "scope": "GLOBAL",
-      "source": "integrations/pi/extensions/deepseek-only.ts",
-      "destination": "extensions/deepseek-only.ts"
+      "source": "integrations/pi/extensions/local-model-projection.ts",
+      "destination": "extensions/local-model-projection.ts"
     },
     {
       "name": "command-protocol",

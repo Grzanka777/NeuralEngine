@@ -3,6 +3,10 @@
   "defaultModel": "deepseek-flash",
   "defaultThinkingLevel": "off",
   "enabledModels": [
-    "deepseek/deepseek-flash"
+    "deepseek/deepseek-flash",
+    "neuralengine-local/qwen3.8-27b",
+    "neuralengine-local//models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
+    "neuralengine-local//models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf",
+    "neuralengine-local//models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"
   ]
 }

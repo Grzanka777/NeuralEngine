@@ -1,1594 +1,301 @@
 #!/usr/bin/env python3
-"""Static, read-only regression gate for the active local LLM contract."""
+"""Static, read-only regression gate for the manifest-driven local LLM stack."""
 
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-import os
-import re
-import stat
 import sys
 import time
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 REPO = Path(__file__).resolve().parent.parent
 CHECKS = (
     ("MANIFEST", "REPO_BOUND"),
-    ("ROLE_MATRIX", "REPO_BOUND"),
-    ("ENDPOINT_MATRIX", "REPO_BOUND"),
-    ("HOST_CONTRACT_CONFIG", "REPO_BOUND"),
-    ("LIFECYCLE_CONFIG", "REPO_BOUND"),
-    ("COMMAND_PROTOCOL_BINDING", "REPO_BOUND"),
-    ("GUARD_BINDING", "REPO_BOUND"),
-    ("ACTIVE_REFERENCE_RESOLUTION", "REPO_BOUND"),
+    ("ROLE_SCHEMA", "REPO_BOUND"),
+    ("ENDPOINT_PROJECTION", "REPO_BOUND"),
+    ("CLIENT_PROJECTION", "REPO_BOUND"),
+    ("LIFECYCLE_OWNERSHIP", "REPO_BOUND"),
+    ("OPENCODE_PARKED", "REPO_BOUND"),
     ("MODEL_INVENTORY", "HOST_BOUND"),
 )
-PROTOCOL_FILES = (
-    "COMMAND_CORE_v1.2.md",
-    "COMMAND_PROTOCOL_v1.2.md",
-    "ENGINEERING_WORKFLOW_v1.1.md",
-)
-PATH_OVERRIDE_NAMES = (
-    "NEURALENGINE_GENERAL_MODEL",
-    "NEURALENGINE_CODE_MODEL",
-    "NEURALENGINE_VISION_MODEL",
-    "NEURALENGINE_VISION_MMPROJ",
-    "NEURALENGINE_LLAMA_SERVER",
-)
-ROLE_BINDING = re.compile(
-    r"__qwen_profile_run\s+([A-Za-z0-9_-]+)\s+(\S+)\s+(\d+)\s+([A-Za-z0-9_-]+)"
-)
-QWEN_SHORTCUT_ROLES = {"qg": "GENERAL", "qc": "CODE", "qv": "VISION"}
-AGENT_MODEL = re.compile(r'^model:\s*["\']?[^:\s"\']+:([^\s"\']+)["\']?\s*$', re.MULTILINE)
-AGENT_ROLE = re.compile(r"^NEURALENGINE_ROLE=([A-Za-z0-9_-]+)\s*$", re.MULTILINE)
-
-
-class InvalidInput(ValueError):
-    """The canonical manifest or command input is malformed."""
-
-
-class InfrastructureError(RuntimeError):
-    """A repository input could not be read for reasons other than absence."""
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as error:
-        raise InvalidInput(f"required authority file is missing: {path}") from error
-    except json.JSONDecodeError as error:
-        raise InvalidInput(f"invalid JSON in authority file: {path}") from error
-    except OSError as error:
-        raise InfrastructureError(f"cannot read authority file: {path}") from error
+    value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
-        raise InvalidInput(f"authority file must contain a JSON object: {path}")
+        raise ValueError(f"expected a JSON object: {path}")
     return value
 
 
-def _read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except FileNotFoundError as error:
-        raise FileNotFoundError(path) from error
-    except OSError as error:
-        raise InfrastructureError(f"cannot read repository file: {path}") from error
-
-
-def _load_validator(root: Path) -> Any:
-    path = root / "scripts/validate-llm-manifest"
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    loader = SourceFileLoader("neuralengine_llm_manifest_validator", str(path))
+def _load_module(path: Path, name: str) -> Any:
+    loader = SourceFileLoader(name, str(path))
     spec = spec_from_loader(loader.name, loader)
     if spec is None:
-        raise InfrastructureError(f"cannot load validator: {path}")
+        raise RuntimeError(f"cannot load {path}")
     module = module_from_spec(spec)
     sys.modules[spec.name] = module
     loader.exec_module(module)
     return module
 
 
-def _new_report(repo_only: bool) -> dict[str, Any]:
-    scope = ["REPO_BOUND"] if repo_only else ["REPO_BOUND", "HOST_BOUND"]
-    checks = {
-        name: {
-            "type": check_type,
-            "status": "NOT_RUN",
-        }
-        for name, check_type in CHECKS
-    }
-    return {
-        "status": "PASS",
-        "mode": "fast",
-        "scope": scope,
-        "duration_ms": 0,
-        "checks": checks,
-        "findings": [],
-    }
-
-
-def _add_finding(
-    report: dict[str, Any],
-    check: str,
-    code: str,
-    message: str,
-    *,
-    role: str | None = None,
-    source: str | None = None,
-    location: str | None = None,
-) -> None:
+def _finding(report: dict[str, Any], check: str, code: str, message: str, source: str) -> None:
     report["checks"][check]["status"] = "FAIL"
-    finding: dict[str, Any] = {
-        "code": code,
-        "check": check,
-        "type": report["checks"][check]["type"],
-        "message": message,
-    }
-    if role is not None:
-        finding["role"] = role
-    if source is not None:
-        finding["source"] = source
-    if location is not None:
-        finding["location"] = location
-    report["findings"].append(finding)
-
-
-def _mark_pass(report: dict[str, Any], *checks: str) -> None:
-    for check in checks:
-        if report["checks"][check]["status"] == "NOT_RUN":
-            report["checks"][check]["status"] = "PASS"
-
-
-def _validate_manifest_shape(manifest: dict[str, Any]) -> None:
-    if type(manifest.get("schema_version")) is not int or manifest.get("schema_version") != 1:
-        raise InvalidInput("unsupported or missing manifest schema_version")
-    if not isinstance(manifest.get("roles"), dict) or not manifest["roles"]:
-        raise InvalidInput("manifest roles must be a non-empty object")
-    clients = manifest.get("clients")
-    if not isinstance(clients, dict) or not isinstance(clients.get("pi"), dict):
-        raise InvalidInput("manifest clients.pi must be an object")
-    qwen = clients.get("qwen")
-    if not isinstance(qwen, dict):
-        raise InvalidInput("manifest clients.qwen must be an object")
-    for key in ("provider", "model", "local_lifecycle"):
-        if key not in clients["pi"]:
-            raise InvalidInput(f"manifest clients.pi is missing {key}")
-    if (
-        not isinstance(clients["pi"].get("provider"), str)
-        or not isinstance(clients["pi"].get("model"), str)
-        or not isinstance(clients["pi"].get("local_lifecycle"), bool)
-    ):
-        raise InvalidInput("manifest clients.pi has an invalid field type")
-    for key in ("local_only", "default_role", "cloud_fallback", "contexts"):
-        if key not in qwen:
-            raise InvalidInput(f"manifest clients.qwen is missing {key}")
-    if not isinstance(qwen["contexts"], dict):
-        raise InvalidInput("manifest clients.qwen.contexts must be an object")
-    if (
-        not isinstance(qwen["local_only"], bool)
-        or not isinstance(qwen["default_role"], str)
-        or not isinstance(qwen["cloud_fallback"], bool)
-    ):
-        raise InvalidInput("manifest clients.qwen has an invalid field type")
-    required_role_fields = {
-        "enabled",
-        "state",
-        "model_path",
-        "expected_v1_models_id",
-        "runtime_binary",
-        "runtime_build",
-        "backend",
-        "device",
-        "host",
-        "port",
-        "context",
-        "batch",
-        "ubatch",
-        "ngl",
-        "flash_attention",
-        "jinja",
-        "parallel",
-        "mtp",
-    }
-    for role_name, role in manifest["roles"].items():
-        if not isinstance(role_name, str) or not isinstance(role, dict):
-            raise InvalidInput("every manifest role must be a named object")
-        missing = sorted(required_role_fields - set(role))
-        if missing:
-            raise InvalidInput(f"manifest role {role_name} is missing required profile fields")
-        for field in (
-            "model_path",
-            "expected_v1_models_id",
-            "runtime_binary",
-            "runtime_build",
-            "host",
-        ):
-            if not isinstance(role[field], str) or not role[field]:
-                raise InvalidInput(f"manifest role {role_name} has an invalid {field}")
-        if not isinstance(role["enabled"], bool) or not isinstance(role["jinja"], bool):
-            raise InvalidInput(f"manifest role {role_name} has an invalid boolean field")
-        if (
-            isinstance(role["port"], bool)
-            or not isinstance(role["port"], int)
-            or not 1 <= role["port"] <= 65535
-        ):
-            raise InvalidInput(f"manifest role {role_name} has an invalid port")
-        if not isinstance(role["mtp"], dict) or not isinstance(role["mtp"].get("enabled"), bool):
-            raise InvalidInput(f"manifest role {role_name} has an invalid MTP contract")
-        if "mmproj_path" in role and not isinstance(role["mmproj_path"], str):
-            raise InvalidInput(f"manifest role {role_name} has an invalid auxiliary asset path")
-        if role["mtp"].get("enabled") and (
-            not isinstance(role["mtp"].get("path"), str) or not role["mtp"].get("path")
-        ):
-            raise InvalidInput(f"manifest role {role_name} requires an MTP path")
-
-
-def _role_from_error(message: str, roles: dict[str, Any]) -> str | None:
-    prefix = message.split(maxsplit=1)[0].rstrip(":")
-    return prefix if prefix in roles else None
-
-
-def _classify_manifest_error(message: str) -> str:
-    lowered = message.lower()
-    if lowered.startswith(("schema", "roles:", "clients:")):
-        return "MANIFEST"
-    if "runtime manager" in lowered:
-        return "LIFECYCLE_CONFIG"
-    if " port" in lowered or " host" in lowered or "endpoint" in lowered:
-        return "ENDPOINT_MATRIX"
-    if lowered.startswith("qwen ") or lowered.startswith("pi "):
-        return "HOST_CONTRACT_CONFIG"
-    return "ROLE_MATRIX"
-
-
-def _normalize_model(value: Any) -> str | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    model = value.strip()
-    if ":" in model and not model.startswith(("/", "./", "../")):
-        model = model.split(":", 1)[1]
-    return str(Path(model))
-
-
-def _normalize_role(value: Any) -> str | None:
-    return value.strip().upper() if isinstance(value, str) and value.strip() else None
-
-
-def _normalize_endpoint(value: Any) -> str | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = urlsplit(value.strip())
-        port = parsed.port
-    except ValueError:
-        # A malformed derived URL is contract drift; canonical manifest ports are
-        # rejected earlier as INVALID_SCHEMA_OR_INPUT.
-        return None
-    if not parsed.scheme or not parsed.hostname:
-        return None
-    port_text = f":{port}" if port is not None else ""
-    path = parsed.path.rstrip("/")
-    return f"{parsed.scheme.lower()}://{parsed.hostname.lower()}{port_text}{path}"
-
-
-def _strip_fish_comments(text: str) -> str:
-    """Remove Fish comments while leaving quoted # characters untouched."""
-    output: list[str] = []
-    quote: str | None = None
-    escaped = False
-    in_comment = False
-    for character in text:
-        if in_comment:
-            if character == "\n":
-                output.append(character)
-                in_comment = False
-            else:
-                output.append(" ")
-            continue
-        if character == "\n":
-            output.append(character)
-            escaped = False
-            continue
-        if escaped:
-            output.append(character)
-            escaped = False
-            continue
-        if character == "\\" and quote != "'":
-            output.append(character)
-            escaped = True
-            continue
-        if quote is not None:
-            output.append(character)
-            if character == quote:
-                quote = None
-            continue
-        if character in {"'", '"'}:
-            quote = character
-            output.append(character)
-            continue
-        if character == "#":
-            in_comment = True
-            output.append(" ")
-            continue
-        output.append(character)
-    return "".join(output)
-
-
-def _fish_code_without_comments(text: str) -> str:
-    """Strip comments and join Fish backslash continuations for static checks."""
-    lines = _strip_fish_comments(text).splitlines()
-    logical: list[str] = []
-    pending = ""
-    for line in lines:
-        stripped = line.rstrip()
-        if stripped.endswith("\\"):
-            pending += stripped[:-1] + " "
-        else:
-            logical.append(pending + line)
-            pending = ""
-    if pending:
-        logical.append(pending)
-    return "\n".join(logical)
-
-
-def _fish_function_bodies(text: str) -> dict[str, list[str]]:
-    """Read function bodies without interpreting strings or executing Fish."""
-    code = _strip_fish_comments(text)
-    lines = code.splitlines()
-    functions: dict[str, list[str]] = {}
-    index = 0
-    block_openers = re.compile(r"^(?:if|for|while|switch|begin|function|try)\b")
-    while index < len(lines):
-        header = re.match(r"\s*function\s+([A-Za-z0-9_-]+)\b", lines[index])
-        if not header:
-            index += 1
-            continue
-        name = header.group(1)
-        depth = 1
-        body: list[str] = []
-        index += 1
-        while index < len(lines):
-            line = lines[index]
-            command = line.strip()
-            if command == "end":
-                depth -= 1
-                if depth == 0:
-                    break
-            elif block_openers.match(command):
-                depth += 1
-            body.append(line)
-            index += 1
-        functions.setdefault(name, []).append("\n".join(body))
-        index += 1
-    return functions
-
-
-def _strip_javascript_comments(text: str) -> str:
-    """Remove JS/TS comments while preserving quoted literals and line positions."""
-    output: list[str] = []
-    quote: str | None = None
-    escaped = False
-    index = 0
-    while index < len(text):
-        character = text[index]
-        following = text[index + 1] if index + 1 < len(text) else ""
-        if quote is not None:
-            output.append(character)
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == quote:
-                quote = None
-            index += 1
-            continue
-        if character in {"'", '"', "`"}:
-            quote = character
-            output.append(character)
-            index += 1
-            continue
-        if character == "/" and following == "/":
-            output.extend((" ", " "))
-            index += 2
-            while index < len(text) and text[index] != "\n":
-                output.append(" ")
-                index += 1
-            continue
-        if character == "/" and following == "*":
-            output.extend((" ", " "))
-            index += 2
-            while index < len(text) and text[index : index + 2] != "*/":
-                output.append("\n" if text[index] == "\n" else " ")
-                index += 1
-            if index < len(text):
-                output.extend((" ", " "))
-                index += 2
-            continue
-        output.append(character)
-        index += 1
-    return "".join(output)
-
-
-def _source_without_comments(source: str, text: str) -> str:
-    suffix = PurePosixPath(source).suffix.lower()
-    if suffix in {".ts", ".js", ".mjs"}:
-        return _strip_javascript_comments(text)
-    if suffix == ".fish":
-        return _strip_fish_comments(text)
-    if suffix == ".py":
-        return _strip_fish_comments(text)
-    return text
-
-
-def _first_argument_and_rest(arguments: str) -> tuple[str, str]:
-    """Split a static call's first argument from the remaining source text."""
-    depths = {"[": 0, "{": 0, "(": 0}
-    closing = {"]": "[", "}": "{", ")": "("}
-    quote: str | None = None
-    escaped = False
-    for index, character in enumerate(arguments):
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == quote:
-                quote = None
-            continue
-        if character in {"'", '"', "`"}:
-            quote = character
-        elif character in depths:
-            depths[character] += 1
-        elif character in closing:
-            opening = closing[character]
-            depths[opening] = max(0, depths[opening] - 1)
-        elif character == "," and not any(depths.values()):
-            return arguments[:index], arguments[index + 1 :]
-    return arguments, ""
-
-
-def _call_expressions(text: str, names: tuple[str, ...]) -> list[str]:
-    """Extract balanced call contents for a small, fixed set of process APIs."""
-    calls: list[str] = []
-    api = "|".join(re.escape(name) for name in names)
-    for match in re.finditer(rf"\b(?:{api})\s*\(", text):
-        start = match.end()
-        depth = 1
-        quote: str | None = None
-        escaped = False
-        index = start
-        while index < len(text) and depth:
-            character = text[index]
-            if quote is not None:
-                if escaped:
-                    escaped = False
-                elif character == "\\":
-                    escaped = True
-                elif character == quote:
-                    quote = None
-            elif character in {"'", '"', "`"}:
-                quote = character
-            elif character == "(":
-                depth += 1
-            elif character == ")":
-                depth -= 1
-            index += 1
-        if depth == 0:
-            calls.append(text[start : index - 1])
-    return calls
-
-
-def _quoted_literals(text: str) -> list[str]:
-    return [match.group(2) for match in re.finditer(r"(['\"])(.*?)\1", text, re.DOTALL)]
-
-
-def _is_manager_command(value: str, manager_name: str) -> bool:
-    tokens = value.strip().split()
-    return bool(tokens) and tokens[0].replace("\\", "/").rsplit("/", 1)[-1] == manager_name
-
-
-def _has_local_lifecycle_invocation(source: str, text: str, manager: str) -> bool:
-    """Bounded static scan of active Pi code; it never imports or executes resources."""
-    manager_name = PurePosixPath(manager).name
-    suffix = PurePosixPath(source).suffix.lower()
-    code = _source_without_comments(source, text)
-    lifecycle_commands = {"start", "switch", "stop", "restart", "ensure", "kill"}
-    if suffix in {".ts", ".js", ".mjs"}:
-        for call in _call_expressions(
-            code,
-            ("exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync"),
-        ):
-            first, rest = _first_argument_and_rest(call)
-            command_literals = _quoted_literals(first)
-            if not command_literals or not _is_manager_command(command_literals[0], manager_name):
-                continue
-            command_parts = command_literals[0].strip().split()
-            if len(command_parts) > 1 and command_parts[1] in lifecycle_commands:
-                return True
-            if any(item in lifecycle_commands for item in _quoted_literals(rest)):
-                return True
-        return False
-    if suffix == ".py":
-        process_calls = _call_expressions(
-            code, ("run", "Popen", "call", "check_call", "check_output")
-        )
-        for call in process_calls:
-            literals = _quoted_literals(call)
-            if (
-                any(_is_manager_command(item, manager_name) for item in literals)
-                and any(item in lifecycle_commands for item in literals)
-            ):
-                return True
-        return False
-    if suffix == ".fish":
-        command_pattern = re.compile(
-            rf"(?m)^\s*(?:[^\s;&|]*/)?{re.escape(manager_name)}\s+"
-            rf"({'|'.join(sorted(lifecycle_commands))})\b"
-        )
-        return bool(command_pattern.search(code))
-    return False
-
-
-def _active_roles(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {
-        role_name: role
-        for role_name, role in manifest["roles"].items()
-        if role.get("enabled") is True and role.get("state") == "ACTIVE"
-    }
-
-
-def _read_active_json(
-    report: dict[str, Any], root: Path, relative: str, check: str
-) -> dict[str, Any] | None:
-    path = root / relative
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        _add_finding(
-            report,
-            check,
-            "ACTIVE_CONFIG_MISSING",
-            "An active configuration file is missing.",
-            source=relative,
-        )
-        return None
-    except json.JSONDecodeError:
-        _add_finding(
-            report,
-            check,
-            "ACTIVE_CONFIG_INVALID",
-            "An active configuration file is not valid JSON.",
-            source=relative,
-        )
-        return None
-    except OSError as error:
-        raise InfrastructureError(f"cannot read active configuration: {relative}") from error
-    if not isinstance(value, dict):
-        _add_finding(
-            report,
-            check,
-            "ACTIVE_CONFIG_INVALID",
-            "An active configuration file must contain an object.",
-            source=relative,
-        )
-        return None
-    return value
-
-
-def _qwen_invocation_lines(wrapper: str) -> list[str]:
-    code = _fish_code_without_comments(wrapper)
-    invocation = re.compile(
-        r"(?:^|[;&|]\s*)\s*(?:if\s+)?(?:command\s+)?(?:[^\s;&|]*/)?qwen(?=\s|$)"
-    )
-    return [line for line in code.splitlines() if invocation.search(line)]
-
-
-def _fallback_option_present(invocation: str) -> bool:
-    for match in re.finditer(r"--([A-Za-z0-9][A-Za-z0-9_-]*)", invocation):
-        name = match.group(1).lower()
-        if "fallback" not in name and "failover" not in name:
-            continue
-        if name.startswith(("no-fallback", "disable-fallback", "without-fallback")):
-            continue
-        if name.startswith(("no-failover", "disable-failover", "without-failover")):
-            continue
-        return True
-    return False
-
-
-def _forwarded_fallback_args_are_rejected(wrapper: str) -> bool:
-    """Verify the Fish guard regex rejects the actual fallback option."""
-    code = _fish_code_without_comments(wrapper)
-    loop = re.search(r"(?m)^\s*for\s+arg\s+in\s+\$qwen_args\b", code)
-    if not loop:
-        return False
-    loop_tail = code[loop.end() :]
-    first_end = re.search(r"(?m)^\s*end\s*$", loop_tail)
-    if not first_end:
-        return False
-    loop_body = loop_tail[: first_end.start()]
-    guard = re.search(
-        r"(?m)^\s*if\s+string\s+match\s+-qr\s+--\s+'(?P<pattern>[^']*)'\s+"
-        r'\(string\s+lower\s+--\s+"\$arg"\)\s*$',
-        loop_body,
-    )
-    if not guard:
-        return False
-    try:
-        rejecting_pattern = re.compile(guard.group("pattern"))
-    except re.error:
-        return False
-    return bool(
-        rejecting_pattern.search("--fallback-model")
-        and re.search(r"(?m)^\s*return\s+[1-9]\d*\s*$", loop_body[guard.end() :])
+    report["findings"].append(
+        {
+            "check": check,
+            "code": code,
+            "type": report["checks"][check]["type"],
+            "message": message,
+            "source": source,
+        }
     )
 
 
-def _check_qwen_bindings(
-    report: dict[str, Any],
-    root: Path,
-    manifest: dict[str, Any],
-    qwen_settings: dict[str, Any] | None,
+def _read_routes(root: Path, manifest: dict[str, Any]) -> tuple[Any, list[dict[str, Any]]]:
+    projection = _load_module(
+        root / "scripts/sync-llm-client-projections", "_llm_client_projection"
+    )
+    routes = projection.local_routes(manifest)
+    return projection, routes
+
+
+def _check_repo_client_projection(
+    report: dict[str, Any], root: Path, manifest: dict[str, Any]
 ) -> None:
-    roles = _active_roles(manifest)
-    known_models = {_normalize_model(role["model_path"]) for role in roles.values()}
-    known_models.discard(None)
-    relative = "scripts/qwen-role.fish"
-    wrapper_path = root / relative
     try:
-        wrapper = _read_text(wrapper_path)
-    except FileNotFoundError:
-        _add_finding(
-            report,
-            "HOST_CONTRACT_CONFIG",
-            "QWEN_WRAPPER_MISSING",
-            "The active Qwen role wrapper is missing.",
-            source=relative,
+        projection, routes = _read_routes(root, manifest)
+    except (KeyError, TypeError, ValueError) as error:
+        _finding(
+            report, "CLIENT_PROJECTION", "INVALID_CLIENT_MANIFEST", str(error), "llm-manifest.json"
         )
         return
-    active_wrapper = _strip_fish_comments(wrapper)
-    bindings = ROLE_BINDING.findall(active_wrapper)
-    functions = _fish_function_bodies(wrapper)
-    for shortcut, expected_role in QWEN_SHORTCUT_ROLES.items():
-        bodies = functions.get(shortcut, [])
-        shortcut_bindings = [
-            (_normalize_role(match[0]), match)
-            for body in bodies
-            for match in ROLE_BINDING.findall(body)
-        ]
-        if (
-            len(bodies) != 1
-            or len(shortcut_bindings) != 1
-            or shortcut_bindings[0][0] != expected_role
-        ):
-            _add_finding(
-                report,
-                "ROLE_MATRIX",
-                "QWEN_SHORTCUT_ROLE_DRIFT",
-                "A public Qwen shortcut does not bind to its intended canonical role.",
-                role=expected_role,
-                source=relative,
-                location=shortcut,
-            )
-    by_role: dict[str, tuple[str, str, str]] = {}
-    for raw_role, model_path, port, agent_name in bindings:
-        role = _normalize_role(raw_role)
-        if role is None or role not in roles:
-            _add_finding(
-                report,
-                "ACTIVE_REFERENCE_RESOLUTION",
-                "UNKNOWN_PROFILE",
-                "An active Qwen wrapper references an unknown profile.",
-                role=role,
-                source=relative,
-            )
-            continue
-        if role in by_role:
-            _add_finding(
-                report,
-                "HOST_CONTRACT_CONFIG",
-                "DUPLICATE_ROLE_BINDING",
-                "An active Qwen role is bound more than once.",
-                role=role,
-                source=relative,
-            )
-            continue
-        by_role[role] = (model_path, port, agent_name)
-        expected = roles[role]
-        if _normalize_model(model_path) != _normalize_model(expected.get("model_path")):
-            _add_finding(
-                report,
-                "ROLE_MATRIX",
-                "MODEL_BINDING_DRIFT",
-                "Qwen wrapper model does not match the authoritative role.",
-                role=role,
-                source=relative,
-            )
-        if port != str(expected.get("port")):
-            _add_finding(
-                report,
-                "ENDPOINT_MATRIX",
-                "ENDPOINT_BINDING_DRIFT",
-                "Qwen wrapper endpoint does not match the authoritative role.",
-                role=role,
-                source=relative,
-            )
-        agent_path = f".qwen/agents/{agent_name}.md"
-        try:
-            agent_text = _read_text(root / agent_path)
-        except FileNotFoundError:
-            _add_finding(
-                report,
-                "HOST_CONTRACT_CONFIG",
-                "ROLE_INSTRUCTION_MISSING",
-                "The active role instruction file is missing.",
-                role=role,
-                source=agent_path,
-            )
-            continue
-        agent_role_match = AGENT_ROLE.search(agent_text)
-        agent_model_match = AGENT_MODEL.search(agent_text)
-        if not agent_role_match or _normalize_role(agent_role_match.group(1)) != role:
-            _add_finding(
-                report,
-                "HOST_CONTRACT_CONFIG",
-                "ROLE_INSTRUCTION_DRIFT",
-                "Qwen role instructions do not bind to the wrapper profile.",
-                role=role,
-                source=agent_path,
-            )
-        if not agent_model_match or _normalize_model(
-            agent_model_match.group(1)
-        ) != _normalize_model(expected.get("model_path")):
-            _add_finding(
-                report,
-                "ROLE_MATRIX",
-                "INSTRUCTION_MODEL_DRIFT",
-                "Qwen role instructions select a different model.",
-                role=role,
-                source=agent_path,
-            )
-        if "docs/command-protocol/" not in agent_text or "Command Protocol" not in agent_text:
-            _add_finding(
-                report,
-                "COMMAND_PROTOCOL_BINDING",
-                "COMMAND_PROTOCOL_REFERENCE_MISSING",
-                "An active Qwen agent omits the canonical Command Protocol binding.",
-                role=role,
-                source=agent_path,
-            )
-    expected_roles = (
-        set(roles)
-        if manifest["clients"]["qwen"].get("local_only")
-        else {manifest["clients"]["qwen"].get("default_role", "")}
-    )
-    if set(by_role) != expected_roles:
-        _add_finding(
+    qwen_path = root / ".qwen/settings.json"
+    qwen = _load_json(qwen_path)
+    expected_qwen = projection.qwen_projection(qwen, routes)
+    if qwen.get("modelProviders", {}).get("openai") != expected_qwen["modelProviders"]["openai"]:
+        _finding(
             report,
-            "HOST_CONTRACT_CONFIG",
-            "QWEN_ROLE_SET_DRIFT",
-            "Active Qwen wrappers do not cover the roles selected by the manifest contract.",
-            source=relative,
+            "CLIENT_PROJECTION",
+            "QWEN_ROUTE_DRIFT",
+            "Qwen local routes differ from manifest projection.",
+            ".qwen/settings.json",
         )
-    if (
-        "llama-server" in wrapper
-        or not re.search(r"\bllm\s+start\b", wrapper)
-        or not re.search(r"\bllm\s+stop\b", wrapper)
+    if qwen.get("model") != expected_qwen.get("model"):
+        _finding(
+            report,
+            "CLIENT_PROJECTION",
+            "QWEN_DEFAULT_DRIFT",
+            "Qwen default route differs from manifest projection.",
+            ".qwen/settings.json",
+        )
+
+    pi_path = root / ".pi/settings.json"
+    pi = _load_json(pi_path)
+    expected_pi = projection.pi_projection(pi, manifest)
+    if pi.get("enabledModels") != expected_pi.get("enabledModels"):
+        _finding(
+            report,
+            "CLIENT_PROJECTION",
+            "PI_ROUTE_DRIFT",
+            "Pi local route allowlist differs from manifest projection.",
+            ".pi/settings.json",
+        )
+    contract = manifest["clients"]["pi"]
+    if (pi.get("defaultProvider"), pi.get("defaultModel")) != (
+        contract["cloud_default_provider"],
+        contract["cloud_default_model"],
     ):
-        _add_finding(
+        _finding(
             report,
-            "LIFECYCLE_CONFIG",
-            "LOCAL_LIFECYCLE_DRIFT",
-            "Qwen wrappers must delegate lifecycle transitions to the canonical manager.",
-            source=relative,
+            "CLIENT_PROJECTION",
+            "PI_CLOUD_DEFAULT_DRIFT",
+            "Pi cloud default is not preserved.",
+            ".pi/settings.json",
         )
-    if manifest["clients"]["qwen"].get("cloud_fallback") is False:
-        invocations = _qwen_invocation_lines(wrapper)
-        fallback_configured = any(_fallback_option_present(line) for line in invocations)
-        forwarded_args = any("$qwen_args" in line for line in invocations)
-        if (
-            not invocations
-            or fallback_configured
-            or (forwarded_args and not _forwarded_fallback_args_are_rejected(wrapper))
-        ):
-            _add_finding(
-                report,
-                "HOST_CONTRACT_CONFIG",
-                "QWEN_CLOUD_FALLBACK_DRIFT",
-                "The active Qwen invocation can configure or accept a cloud fallback route.",
-                source=relative,
-            )
-    endpoint_match = re.search(
-        r'--openai-base-url\s+"http://([^:$"/]+|\[[^]]+\]):\$port/v1"',
-        wrapper,
-    )
-    expected_hosts = {str(roles[role].get("host")) for role in expected_roles if role in roles}
-    if not endpoint_match or expected_hosts != {endpoint_match.group(1)}:
-        _add_finding(
-            report,
-            "ENDPOINT_MATRIX",
-            "ENDPOINT_TEMPLATE_DRIFT",
-            "Qwen wrapper endpoint template does not match the role host contract.",
-            source=relative,
-        )
-    if '--append-system-prompt "$role_instructions"' not in wrapper:
-        _add_finding(
-            report,
-            "HOST_CONTRACT_CONFIG",
-            "INSTRUCTION_BINDING_MISSING",
-            "Qwen wrappers do not pass the role instruction binding.",
-            source=relative,
-        )
-    for role, (model_path, _port, _agent) in by_role.items():
-        if _normalize_model(model_path) not in known_models:
-            _add_finding(
-                report,
-                "ACTIVE_REFERENCE_RESOLUTION",
-                "UNKNOWN_MODEL",
-                "An active Qwen wrapper references an unknown model.",
-                role=role,
-                source=relative,
-            )
-    if qwen_settings is not None:
-        model = qwen_settings.get("model", {})
-        model_id = model.get("name") if isinstance(model, dict) else model
-        if _normalize_model(model_id) not in known_models:
-            _add_finding(
-                report,
-                "ACTIVE_REFERENCE_RESOLUTION",
-                "UNKNOWN_MODEL",
-                "Qwen default selection does not resolve to an active canonical model.",
-                source=".qwen/settings.json",
-                location="model.name",
-            )
-        provider_map = qwen_settings.get("modelProviders", {})
-        if isinstance(provider_map, dict):
-            for provider_name, provider_models in provider_map.items():
-                if not isinstance(provider_models, list):
-                    continue
-                for index, provider_model in enumerate(provider_models):
-                    if not isinstance(provider_model, dict):
-                        continue
-                    model_ref = _normalize_model(provider_model.get("id"))
-                    if model_ref not in known_models:
-                        _add_finding(
-                            report,
-                            "ACTIVE_REFERENCE_RESOLUTION",
-                            "UNKNOWN_MODEL",
-                            "An active Qwen provider references an unknown model.",
-                            source=".qwen/settings.json",
-                            location=f"modelProviders.{provider_name}[{index}]",
-                        )
-                    if model_ref in known_models:
-                        role = next(
-                            (
-                                item
-                                for item, config in roles.items()
-                                if _normalize_model(config["model_path"]) == model_ref
-                            ),
-                            None,
-                        )
-                        endpoint = (
-                            f"http://{roles[role]['host']}:{roles[role]['port']}/v1"
-                            if role
-                            else None
-                        )
-                        if endpoint and _normalize_endpoint(
-                            provider_model.get("baseUrl")
-                        ) != _normalize_endpoint(endpoint):
-                            _add_finding(
-                                report,
-                                "ENDPOINT_MATRIX",
-                                "ENDPOINT_BINDING_DRIFT",
-                                "Qwen provider endpoint does not resolve to its role endpoint.",
-                                role=role,
-                                source=".qwen/settings.json",
-                                location=f"modelProviders.{provider_name}[{index}]",
-                            )
 
 
-def _check_pi_bindings(
-    report: dict[str, Any], root: Path, manifest: dict[str, Any], pi_settings: dict[str, Any] | None
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    integration_path = "integrations/pi/manifest.json"
-    integration = _read_active_json(report, root, integration_path, "MANIFEST")
-    resources = integration.get("resources", []) if integration else []
-    if integration is not None and (
-        type(integration.get("version")) is not int or integration.get("version") != 1
-    ):
-        _add_finding(
-            report,
-            "MANIFEST",
-            "PI_MANIFEST_SCHEMA_INVALID",
-            "Pi resource manifest has an unsupported schema version.",
-            source=integration_path,
-        )
-    if not isinstance(resources, list):
-        resources = []
-        _add_finding(
-            report,
-            "HOST_CONTRACT_CONFIG",
-            "PI_MANIFEST_INVALID",
-            "Pi resource manifest must contain a resource list.",
-            source=integration_path,
-        )
-    names: set[str] = set()
-    for resource in resources:
-        if not isinstance(resource, dict):
+def _check_opencode(report: dict[str, Any], root: Path, *, include_host: bool) -> None:
+    paths = [root / "opencode.json"]
+    if include_host:
+        paths.append(Path.home() / ".config/opencode/opencode.json")
+    for path in paths:
+        if not path.is_file():
             continue
-        name = resource.get("name")
-        scope = resource.get("scope")
-        if not isinstance(name, str) or not name or name in names:
-            _add_finding(
-                report,
-                "MANIFEST",
-                "PI_RESOURCE_SCHEMA_INVALID",
-                "Pi resource names must be non-empty and unique.",
-                source=integration_path,
-            )
-        elif scope not in {"GLOBAL", "PROJECT_LOCAL"}:
-            _add_finding(
-                report,
-                "MANIFEST",
-                "PI_RESOURCE_SCHEMA_INVALID",
-                "A Pi resource has an unsupported scope.",
-                source=integration_path,
-                location=name,
-            )
-        names.add(name if isinstance(name, str) else "")
-    source_texts: list[tuple[dict[str, Any], str, str]] = []
-    for resource in resources:
-        if not isinstance(resource, dict) or not isinstance(resource.get("source"), str):
-            _add_finding(
-                report,
-                "HOST_CONTRACT_CONFIG",
-                "PI_RESOURCE_INVALID",
-                "A Pi resource declaration is malformed.",
-                source=integration_path,
-            )
-            continue
-        source = resource["source"]
-        try:
-            resolved = (root / source).resolve(strict=True)
-        except FileNotFoundError:
-            _add_finding(
-                report,
-                "HOST_CONTRACT_CONFIG",
-                "PI_RESOURCE_MISSING",
-                "An active Pi resource source is missing.",
-                source=source,
-            )
-            continue
-        except OSError as error:
-            raise InfrastructureError(f"cannot resolve active Pi resource: {source}") from error
-        if root.resolve() not in resolved.parents and resolved != root.resolve():
-            _add_finding(
-                report,
-                "HOST_CONTRACT_CONFIG",
-                "PI_RESOURCE_OUTSIDE_REPO",
-                "An active Pi resource resolves outside the repository.",
-                source=source,
-            )
-            continue
-        if resolved.is_file() and resolved.suffix in {".ts", ".js", ".mjs", ".py", ".fish"}:
-            with contextlib.suppress(FileNotFoundError):
-                source_texts.append((resource, source, _read_text(resolved)))
-    extension_dir = root / ".pi/extensions"
-    if extension_dir.is_dir():
-        registered = {source for _, source, _ in source_texts}
-        for extension_path in sorted(extension_dir.glob("*.ts")):
-            relative = str(extension_path.relative_to(root))
-            if relative in registered:
-                continue
-            try:
-                resolved = extension_path.resolve(strict=True)
-            except OSError as error:
-                raise InfrastructureError(
-                    f"cannot resolve active Pi extension: {relative}"
-                ) from error
-            if root.resolve() not in resolved.parents:
-                _add_finding(
-                    report,
-                    "HOST_CONTRACT_CONFIG",
-                    "PI_EXTENSION_OUTSIDE_REPO",
-                    "An auto-discovered Pi extension resolves outside the repository.",
-                    source=relative,
-                )
-                continue
-            with contextlib.suppress(FileNotFoundError):
-                source_texts.append(({"scope": "PROJECT_LOCAL"}, relative, _read_text(resolved)))
-    pi_contract = manifest["clients"]["pi"]
-    expected_pair = (str(pi_contract.get("provider")), str(pi_contract.get("model")))
-    manager = manifest.get("runtime_manager")
-    matched_enforcer = False
-    for resource, source, source_text in source_texts:
-        active_source = _source_without_comments(source, source_text)
-        provider_match = re.search(
-            r"model\?\.provider\s*===\s*['\"]([^'\"]+)['\"]", active_source
+        config = _load_json(path)
+        providers = config.get("provider", {})
+        selected = [config.get("model")]
+        selected.extend(
+            agent.get("model")
+            for agent in config.get("agents", {}).values()
+            if isinstance(agent, dict)
         )
-        model_match = re.search(
-            r"model\.id\s*===\s*['\"]([^'\"]+)['\"]", active_source
-        )
-        if provider_match and model_match:
-            actual_pair = (provider_match.group(1), model_match.group(1))
-            if actual_pair == expected_pair:
-                matched_enforcer = True
-                source_path = PurePosixPath(source)
-                integration_root = PurePosixPath("integrations/pi")
-                try:
-                    expected_destination = source_path.relative_to(integration_root).as_posix()
-                except ValueError:
-                    expected_destination = None
-                if (
-                    resource.get("scope") != "GLOBAL"
-                    or not expected_destination
-                    or resource.get("destination") != expected_destination
-                ):
-                    _add_finding(
-                        report,
-                        "HOST_CONTRACT_CONFIG",
-                        "PI_RESOURCE_DESTINATION_DRIFT",
-                        "The active Pi enforcer is not installed at its source-mirrored global destination.",
-                        source=source,
-                        location="destination",
-                    )
-            else:
-                _add_finding(
-                    report,
-                    "HOST_CONTRACT_CONFIG",
-                    "PI_MODEL_ENFORCEMENT_DRIFT",
-                    "Pi model enforcement does not match the manifest contract.",
-                    source=source,
-                )
-        if (
-            pi_contract.get("local_lifecycle") is False
-            and resource.get("scope") in {"GLOBAL", "PROJECT_LOCAL"}
-            and (
-                re.search(
-                    r"llama-server|neuralengine-model-lifecycle|start_profile\s*\(",
-                    active_source,
-                )
-                or (
-                    isinstance(manager, str)
-                    and bool(manager)
-                    and _has_local_lifecycle_invocation(source, source_text, manager)
-                )
-            )
-        ):
-            _add_finding(
+        if any(name.startswith("llama-") for name in providers):
+            _finding(
                 report,
-                "LIFECYCLE_CONFIG",
-                "PI_LOCAL_LIFECYCLE_DRIFT",
-                "An active Pi integration contains a local model lifecycle implementation.",
-                source=source,
+                "OPENCODE_PARKED",
+                "LOCAL_PROVIDER_ACTIVE",
+                "OpenCode still declares a local provider.",
+                str(path),
             )
-    if not matched_enforcer:
-        _add_finding(
-            report,
-            "HOST_CONTRACT_CONFIG",
-            "PI_MODEL_ENFORCEMENT_MISSING",
-            "No active Pi extension enforces the authoritative provider/model binding.",
-            source=integration_path,
-        )
-    if pi_settings is not None:
-        expected = f"{expected_pair[0]}/{expected_pair[1]}"
-        enabled = pi_settings.get("enabledModels", [])
-        if (
-            pi_settings.get("defaultProvider") != expected_pair[0]
-            or pi_settings.get("defaultModel") != expected_pair[1]
-        ):
-            _add_finding(
+        if any(isinstance(value, str) and value.startswith("llama-") for value in selected):
+            _finding(
                 report,
-                "HOST_CONTRACT_CONFIG",
-                "PI_DEFAULT_ROUTE_DRIFT",
-                "Pi default routing does not match the manifest contract.",
-                source=".pi/settings.json",
-            )
-        if not isinstance(enabled, list) or set(enabled) != {expected}:
-            _add_finding(
-                report,
-                "HOST_CONTRACT_CONFIG",
-                "PI_MODEL_CATALOG_DRIFT",
-                "Pi enabled model selection does not match the manifest contract.",
-                source=".pi/settings.json",
-                location="enabledModels",
-            )
-        if expected_pair[1] in {
-            _normalize_model(role.get("model_path")) for role in _active_roles(manifest).values()
-        }:
-            _add_finding(
-                report,
-                "ACTIVE_REFERENCE_RESOLUTION",
-                "PI_LOCAL_ROUTE",
-                "Pi active model selection resolves to a local role model.",
-                source=".pi/settings.json",
-            )
-    return integration, resources
-
-
-def _check_protocol_binding(
-    report: dict[str, Any], root: Path, integration_resources: list[dict[str, Any]]
-) -> None:
-    canonical_dir = root / "docs/command-protocol"
-    canonical: dict[str, bytes] = {}
-    for filename in PROTOCOL_FILES:
-        path = canonical_dir / filename
-        try:
-            canonical[filename] = path.read_bytes()
-        except FileNotFoundError:
-            _add_finding(
-                report,
-                "COMMAND_PROTOCOL_BINDING",
-                "CANONICAL_PROTOCOL_MISSING",
-                "A canonical Command Protocol document is missing.",
-                source=f"docs/command-protocol/{filename}",
-            )
-        except OSError as error:
-            raise InfrastructureError(
-                f"cannot read canonical protocol document: {filename}"
-            ) from error
-    pi_resource = next(
-        (item for item in integration_resources if item.get("name") == "command-protocol"), None
-    )
-    if not pi_resource:
-        _add_finding(
-            report,
-            "COMMAND_PROTOCOL_BINDING",
-            "PI_PROTOCOL_BINDING_MISSING",
-            "The active Pi manifest does not register Command Protocol.",
-            source="integrations/pi/manifest.json",
-        )
-    else:
-        source_dir = root / str(pi_resource.get("source", "")) / "references"
-        for filename, content in canonical.items():
-            copy_path = source_dir / filename
-            try:
-                if copy_path.read_bytes() != content:
-                    _add_finding(
-                        report,
-                        "COMMAND_PROTOCOL_BINDING",
-                        "PROTOCOL_COPY_DRIFT",
-                        "A packaged Pi protocol reference differs from its canonical source.",
-                        source=str(copy_path.relative_to(root)),
-                        location=filename,
-                    )
-            except FileNotFoundError:
-                _add_finding(
-                    report,
-                    "COMMAND_PROTOCOL_BINDING",
-                    "PROTOCOL_COPY_MISSING",
-                    "A packaged Pi protocol reference is missing.",
-                    source=str(copy_path.relative_to(root)),
-                    location=filename,
-                )
-            except OSError as error:
-                raise InfrastructureError(
-                    f"cannot read packaged protocol reference: {filename}"
-                ) from error
-    adapter_paths = (
-        "QWEN.md",
-        "integrations/pi/skills/command-protocol/SKILL.md",
-        "integrations/opencode/command-protocol/SKILL.md",
-    )
-    for relative in adapter_paths:
-        try:
-            text = _read_text(root / relative)
-        except FileNotFoundError:
-            _add_finding(
-                report,
-                "COMMAND_PROTOCOL_BINDING",
-                "COMMAND_PROTOCOL_ADAPTER_MISSING",
-                "An active Command Protocol adapter is missing.",
-                source=relative,
-            )
-            continue
-        for filename in PROTOCOL_FILES:
-            if filename not in text:
-                _add_finding(
-                    report,
-                    "COMMAND_PROTOCOL_BINDING",
-                    "COMMAND_PROTOCOL_REFERENCE_MISSING",
-                    "An active adapter omits a canonical Command Protocol source.",
-                    source=relative,
-                    location=filename,
-                )
-
-
-def _check_guard_binding(
-    report: dict[str, Any], root: Path, integration_resources: list[dict[str, Any]]
-) -> None:
-    resource = next(
-        (item for item in integration_resources if item.get("name") == "neuralengine-guard"), None
-    )
-    if resource is None:
-        _add_finding(
-            report,
-            "GUARD_BINDING",
-            "GUARD_REGISTRATION_MISSING",
-            "The active Pi manifest does not register the NeuralEngine Guard.",
-            source="integrations/pi/manifest.json",
-        )
-        return
-    source = str(resource.get("source", ""))
-    try:
-        text = _read_text(root / source)
-    except FileNotFoundError:
-        _add_finding(
-            report,
-            "GUARD_BINDING",
-            "GUARD_SOURCE_MISSING",
-            "The registered Guard implementation is missing.",
-            source=source,
-        )
-        return
-    if "control-plane/governor.ts" not in text:
-        _add_finding(
-            report,
-            "GUARD_BINDING",
-            "GOVERNOR_BINDING_MISSING",
-            "The Guard adapter is not bound to the canonical Governor implementation.",
-            source=source,
-        )
-    if not (root / "control-plane/governor.ts").is_file():
-        _add_finding(
-            report,
-            "GUARD_BINDING",
-            "GOVERNOR_SOURCE_MISSING",
-            "The canonical Governor implementation is missing.",
-            source="control-plane/governor.ts",
-        )
-    try:
-        contract = _read_text(root / "docs/control-plane-governor.md")
-    except FileNotFoundError:
-        _add_finding(
-            report,
-            "GUARD_BINDING",
-            "GOVERNOR_CONTRACT_MISSING",
-            "The Governor contract document is missing.",
-            source="docs/control-plane-governor.md",
-        )
-        return
-    if "NEURAL_PI_BOUNDED_CODE" not in contract or "NEURAL_PI_POLICY_FILE" not in contract:
-        _add_finding(
-            report,
-            "GUARD_BINDING",
-            "GOVERNOR_ACTIVATION_CONTRACT_MISSING",
-            "The Governor activation contract is incomplete.",
-            source="docs/control-plane-governor.md",
-        )
-
-
-def _check_active_references(
-    report: dict[str, Any], root: Path, manifest: dict[str, Any], pi_settings: dict[str, Any] | None
-) -> None:
-    roles = _active_roles(manifest)
-    known_models = {_normalize_model(role["model_path"]) for role in roles.values()}
-    known_models.discard(None)
-    known_roles = {_normalize_role(name) for name in roles}
-    known_roles.discard(None)
-    agents_dir = root / ".qwen/agents"
-    if agents_dir.is_dir():
-        for agent_path in sorted(agents_dir.glob("*.md")):
-            relative = str(agent_path.relative_to(root))
-            try:
-                text = _read_text(agent_path)
-            except FileNotFoundError:
-                continue
-            role_match = AGENT_ROLE.search(text)
-            model_match = AGENT_MODEL.search(text)
-            if role_match and _normalize_role(role_match.group(1)) not in known_roles:
-                _add_finding(
-                    report,
-                    "ACTIVE_REFERENCE_RESOLUTION",
-                    "UNKNOWN_PROFILE",
-                    "An active Qwen agent references an unknown role.",
-                    role=_normalize_role(role_match.group(1)),
-                    source=relative,
-                )
-            if model_match and _normalize_model(model_match.group(1)) not in known_models:
-                _add_finding(
-                    report,
-                    "ACTIVE_REFERENCE_RESOLUTION",
-                    "UNKNOWN_MODEL",
-                    "An active Qwen agent references an unknown model.",
-                    source=relative,
-                    location="model",
-                )
-    wrapper_path = root / "scripts/qwen-role.fish"
-    if wrapper_path.is_file():
-        text = _read_text(wrapper_path)
-        for raw_role, model_path, _port, _agent in ROLE_BINDING.findall(text):
-            role = _normalize_role(raw_role)
-            if role not in known_roles:
-                _add_finding(
-                    report,
-                    "ACTIVE_REFERENCE_RESOLUTION",
-                    "UNKNOWN_PROFILE",
-                    "An active Qwen wrapper references an unknown role.",
-                    role=role,
-                    source="scripts/qwen-role.fish",
-                )
-            if _normalize_model(model_path) not in known_models:
-                _add_finding(
-                    report,
-                    "ACTIVE_REFERENCE_RESOLUTION",
-                    "UNKNOWN_MODEL",
-                    "An active Qwen wrapper references an unknown model.",
-                    role=role,
-                    source="scripts/qwen-role.fish",
-                )
-    pi_contract = manifest["clients"]["pi"]
-    if pi_settings is not None:
-        provider = pi_settings.get("defaultProvider")
-        model = pi_settings.get("defaultModel")
-        allowed = (provider, model) == (pi_contract.get("provider"), pi_contract.get("model"))
-        if not allowed:
-            _add_finding(
-                report,
-                "ACTIVE_REFERENCE_RESOLUTION",
-                "UNKNOWN_MODEL_OR_PROVIDER",
-                "Pi active selection does not resolve to the canonical host contract.",
-                source=".pi/settings.json",
-            )
-        enabled = pi_settings.get("enabledModels", [])
-        if isinstance(enabled, list):
-            for index, item in enumerate(enabled):
-                if item != f"{pi_contract.get('provider')}/{pi_contract.get('model')}":
-                    _add_finding(
-                        report,
-                        "ACTIVE_REFERENCE_RESOLUTION",
-                        "UNKNOWN_MODEL_OR_PROVIDER",
-                        "An active Pi model reference does not resolve to its host contract.",
-                        source=".pi/settings.json",
-                        location=f"enabledModels[{index}]",
-                    )
-    contexts = manifest["clients"]["qwen"].get("contexts", {})
-    for role_name in contexts:
-        if _normalize_role(role_name) not in known_roles:
-            _add_finding(
-                report,
-                "ACTIVE_REFERENCE_RESOLUTION",
-                "UNKNOWN_PROFILE",
-                "Qwen context configuration references an unknown role.",
-                role=_normalize_role(role_name),
-                source="llm-manifest.json",
-                location=f"clients.qwen.contexts.{role_name}",
-            )
-
-
-def _check_model_inventory(report: dict[str, Any], manifest: dict[str, Any]) -> None:
-    assets: set[tuple[str, str, str]] = set()
-    for role_name, role in _active_roles(manifest).items():
-        for key, label in (
-            ("model_path", "model"),
-            ("runtime_binary", "runtime"),
-            ("mmproj_path", "auxiliary"),
-        ):
-            value = role.get(key)
-            if isinstance(value, str) and value:
-                assets.add((role_name, label, value))
-        mtp = role.get("mtp", {})
-        if isinstance(mtp, dict) and mtp.get("enabled"):
-            value = mtp.get("path")
-            if isinstance(value, str) and value:
-                assets.add((role_name, "MTP auxiliary", value))
-            else:
-                _add_finding(
-                    report,
-                    "MODEL_INVENTORY",
-                    "MTP_ASSET_UNDECLARED",
-                    "The active contract requires MTP but declares no asset path.",
-                    role=role_name,
-                    source="llm-manifest.json",
-                )
-    for role, label, value in sorted(assets, key=lambda item: (item[0], item[1], item[2])):
-        path = Path(value).expanduser()
-        try:
-            info = path.lstat()
-        except OSError:
-            _add_finding(
-                report,
-                "MODEL_INVENTORY",
-                "ASSET_MISSING",
-                f"A required {label} asset is missing.",
-                role=role,
-                source="llm-manifest.json",
-                location=value,
-            )
-            continue
-        if not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
-            _add_finding(
-                report,
-                "MODEL_INVENTORY",
-                "ASSET_INVALID",
-                f"A required {label} asset is not a non-empty regular file.",
-                role=role,
-                source="llm-manifest.json",
-                location=value,
+                "OPENCODE_PARKED",
+                "LOCAL_MODEL_ACTIVE",
+                "OpenCode still selects a local model.",
+                str(path),
             )
 
 
 def evaluate(repo_root: Path = REPO, *, repo_only: bool = False) -> tuple[dict[str, Any], int]:
     started = time.perf_counter_ns()
     root = repo_root.resolve()
-    report = _new_report(repo_only)
+    report = {
+        "status": "PASS",
+        "mode": "fast",
+        "scope": ["REPO_BOUND"] if repo_only else ["REPO_BOUND", "HOST_BOUND"],
+        "duration_ms": 0,
+        "checks": {name: {"type": kind, "status": "NOT_RUN"} for name, kind in CHECKS},
+        "findings": [],
+    }
     exit_code = 0
     try:
-        manifest_path = root / "llm-manifest.json"
-        manifest = _load_json(manifest_path)
-        _validate_manifest_shape(manifest)
-    except InvalidInput as error:
-        _add_finding(
-            report, "MANIFEST", "INVALID_SCHEMA_OR_INPUT", str(error), source="llm-manifest.json"
+        manifest = _load_json(root / "llm-manifest.json")
+        if type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 2:
+            raise ValueError("unsupported manifest schema_version")
+        report["checks"]["MANIFEST"]["status"] = "PASS"
+        validator = _load_module(root / "scripts/validate-llm-manifest", "_llm_manifest_validator")
+        errors = validator.validate(
+            root / "llm-manifest.json",
+            check_host=not repo_only,
+            check_host_assets=False,
+            repo_root=root,
         )
+        for message in errors:
+            lowered = message.lower()
+            check = "ENDPOINT_PROJECTION" if "endpoint" in lowered else "ROLE_SCHEMA"
+            if any(term in lowered for term in ("qwen", "pi", "client", "opencode")):
+                check = "CLIENT_PROJECTION"
+            if "lifecycle" in lowered:
+                check = "LIFECYCLE_OWNERSHIP"
+            _finding(report, check, "CONTRACT_DRIFT", message, "llm-manifest.json")
+        for check_name, _ in CHECKS:
+            if report["checks"][check_name]["status"] == "NOT_RUN":
+                report["checks"][check_name]["status"] = "PASS"
+
+        manifest_roles = manifest.get("roles", {})
+        if set(manifest_roles) != {"LOCAL_GENERAL", "LOCAL_CODE", "LOCAL_VISION"}:
+            _finding(
+                report,
+                "ROLE_SCHEMA",
+                "ROLE_SET_DRIFT",
+                "Unexpected canonical local role set.",
+                "llm-manifest.json",
+            )
+        if "PATCH" in manifest_roles:
+            _finding(
+                report,
+                "ROLE_SCHEMA",
+                "PATCH_ROLE_PRESENT",
+                "PATCH is not a canonical local model role.",
+                "llm-manifest.json",
+            )
+        challenger = manifest.get("challengers", {}).get("qwen38", {})
+        if (
+            challenger.get("status") != "QUALIFIED"
+            or challenger.get("eligible_for_role_assignment") is not True
+            or challenger.get("qualified_roles") != ["LOCAL_CODE"]
+        ):
+            _finding(
+                report,
+                "ROLE_SCHEMA",
+                "QWEN38_SCOPE_DRIFT",
+                "Qwen3.8 qualification must be scoped to LOCAL_CODE.",
+                "llm-manifest.json",
+            )
+        if (
+            challenger.get("qualification", {}).get("R2.3") != "NOT_RUN"
+            or challenger.get("qualification", {}).get("benchmarks_frozen") is not True
+        ):
+            _finding(
+                report,
+                "ROLE_SCHEMA",
+                "BENCHMARK_STATE_DRIFT",
+                "R2.3 must remain unrun and benchmarks frozen.",
+                "llm-manifest.json",
+            )
+
+        _check_repo_client_projection(report, root, manifest)
+
+        qwen_wrapper = (root / "scripts/qwen-role.fish").read_text(encoding="utf-8")
+        pi_extension = (root / "integrations/pi/extensions/local-model-projection.ts").read_text(
+            encoding="utf-8"
+        )
+        opencode_wrapper = (root / "scripts/opencode-watch").read_text(encoding="utf-8")
+        lifecycle_errors = []
+        if any(token in qwen_wrapper for token in ("llm start", "llm stop", "--expected-profile")):
+            lifecycle_errors.append("Qwen wrapper requests runtime lifecycle ownership")
+        if any(
+            token in pi_extension for token in ("child_process", "llm start", "llm stop", "spawn(")
+        ):
+            lifecycle_errors.append("Pi extension contains local lifecycle operations")
+        if "llm start" in opencode_wrapper or "llm stop" in opencode_wrapper:
+            lifecycle_errors.append(
+                "OpenCode compatibility wrapper contains local lifecycle operations"
+            )
+        if lifecycle_errors:
+            for message in lifecycle_errors:
+                _finding(
+                    report,
+                    "LIFECYCLE_OWNERSHIP",
+                    "CLIENT_LIFECYCLE_ACTIVE",
+                    message,
+                    "client adapters",
+                )
+
+        _check_opencode(report, root, include_host=not repo_only)
+
+        if repo_only:
+            report["checks"]["MODEL_INVENTORY"]["status"] = "NOT_RUN"
+        else:
+            report["checks"]["MODEL_INVENTORY"]["status"] = "PASS"
+            for model_name, model in manifest.get("models", {}).items():
+                path_value = model.get("artifact_path")
+                if not isinstance(path_value, str) or not Path(path_value).is_file():
+                    _finding(
+                        report,
+                        "MODEL_INVENTORY",
+                        "ASSET_MISSING",
+                        f"A model inventory asset is unavailable: {model_name}",
+                        "llm-manifest.json",
+                    )
+
+    except (OSError, KeyError, IndexError, TypeError, ValueError, RuntimeError) as error:
         report["status"] = "ERROR"
         exit_code = 2
-        manifest = None
-    except InfrastructureError as error:
-        _add_finding(
-            report, "MANIFEST", "INFRASTRUCTURE_ERROR", str(error), source="llm-manifest.json"
-        )
-        report["status"] = "ERROR"
-        exit_code = 3
-        manifest = None
+        _finding(report, "MANIFEST", "INVALID_INPUT", str(error), "repository")
 
-    if manifest is not None:
-        _mark_pass(report, "MANIFEST")
-        try:
-            validator = _load_validator(root)
-        except FileNotFoundError as error:
-            _add_finding(
-                report,
-                "ROLE_MATRIX",
-                "VALIDATOR_MISSING",
-                "The current manifest validator is missing.",
-                source=str(error.filename or error),
-            )
-            validator = None
-        except OSError:
-            _add_finding(
-                report,
-                "ROLE_MATRIX",
-                "INFRASTRUCTURE_ERROR",
-                "The current manifest validator could not be read.",
-                source="scripts/validate-llm-manifest",
-            )
-            report["status"] = "ERROR"
-            exit_code = 3
-            validator = None
-        if validator is not None:
-            _mark_pass(report, "ROLE_MATRIX", "ENDPOINT_MATRIX", "LIFECYCLE_CONFIG")
-            saved_overrides = {
-                name: os.environ.pop(name) for name in PATH_OVERRIDE_NAMES if name in os.environ
-            }
-            try:
-                errors = validator.validate(
-                    root / "llm-manifest.json",
-                    check_host=False,
-                    check_host_assets=False,
-                    repo_root=root,
-                )
-            except KeyError, IndexError, TypeError, ValueError:
-                _add_finding(
-                    report,
-                    "MANIFEST",
-                    "INVALID_SCHEMA_OR_INPUT",
-                    "The manifest cannot be validated against the launcher contract.",
-                    source="llm-manifest.json",
-                )
-                report["status"] = "ERROR"
-                exit_code = 2
-                errors = []
-            except OSError:
-                _add_finding(
-                    report,
-                    "ROLE_MATRIX",
-                    "INFRASTRUCTURE_ERROR",
-                    "A repository contract input could not be read.",
-                    source="scripts/llm",
-                )
-                report["status"] = "ERROR"
-                exit_code = 3
-                errors = []
-            finally:
-                os.environ.update(saved_overrides)
-            for message in errors:
-                check = _classify_manifest_error(message)
-                role = _role_from_error(message, manifest["roles"])
-                source = "llm-manifest.json" if check == "MANIFEST" else "scripts/llm"
-                _add_finding(report, check, "CONTRACT_DRIFT", message, role=role, source=source)
-
-        try:
-            _mark_pass(report, "HOST_CONTRACT_CONFIG", "ENDPOINT_MATRIX")
-            pi_settings = _read_active_json(
-                report, root, ".pi/settings.json", "HOST_CONTRACT_CONFIG"
-            )
-            qwen_settings = _read_active_json(
-                report, root, ".qwen/settings.json", "HOST_CONTRACT_CONFIG"
-            )
-            if validator is not None and pi_settings is not None and qwen_settings is not None:
-                errors = []
-                try:
-                    validator._validate_client_settings(
-                        errors,
-                        manifest["roles"],
-                        {"providers": {}},
-                        (pi_settings,),
-                        (qwen_settings,),
-                        manifest["clients"],
-                    )
-                except KeyError, IndexError, TypeError, ValueError:
-                    errors.append("client contract schema drift")
-                for message in errors:
-                    check = (
-                        "ENDPOINT_MATRIX"
-                        if "endpoint" in message.lower() or "context" in message.lower()
-                        else "HOST_CONTRACT_CONFIG"
-                    )
-                    _add_finding(
-                        report,
-                        check,
-                        "HOST_BINDING_DRIFT",
-                        message,
-                        source=".pi/settings.json"
-                        if message.startswith("Pi")
-                        else ".qwen/settings.json",
-                    )
-            _mark_pass(
-                report,
-                "COMMAND_PROTOCOL_BINDING",
-                "GUARD_BINDING",
-                "ACTIVE_REFERENCE_RESOLUTION",
-            )
-            _, resources = _check_pi_bindings(report, root, manifest, pi_settings)
-            _check_qwen_bindings(report, root, manifest, qwen_settings)
-            _check_protocol_binding(report, root, resources)
-            _check_guard_binding(report, root, resources)
-            _check_active_references(report, root, manifest, pi_settings)
-            if not repo_only:
-                _mark_pass(report, "MODEL_INVENTORY")
-                _check_model_inventory(report, manifest)
-        except InfrastructureError as error:
-            _add_finding(
-                report, "MANIFEST", "INFRASTRUCTURE_ERROR", str(error), source="repository"
-            )
-            report["status"] = "ERROR"
-            exit_code = 3
-
-    if report["status"] != "ERROR" and any(
-        item["status"] == "FAIL" for item in report["checks"].values()
-    ):
+    if exit_code == 0 and report["findings"]:
         report["status"] = "FAIL"
         exit_code = 1
     report["findings"].sort(
-        key=lambda finding: (
-            next(index for index, (name, _) in enumerate(CHECKS) if name == finding["check"]),
-            finding["code"],
-            finding.get("role", ""),
-            finding.get("location", ""),
-            finding["message"],
-        )
+        key=lambda item: (item["check"], item["code"], item["source"], item["message"])
     )
     report["duration_ms"] = max(0, (time.perf_counter_ns() - started) // 1_000_000)
     return report, exit_code
 
 
 def _human_output(report: dict[str, Any]) -> str:
-    lines = [
-        f"FAST_GATE={report['status']}",
-        f"GATE_SCOPE={'REPO' if report['scope'] == ['REPO_BOUND'] else 'REPO+HOST'}",
-    ]
+    scope = "REPO" if report["scope"] == ["REPO_BOUND"] else "REPO+HOST"
+    lines = [f"FAST_GATE={report['status']}", f"GATE_SCOPE={scope}"]
     lines.extend(f"{name}={report['checks'][name]['status']}" for name, _ in CHECKS)
     lines.append(f"DURATION_MS={report['duration_ms']}")
     lines.extend(
-        f"FINDING={item['code']} | {item.get('location', item.get('source', ''))} | "
-        f"{item['message']}"
+        f"FINDING={item['code']} | {item['source']} | {item['message']}"
         for item in report["findings"]
     )
     return "\n".join(lines)
@@ -1597,17 +304,14 @@ def _human_output(report: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None, *, repo_root: Path = REPO) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("fast",))
-    parser.add_argument("--repo-only", action="store_true", help="run only repository-bound checks")
-    parser.add_argument("--json", action="store_true", help="emit the stable JSON report")
+    parser.add_argument("--repo-only", action="store_true", help="run repository-bound checks only")
+    parser.add_argument("--json", action="store_true", help="emit the structured report")
     try:
         args = parser.parse_args(argv)
     except SystemExit as error:
         return int(error.code)
     report, exit_code = evaluate(repo_root, repo_only=args.repo_only)
-    if args.json:
-        print(json.dumps(report, indent=2, sort_keys=True))
-    else:
-        print(_human_output(report))
+    print(json.dumps(report, indent=2, sort_keys=True) if args.json else _human_output(report))
     return exit_code
 
 

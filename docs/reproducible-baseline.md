@@ -1,7 +1,7 @@
 # Reproducible baseline reconstruction
 
 This document is the repository-owned reconstruction contract for the current
-NeuralEngine/OpenCode workflow. It describes a candidate product checkpoint;
+NeuralEngine local model stack. It describes a candidate product checkpoint;
 it does not make the current dirty checkout a release and it does not include
 external payloads or host configuration.
 
@@ -14,7 +14,8 @@ An authorized product checkpoint must contain:
   compatibility, handoff, context, ports, and local-adapter modules;
 - the corresponding deterministic tests under `tests/`;
 - `llm-manifest.json`, `scripts/llm`, `scripts/llm-regression-gate`, and
-  `scripts/opencode-watch`;
+  `scripts/validate-llm-manifest`, `scripts/sync-llm-client-projections`, and
+  the deprecated direct OpenCode compatibility passthrough;
 - the repo-owned Pi and Qwen Code bindings, including
   `integrations/pi/manifest.json`;
 - the operator documentation, including this contract and the current README.
@@ -27,7 +28,8 @@ the live Brain, and live shell configuration.
 ## 2. What stays external
 
 The repository defines the active LLM contract in `llm-manifest.json`; host
-artifacts and settings remain operator-managed:
+artifacts remain operator-managed while client settings are generated
+projections:
 
 - Python and `uv` for the selected repository checkpoint;
 - the rolling OpenCode executable and optional user configuration;
@@ -82,19 +84,28 @@ repository checks without host model files. Both modes are read-only and do
 not start a model or make network requests. See
 [`llm-regression-gate.md`](llm-regression-gate.md) for output and exit codes.
 
-Current checkpoint summary (2026-10-05; the manifest remains authoritative):
+Current checkpoint summary (2026-10-07; the manifest remains authoritative):
+
+`PRIMARY_LOCAL_HARNESS=Pi`. Pi is the primary local/cloud harness. Qwen Code
+is optional compatibility/Qwen-specialist support, and OpenCode is parked
+outside the active local production path.
 
 | Client or role | Active contract in this checkpoint |
 | --- | --- |
-| Pi | Cloud-only DeepSeek `deepseek-flash`; no local catalog or local lifecycle. |
-| Qwen Code | Local-only, default role GENERAL, cloud fallback disabled. |
-| GENERAL | Nemotron 3 Nano 30B-A3B Q5_K_M at `http://127.0.0.1:18081/v1`. |
-| CODE | Qwen3-Coder 30B-A3B UD-Q4_K_XL at `http://127.0.0.1:18080/v1`. |
-| VISION | Gemma 4 26B-A4B Q4_K_XL with required `mmproj` at `http://127.0.0.1:18082/v1`. |
+| `LOCAL_GENERAL` | Assignment undecided; Nemotron current deployment projection at `http://127.0.0.1:18081/v1`. |
+| `LOCAL_CODE` | Assignment undecided; qualified Qwen3.8-27B Halogen projection at `http://127.0.0.1:8731/v1`, client context 65536 and output cap 16384. |
+| `LOCAL_VISION` | Assignment undecided; Gemma 4 current deployment projection with `mmproj` at `http://127.0.0.1:18082/v1`. |
+| Pi | Primary local + cloud harness; manifest-projected local routes plus built-in cloud providers; DeepSeek `deepseek-flash` remains default. |
+| Qwen Code | Optional compatibility/Qwen-specialist client; default `LOCAL_GENERAL` compatibility projection; cloud fallback disabled. |
+| OpenCode | Parked; no local route authority or runtime lifecycle. |
 
-All three local roles are active in this checkpoint, with one local model active
-at a time. `scripts/llm` is the sole local runtime manager. MTP is disabled for
-each active role, and PATCH is not an active local role.
+The three `LOCAL_*` assignments remain `UNDECIDED`. The named runtime profiles
+are current-deployment compatibility projections retained for existing
+clients. `scripts/llm` is the sole lifecycle owner and permits only one local
+profile at a time. The manifest distinguishes model maximum, runtime, slot,
+and client-effective context; client compaction stays in each harness. Qwen3.8
+is qualified for the LOCAL_CODE projection from R4.1; R2.3 remains NOT_RUN and
+benchmark execution stays frozen in this migration.
 
 ### Host-specific prerequisites
 
@@ -114,7 +125,8 @@ manifest. These host facts are not a second repository contract.
 | Local endpoints | The host and ports selected by active manifest roles; the checkpoint values are listed above. |
 | Neural home | One existing absolute directory selected by `NEURAL_HOME`, or the default `~/.neural`; no fallback is used for an invalid override. |
 
-The launcher currently recognizes these host path overrides:
+Runtime and model paths are selected only by the manifest. Environment path
+overrides are ignored so they cannot create a second profile authority:
 
 ```text
 NEURALENGINE_LLAMA_SERVER
@@ -124,10 +136,9 @@ NEURALENGINE_VISION_MODEL
 NEURALENGINE_VISION_MMPROJ
 ```
 
-Their defaults and active asset paths are defined by the current runtime and
-manifest. When relocating to another host, configure the paths there and keep
-the derived client settings consistent with the repository contract. Do not
-copy old model paths or enable MTP based on a previous baseline.
+When relocating to another host, edit the manifest and validate the resulting
+projection. Do not configure duplicate client model maps or enable MTP based
+on a previous baseline.
 
 ## 5. Production installation of `neural`
 
@@ -177,7 +188,8 @@ selected Python/platform environment.
 ## 6. Installation of `llm` and `opencode-watch`
 
 Copy the executable files from the same candidate source with their executable
-mode preserved:
+mode preserved. The compatibility entrypoint forwards to OpenCode directly and
+does not inspect or manage local runtimes:
 
 ```bash
 install -m 0755 /absolute/path/to/neuralengine-candidate/scripts/llm \
@@ -187,9 +199,8 @@ install -m 0755 /absolute/path/to/neuralengine-candidate/scripts/opencode-watch 
 ```
 
 For an isolated probe, install them into a disposable `bin` directory and put
-that directory first on `PATH`. `opencode-watch` accepts `OPENCODE_BIN` and
-`LLM_PATH` overrides for testing or relocation; normal use resolves `opencode`
-from `PATH` and `llm` from `$HOME/.local/bin/llm`.
+that directory first on `PATH`. `opencode-watch` accepts `OPENCODE_BIN` for
+testing or relocation and does not call `llm`.
 
 ## 7. Pi, Qwen Code, and optional OpenCode integration
 
@@ -197,16 +208,22 @@ The active Pi and Qwen Code contracts are declared in `llm-manifest.json`.
 Their user/project configuration is derived state and must be checked against
 that manifest rather than used as an independent source of expected values.
 
-- Pi uses the manifest's cloud provider and model; it has no local model
-  catalog or local runtime lifecycle.
-- Qwen Code is local-only, defaults to the manifest's GENERAL role, and has no
-  cloud fallback. Its role catalog and endpoints are derived from active roles.
+Pi is the primary day-to-day local/cloud entrypoint. Its supported selector
+exposes Qwen3.8, Nemotron, Qwen3-Coder, Gemma Vision, and the built-in DeepSeek
+cloud catalog. Use `pi --model provider/id` or Pi's interactive `Ctrl+P`
+selector; do not maintain a second shell-only model map.
 
-OpenCode is a separate rolling external client. Its user configuration and
-provider/model IDs are host-managed compatibility inputs, not the authority for
-Pi/Qwen roles or local model selection. Use `neural opencode doctor` to inspect
-the optional OpenCode integration on a host; do not copy old provider IDs from
-previous reconstruction notes into the current LLM contract.
+- Pi registers manifest-derived local routes and retains built-in cloud
+  providers. Its DeepSeek cloud default is unchanged, and Pi owns no runtime
+  lifecycle.
+- Qwen Code is local-only, defaults to `LOCAL_GENERAL`, and has no cloud
+  fallback. Settings, context, output caps, and wrapper routes are generated
+  from the manifest; Qwen owns no runtime lifecycle.
+
+OpenCode is parked. The managed user configuration has no local providers or
+local model selection, and its Fish entrypoints call OpenCode directly.
+OpenCode compatibility detection remains available for deliberate future
+reactivation; it is not part of the active local model stack.
 
 ## 8. Local runtime and model assets
 
@@ -216,11 +233,10 @@ arguments, and required auxiliary assets are defined by `llm-manifest.json`;
 `scripts/llm` implements that contract. This document does not pin a parallel
 runtime configuration.
 
-For the 2026-10-05 checkpoint, GENERAL and CODE each require one model file;
-VISION requires one model file and its `mmproj`. No role currently requires an
-MTP file. The host-bound `MODEL_INVENTORY` check in the full fast gate verifies
-these active contract assets without starting the runtime. The repository-only
-mode skips inventory and reports it as `NOT_RUN`.
+Each current deployment profile requires its model file; VISION also requires
+its `mmproj`. The host-bound `MODEL_INVENTORY` check in the full fast gate
+verifies these assets without starting the runtime. The repository-only mode
+skips inventory and reports it as `NOT_RUN`.
 
 The exact runtime build, backend, file paths, and profile parameters are
 host-specific checkpoint values. Keep them in the manifest/runtime contract
@@ -274,21 +290,17 @@ metadata or binding files to force that result. If only a fresh empty home is
 wanted, initialize it explicitly with `neural init` instead of treating a
 failed restore as an empty Brain.
 
-## 10. Canonical daily entrypoint
+## 10. OpenCode compatibility entrypoint
 
-The optional OpenCode wrapper entrypoint is:
+The deprecated direct passthrough is:
 
 ```bash
 opencode-watch
 ```
 
-It forwards the original OpenCode arguments and delegates local runtime
-inspection and any exact-identity shutdown to `scripts/llm`. It is a client
-wrapper, not a second local runtime manager. It does not start a background
-watcher or perform automatic OpenCode adaptation. `ow` and `neural-open` may be
-defined as optional fish convenience functions, but they are not required for
-the reproducible baseline and the repository does not modify the live fish
-configuration.
+It forwards the original OpenCode arguments without starting, checking, or
+stopping any local runtime. `ow` and `neural-open` call OpenCode directly.
+OpenCode remains parked until a separate deliberate reactivation task.
 
 ## 11. Reconstruction health checks
 

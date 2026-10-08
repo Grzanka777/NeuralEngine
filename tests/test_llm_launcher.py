@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import multiprocessing
 import sys
 from importlib.machinery import SourceFileLoader
@@ -28,11 +29,33 @@ launcher = _load_launcher()
 
 def test_production_roles_and_challenger_conflict_port_are_exact() -> None:
     assert launcher.GENERAL_PORT == 18081
-    assert launcher.CODE_PORT == 18080
-    assert launcher.CONFLICT_PORTS == (18080, 18081, 18082, 18086, 18087)
+    assert launcher.CODE_PORT == 8731
+    assert launcher.CONFLICT_PORTS == (8731, 18080, 18081, 18082, 18086, 18087)
     assert str(launcher.GENERAL_MODEL).startswith("/models/gguf/nemotron-3-nano-30b-a3b/")
-    assert str(launcher.CODE_MODEL).startswith("/models/gguf/qwen3-coder-30b-a3b/")
+    assert str(launcher.CODE_MODEL).startswith("/models/halogen/qwen3.8-27b/")
+    assert launcher.QWEN3_CODER_PORT == 18080
+    assert str(launcher.DEFAULT_QWEN3_CODER_PROFILE.model).endswith(
+        "Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf"
+    )
     assert 18082 in launcher.CONFLICT_PORTS
+
+
+def test_canonical_local_role_can_be_used_for_guarded_stop() -> None:
+    profile = launcher.DEFAULT_PROFILE
+    ports = {
+        port: launcher.PortState(
+            listening=port == profile.port,
+            pids=(4321,) if port == profile.port else (),
+        )
+        for port in launcher.CONFLICT_PORTS
+    }
+    with pytest.raises(launcher.LauncherError, match="not the verified GENERAL profile"):
+        launcher.stop_active_profiles(
+            port_reader=ports.__getitem__,
+            general_identity_checker=lambda *_: False,
+            expected_profile="LOCAL_GENERAL",
+            expected_pid=4321,
+        )
 
 
 def test_vision_routes_to_supported_lifecycle(
@@ -69,7 +92,27 @@ def _code_profile(tmp_path: Path) -> Any:
     model.touch()
     runtime.touch()
     runtime.chmod(runtime.stat().st_mode | 0o111)
-    return launcher.CodeProfile(model=model, runtime=runtime)
+    return launcher.CodeProfile(
+        model=model,
+        runtime=runtime,
+        runtime_args=(
+            "-m",
+            "{model_path}",
+            "-c",
+            "{runtime_ctx}",
+            "-dev",
+            "{device}",
+            "--host",
+            "{host}",
+            "--port",
+            "{port}",
+        ),
+        device="Vulkan0",
+        runtime_kind="binary",
+        runtime_image=None,
+        runtime_image_digest=None,
+        container_name=None,
+    )
 
 
 def _free_ports(_: int) -> Any:
@@ -208,7 +251,7 @@ def test_serve_readiness_failure_releases_real_lock(
     assert child.exitcode == 0
 
 
-def test_launcher_artifact_paths_can_be_relocated_without_changing_profiles(
+def test_launcher_artifact_environment_overrides_are_ignored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     configured_paths = {
@@ -221,9 +264,9 @@ def test_launcher_artifact_paths_can_be_relocated_without_changing_profiles(
 
     configured = _load_launcher("neural_engine_llm_launcher_configured")
 
-    assert configured_paths["NEURALENGINE_GENERAL_MODEL"] == configured.GENERAL_MODEL
-    assert configured_paths["NEURALENGINE_VISION_MMPROJ"] == configured.VISION_MMPROJ
-    assert configured_paths["NEURALENGINE_LLAMA_SERVER"] == configured.LLAMA_SERVER
+    assert configured_paths["NEURALENGINE_GENERAL_MODEL"] != configured.GENERAL_MODEL
+    assert configured_paths["NEURALENGINE_VISION_MMPROJ"] != configured.VISION_MMPROJ
+    assert configured_paths["NEURALENGINE_LLAMA_SERVER"] != configured.LLAMA_SERVER
     assert configured.DEFAULT_PROFILE.runtime == configured.LLAMA_SERVER
     assert configured.DEFAULT_PROFILE.arguments()[1] == str(configured.GENERAL_MODEL)
 
@@ -262,9 +305,9 @@ def test_port_already_occupied_refuses_to_launch(tmp_path: Path) -> None:
 
     def occupied_ports(port: int) -> Any:
         calls.append(port)
-        return launcher.PortState(listening=port == 18080, pids=(1234,))
+        return launcher.PortState(listening=port == launcher.CODE_PORT, pids=(1234,))
 
-    with pytest.raises(launcher.LauncherError, match="18080"):
+    with pytest.raises(launcher.LauncherError, match=str(launcher.CODE_PORT)):
         launcher.start_general(
             profile,
             port_reader=occupied_ports,
@@ -272,7 +315,7 @@ def test_port_already_occupied_refuses_to_launch(tmp_path: Path) -> None:
         )
 
     # 18081 is read first for the idempotency pre-scan; CONFLICT_PORTS follow
-    assert calls == [18081, 18080, 18081, 18082, 18086, 18087]
+    assert calls == [18081, 8731, 18080, 18081, 18082, 18086, 18087]
 
 
 def test_start_reports_endpoint_after_health_success(tmp_path: Path, capsys: Any) -> None:
@@ -332,14 +375,17 @@ def test_health_wait_times_out_without_success() -> None:
 def test_profiles_use_production_context_limits() -> None:
     profiles = (
         (launcher.DEFAULT_PROFILE, "32768"),
-        (launcher.DEFAULT_CODE_PROFILE, "32768"),
+        (launcher.DEFAULT_CODE_PROFILE, "262144"),
+        (launcher.DEFAULT_QWEN3_CODER_PROFILE, "32768"),
         (launcher.DEFAULT_VISION_PROFILE, "32768"),
     )
 
     for profile, expected_context in profiles:
-        arguments = profile.arguments()
-        context_index = arguments.index("-c")
-        assert arguments[context_index + 1] == expected_context
+        assert str(profile.runtime_ctx) == expected_context
+        if "-c" in profile.arguments():
+            arguments = profile.arguments()
+            context_index = arguments.index("-c")
+            assert arguments[context_index + 1] == expected_context
 
 
 def test_status_reports_no_profile_running(capsys: Any) -> None:
@@ -371,22 +417,22 @@ def test_status_reports_identifiable_general_profile(capsys: Any) -> None:
 def test_status_reports_conflicting_supported_ports(capsys: Any) -> None:
     launcher.status_profiles(
         port_reader=lambda port: launcher.PortState(
-            listening=port in (18080, 18081),
-            pids=(4326,) if port == 18080 else (4327,) if port == 18081 else (),
+            listening=port in (launcher.CODE_PORT, 18081),
+            pids=(4326,) if port == launcher.CODE_PORT else (4327,) if port == 18081 else (),
         ),
         general_health_check=lambda _: True,
     )
 
     output = capsys.readouterr().out
     assert "profile: CONFLICT" in output
-    assert "active ports: 18080, 18081" in output
+    assert "active ports: 8731, 18081" in output
 
 
 def test_status_does_not_identify_an_unverified_code_listener(capsys: Any) -> None:
     launcher.status_profiles(
         port_reader=lambda port: launcher.PortState(
-            listening=port == 18080,
-            pids=(4328,) if port == 18080 else (),
+            listening=port == launcher.CODE_PORT,
+            pids=(4328,) if port == launcher.CODE_PORT else (),
         )
     )
 
@@ -397,7 +443,10 @@ def test_status_does_not_identify_an_unverified_code_listener(capsys: Any) -> No
 
 def test_code_identity_requires_exact_command_and_health() -> None:
     def reader(port: int) -> Any:
-        return launcher.PortState(listening=port == 18080, pids=(5501,) if port == 18080 else ())
+        return launcher.PortState(
+            listening=port == launcher.CODE_PORT,
+            pids=(5501,) if port == launcher.CODE_PORT else (),
+        )
 
     assert (
         launcher.active_profile_state(
@@ -450,7 +499,10 @@ def test_code_stop_requires_expected_identity(capsys: Any) -> None:
     signalled: list[int] = []
 
     def reader(port: int) -> Any:
-        return launcher.PortState(listening=port == 18080, pids=(5503,) if port == 18080 else ())
+        return launcher.PortState(
+            listening=port == launcher.CODE_PORT,
+            pids=(5503,) if port == launcher.CODE_PORT else (),
+        )
 
     with pytest.raises(launcher.LauncherError, match="ownership mismatch"):
         launcher.stop_active_profiles(
@@ -466,7 +518,7 @@ def test_code_stop_requires_expected_identity(capsys: Any) -> None:
         expected_pid=5503,
         code_identity_checker=lambda pid, _: pid == 5503,
         killer=lambda pid, _sig: signalled.append(pid),
-        closed_waiter=lambda port: port == 18080,
+        closed_waiter=lambda port: port == launcher.CODE_PORT,
     )
     assert signalled == [5503]
     assert "CODE STOPPED" in capsys.readouterr().out
@@ -480,8 +532,12 @@ def test_machine_state_fails_closed_for_conflict_or_unverified_listener() -> Non
     assert (
         launcher.active_profile_state(
             port_reader=lambda selected: launcher.PortState(
-                listening=selected in (18080, 18081),
-                pids=(4401,) if selected == 18080 else (4402,) if selected == 18081 else (),
+                listening=selected in (launcher.CODE_PORT, 18081),
+                pids=(4401,)
+                if selected == launcher.CODE_PORT
+                else (4402,)
+                if selected == 18081
+                else (),
             ),
             general_health_check=lambda _: True,
         )
@@ -490,8 +546,8 @@ def test_machine_state_fails_closed_for_conflict_or_unverified_listener() -> Non
     assert (
         launcher.active_profile_state(
             port_reader=lambda selected: launcher.PortState(
-                listening=selected in (18080, 18082),
-                pids=(4404,) if selected in (18080, 18082) else (),
+                listening=selected in (launcher.CODE_PORT, 18082),
+                pids=(4404,) if selected in (launcher.CODE_PORT, 18082) else (),
             ),
         )
         == "UNKNOWN"
@@ -932,13 +988,8 @@ def test_main_returns_zero_when_general_already_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
     """main() must return 0 (exit code 0) when GENERAL ALREADY READY."""
-    profile = _profile(tmp_path)
-
-    monkeypatch.setenv("NEURALENGINE_GENERAL_MODEL", str(profile.model))
-    monkeypatch.setenv("NEURALENGINE_LLAMA_SERVER", str(profile.runtime))
     configured = _load_launcher("neural_engine_llm_launcher_general_ready_cli")
-    assert configured.DEFAULT_PROFILE.model == profile.model
-    assert configured.DEFAULT_PROFILE.runtime == profile.runtime
+    profile = configured.DEFAULT_PROFILE
 
     monkeypatch.setattr(
         configured,
@@ -1051,7 +1102,10 @@ def test_detect_verified_running_profile_returns_none_when_health_fails() -> Non
     assert result is None
 
 
-@pytest.mark.parametrize("name,port", [("GENERAL", 18081), ("CODE", 18080), ("VISION", 18082)])
+@pytest.mark.parametrize(
+    "name,port",
+    [("GENERAL", 18081), ("CODE", 8731), ("QWEN3_CODER", 18080), ("VISION", 18082)],
+)
 def test_all_roles_require_exact_identity_and_health(name: str, port: int) -> None:
     def reader(candidate: int) -> Any:
         return launcher.PortState(
@@ -1084,6 +1138,42 @@ def test_vision_baseline_disables_reasoning_and_mtp() -> None:
     assert args[args.index("--reasoning") + 1] == "off"
     assert args[args.index("--mmproj") + 1] == str(launcher.VISION_MMPROJ)
     assert not any("spec" in arg or "mtp" in arg for arg in args)
+
+
+def test_qwen3_coder_machine_switch_and_owned_stop_contract(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(launcher, "lifecycle_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(launcher, "start_profile", lambda _target: ("QWEN3_CODER", 8123))
+    monkeypatch.setattr(launcher, "active_profile_identity", lambda: ("QWEN3_CODER", 8123))
+    monkeypatch.setattr(
+        launcher,
+        "project_profile",
+        lambda _target: {"endpoint": "http://127.0.0.1:18080/v1"},
+    )
+    launcher.switch_json("qwen3-coder")
+    switch_doc = json.loads(capsys.readouterr().out)
+    assert switch_doc == {
+        "api_version": 1,
+        "endpoint": "http://127.0.0.1:18080/v1",
+        "operation": "switch",
+        "ownership": "STARTED",
+        "pid": 8123,
+        "profile": "QWEN3_CODER",
+    }
+
+    stopped: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        launcher,
+        "stop_active_profiles",
+        lambda **kwargs: stopped.append(kwargs),
+    )
+    launcher.stop_owned_json("QWEN3_CODER", 8123)
+    stop_doc = json.loads(capsys.readouterr().out)
+    assert stop_doc["result"] == "STOPPED"
+    assert stopped == [{"expected_profile": "QWEN3_CODER", "expected_pid": 8123}]
 
 
 def test_switch_passes_exact_ownership_to_stop(

@@ -29,7 +29,7 @@ class OpencodeCompatibilityService:
         self,
         *,
         live_smoke: bool = False,
-        lane: str = "code",
+        lane: str = "general",
     ) -> OpencodeCompatibilityReport:
         evidence = self._probe.inspect()
         command_protocol = evidence.command_protocol

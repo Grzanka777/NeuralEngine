@@ -72,20 +72,26 @@ files are unavailable. The gate does not start models or make network requests.
 See [`docs/llm-regression-gate.md`](docs/llm-regression-gate.md) for its scope
 and output.
 
-Current checkpoint summary (2026-10-05; consult the manifest for current
+Current checkpoint summary (2026-10-07; consult the manifest for current
 values):
+
+`PRIMARY_LOCAL_HARNESS=Pi`: Pi is the primary day-to-day local and cloud
+client. Qwen Code remains an optional compatibility/Qwen-specialist client;
+OpenCode is parked and is not part of the active local production path.
 
 | Client or role | Current contract |
 | --- | --- |
-| Pi | Cloud-only DeepSeek `deepseek-flash`; no local model catalog or lifecycle. |
-| Qwen Code | Local-only, with cloud fallback disabled; routes to the active local roles below. |
-| GENERAL | Nemotron 3 Nano 30B-A3B Q5_K_M at `http://127.0.0.1:18081/v1`. |
-| CODE | Qwen3-Coder 30B-A3B UD-Q4_K_XL at `http://127.0.0.1:18080/v1`. |
-| VISION | Gemma 4 26B-A4B Q4_K_XL plus `mmproj` at `http://127.0.0.1:18082/v1`. |
+| Pi | Primary local + cloud harness; manifest-projected local routes plus built-in cloud providers; DeepSeek `deepseek-flash` remains the default. |
+| Qwen Code | Optional compatibility/Qwen-specialist client; local-only, with cloud fallback disabled. |
+| `LOCAL_GENERAL` | Assignment undecided; Nemotron current-deployment projection at `http://127.0.0.1:18081/v1`. |
+| `LOCAL_CODE` | Assignment undecided; qualified Qwen3.8-27B Halogen projection at `http://127.0.0.1:8731/v1`, slot context 65536. |
+| `LOCAL_VISION` | Assignment undecided; Gemma 4 current-deployment projection at `http://127.0.0.1:18082/v1`. |
 
-All three local roles are active in this checkpoint. MTP is disabled for each;
-VISION requires its projector asset. PATCH is not an active local role in the
-current contract.
+The three local roles are compatibility projections, not final assignments.
+The manifest distinguishes model, runtime, slot, and client-effective context;
+Qwen and Pi do not own local runtime lifecycle. `LOCAL_CODE` is the canonical
+Qwen3.8 Halogen route for the current comparison, while benchmark work remains
+separately gated.
 
 From fish or another shell, the launcher supports:
 
@@ -109,6 +115,27 @@ unknown, foreign, or conflicting state and does not perform automatic rollback.
 launcher does not start a service during login or boot. Run the repo-only gate
 for configuration validation, or the full local gate to include required
 model-file inventory.
+
+### Pi model selection
+
+Pi's supported model selector exposes the manifest-derived `neuralengine-local`
+catalog alongside the unchanged DeepSeek default. Start a session with an
+explicit choice, or use Pi's interactive model selector (`Ctrl+P`) to switch
+during a session:
+
+```bash
+pi --model deepseek/deepseek-flash
+pi --model neuralengine-local/qwen3.8-27b
+pi --model neuralengine-local//models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf
+pi --model neuralengine-local//models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf
+pi --model neuralengine-local//models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf
+```
+
+The Pi extension maps local selections to `scripts/llm` profiles. It preserves
+`STARTED` and `BORROWED` ownership semantics and stops only the exact owned
+profile/PID when leaving a local route. Qwen3-Coder keeps its canonical
+manifest `max_output_tokens: null`; Pi uses its renderer's documented no-cap
+sentinel without inventing a value.
 
 ### Manual OpenCode fresh-session handoff
 

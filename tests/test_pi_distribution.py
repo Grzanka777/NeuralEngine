@@ -59,9 +59,11 @@ def test_global_resources_have_one_source_outside_project_autoload_paths() -> No
     manifest = _manifest()
     by_name = {resource["name"]: resource for resource in manifest["resources"]}
 
-    assert by_name["deepseek-only"]["source"] == ("integrations/pi/extensions/deepseek-only.ts")
+    assert by_name["local-model-projection"]["source"] == (
+        "integrations/pi/extensions/local-model-projection.ts"
+    )
     assert by_name["command-protocol"]["source"] == ("integrations/pi/skills/command-protocol")
-    assert not (ROOT / ".pi/extensions/deepseek-only.ts").exists()
+    assert not (ROOT / ".pi/extensions/local-model-projection.ts").exists()
     assert not (ROOT / ".pi/skills/command-protocol").exists()
 
 
@@ -88,9 +90,9 @@ def test_installer_creates_global_destinations_and_copies_exact_bytes(tmp_path: 
 
     assert result.returncode == 0, result.stderr
     global_root = home / ".pi/agent"
-    lifecycle_source = ROOT / "integrations/pi/extensions/deepseek-only.ts"
-    lifecycle_target = global_root / "extensions/deepseek-only.ts"
-    assert lifecycle_target.read_bytes() == lifecycle_source.read_bytes()
+    projection_source = ROOT / "integrations/pi/extensions/local-model-projection.ts"
+    projection_target = global_root / "extensions/local-model-projection.ts"
+    assert projection_target.read_bytes() == projection_source.read_bytes()
 
     protocol_target = global_root / "skills/command-protocol"
     assert _all_files(protocol_target) == _all_files(PROTOCOL_SOURCE)
@@ -131,17 +133,17 @@ def test_installer_repairs_managed_copy_drift_without_deleting_unrelated_files(
     home = tmp_path / "home"
     assert _run_installer(home).returncode == 0
     global_root = home / ".pi/agent"
-    lifecycle_target = global_root / "extensions/deepseek-only.ts"
+    projection_target = global_root / "extensions/local-model-projection.ts"
     unrelated = global_root / "extensions/keep.ts"
-    lifecycle_target.write_text("drift\n", encoding="utf-8")
+    projection_target.write_text("drift\n", encoding="utf-8")
     unrelated.write_text("keep\n", encoding="utf-8")
 
     result = _run_installer(home)
 
     assert result.returncode == 0, result.stderr
     assert (
-        lifecycle_target.read_bytes()
-        == (ROOT / "integrations/pi/extensions/deepseek-only.ts").read_bytes()
+        projection_target.read_bytes()
+        == (ROOT / "integrations/pi/extensions/local-model-projection.ts").read_bytes()
     )
     assert unrelated.read_text(encoding="utf-8") == "keep\n"
 
@@ -172,15 +174,15 @@ def test_installer_is_idempotent_and_second_sync_changes_no_bytes(tmp_path: Path
     second = _run_installer(home)
 
     assert second.returncode == 0, second.stderr
-    assert "unchanged: deepseek-only" in second.stdout
+    assert "unchanged: local-model-projection" in second.stdout
     assert "unchanged: command-protocol" in second.stdout
     assert _all_files(global_root) == before
     assert {path: (global_root / path).stat().st_mtime_ns for path in before} == mtimes
 
 
-def test_lifecycle_and_command_protocol_are_not_project_auto_loaded() -> None:
-    assert (ROOT / "integrations/pi/extensions/deepseek-only.ts").is_file()
-    assert not (ROOT / ".pi/extensions/deepseek-only.ts").exists()
+def test_global_projection_and_command_protocol_are_not_project_auto_loaded() -> None:
+    assert (ROOT / "integrations/pi/extensions/local-model-projection.ts").is_file()
+    assert not (ROOT / ".pi/extensions/local-model-projection.ts").exists()
     assert not (ROOT / ".pi/skills/command-protocol").exists()
 
 
@@ -267,6 +269,6 @@ def test_legacy_sync_command_delegates_to_canonical_installer(tmp_path: Path) ->
     result = _run_installer(tmp_path / "home", LEGACY_WRAPPER)
 
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / "home/.pi/agent/extensions/deepseek-only.ts").read_bytes() == (
-        ROOT / "integrations/pi/extensions/deepseek-only.ts"
+    assert (tmp_path / "home/.pi/agent/extensions/local-model-projection.ts").read_bytes() == (
+        ROOT / "integrations/pi/extensions/local-model-projection.ts"
     ).read_bytes()

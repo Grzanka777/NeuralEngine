@@ -49,7 +49,7 @@ def test_opencode_doctor_reports_pass_without_version_gate(
     assert result.exit_code == 0
     assert "OpenCode: opencode v99.9.9" in result.output
     assert "Compatibility: PASS" in result.output
-    assert service.calls == [(False, "code")]
+    assert service.calls == [(False, "general")]
 
 
 def test_opencode_doctor_returns_zero_for_degraded_optional_capability(

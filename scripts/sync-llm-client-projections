@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Materialize Qwen and Pi route settings from the canonical LLM manifest."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import stat
+import tempfile
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def load_manifest(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("schema_version") != 2:
+        raise ValueError("expected local model manifest schema 2")
+    return value
+
+
+def local_routes(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    routes: list[dict[str, Any]] = []
+    for role_name in manifest["clients"]["qwen"]["local_roles"]:
+        role = manifest["roles"][role_name]
+        if role["assignment"] != "UNDECIDED":
+            raise ValueError(f"local role assignment must remain undecided: {role_name}")
+        profile = manifest["runtime_profiles"][role["current_deployment_profile"]]
+        model = manifest["models"][profile["model_ref"]]
+        endpoint = profile["endpoint"]
+        routes.append(
+            {
+                "role": role_name,
+                "profile": profile,
+                "model": model,
+                "endpoint": f"http://{endpoint['host']}:{endpoint['port']}{endpoint['path']}",
+            }
+        )
+    return routes
+
+
+def qwen_projection(settings: dict[str, Any], routes: list[dict[str, Any]]) -> dict[str, Any]:
+    result = dict(settings)
+    providers = dict(result.get("modelProviders", {}))
+    providers["openai"] = [
+        {
+            "id": route["model"]["model_id"],
+            "name": route["role"],
+            "description": (
+                "Current deployment compatibility projection; role assignment remains undecided."
+            ),
+            "envKey": "QWEN_LOCAL_API_KEY",
+            "baseUrl": route["endpoint"],
+            "generationConfig": {
+                "contextWindowSize": route["profile"]["context_layers"]["client_effective_ctx"],
+                "maxTokens": route["profile"]["max_output_tokens"],
+                **({"modalities": {"image": True}} if route["model"]["kind"] == "vision" else {}),
+            },
+        }
+        for route in routes
+    ]
+    result["modelProviders"] = providers
+    current_model = result.get("model", {})
+    current_model = dict(current_model) if isinstance(current_model, dict) else {}
+    default = next(route for route in routes if route["role"] == "LOCAL_GENERAL")
+    current_model["name"] = default["model"]["model_id"]
+    current_model["baseUrl"] = default["endpoint"]
+    result["model"] = current_model
+    return result
+
+
+def pi_projection(settings: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+    result = dict(settings)
+    provider = manifest["clients"]["pi"]["provider"]
+    profile_names = manifest["clients"]["pi"].get("local_profiles")
+    if not isinstance(profile_names, list) or any(not isinstance(item, str) for item in profile_names):
+        raise ValueError("Pi local_profiles must be a list of runtime profile names")
+    local_ids = [
+        f"{provider}/{manifest['models'][manifest['runtime_profiles'][profile_name]['model_ref']]['model_id']}"
+        for profile_name in profile_names
+    ]
+    enabled = result.get("enabledModels", [])
+    if not isinstance(enabled, list) or any(not isinstance(item, str) for item in enabled):
+        raise ValueError("Pi enabledModels must be a list of strings")
+    # Replace prior projections from this provider so retired local model IDs
+    # cannot remain selectable after a canonical route changes.
+    retained = [item for item in enabled if not item.startswith(f"{provider}/")]
+    result["enabledModels"] = list(dict.fromkeys([*retained, *local_ids]))
+    return result
+
+
+def read_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"expected a JSON object in {path}")
+    return value
+
+
+def encode(value: dict[str, Any]) -> bytes:
+    return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def write_atomic(path: Path, data: bytes, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, delete=False) as handle:
+            handle.write(data)
+            temporary = Path(handle.name)
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def project(path: Path, update: Any, *, check: bool) -> bool:
+    original = path.read_bytes() if path.is_file() else b""
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+    expected = encode(update(read_object(path)))
+    if original == expected:
+        return False
+    if check:
+        raise ValueError(f"client projection drift: {path}")
+    write_atomic(path, expected, mode)
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", type=Path, default=ROOT / "llm-manifest.json")
+    parser.add_argument("--home", type=Path, default=Path.home())
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    manifest = load_manifest(args.manifest)
+    routes = local_routes(manifest)
+    qwen_targets = [ROOT / ".qwen/settings.json", args.home / ".qwen/settings.json"]
+    pi_targets = [ROOT / ".pi/settings.json", args.home / ".pi/agent/settings.json"]
+    changed = []
+    for path in qwen_targets:
+        if project(path, lambda settings: qwen_projection(settings, routes), check=args.check):
+            changed.append(path)
+    for path in pi_targets:
+        if project(path, lambda settings: pi_projection(settings, manifest), check=args.check):
+            changed.append(path)
+    if args.check:
+        print("LLM client projections: PASS")
+    else:
+        status = "UPDATED" if changed else "CURRENT"
+        print(f"LLM client projections: {status} ({len(changed)} file(s))")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

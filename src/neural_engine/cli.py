@@ -338,8 +338,8 @@ def doctor_opencode(
     ] = False,
     lane: Annotated[
         str,
-        typer.Option("--lane", help="Live smoke lane: general or code."),
-    ] = "code",
+        typer.Option("--lane", help="Live smoke lane: general; code is unfilled."),
+    ] = "general",
 ) -> None:
     """Check OpenCode capabilities without comparing exact version strings."""
 

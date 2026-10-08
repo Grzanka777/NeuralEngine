@@ -19,10 +19,7 @@ def _evidence(
         capabilities=observations,
         wrapper_path=Path("/tmp/opencode-watch"),
         llm_path=Path("/tmp/llm"),
-        model_ids=(
-            ("llama-general/qwen3.6-general-local", "qwen3.6-general-local"),
-            ("llama-code/qwen3-coder-local", "qwen3-coder-local"),
-        ),
+        model_ids=(("llama-general/qwen3.6-general-local", "qwen3.6-general-local"),),
     )
 
 
@@ -72,7 +69,7 @@ def test_missing_optional_capability_degrades_without_stopping_work() -> None:
 def test_missing_critical_capability_blocks() -> None:
     evidence = _evidence(
         OpencodeCapabilityObservation("executable", True, "found", True),
-        OpencodeCapabilityObservation("CODE routing", False, "missing", True),
+        OpencodeCapabilityObservation("CODE routing", False, "unsupported", True),
     )
 
     report = OpencodeCompatibilityService(FakeProbe(evidence), FakeSmokeRunner()).inspect()

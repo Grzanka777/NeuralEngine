@@ -11,16 +11,23 @@ import registerPiExtension, { guardToolCall } from "../.pi/extensions/neuralengi
 
 const TEST_COMMAND = "uv run pytest tests/test_agent_governor.py -q";
 
-test("Pi project auto-discovery retains Guard and global cloud policy", () => {
+test("Pi project auto-discovery retains Guard and manifest-derived local routes", () => {
   const extensionFiles = readdirSync(new URL("../.pi/extensions/", import.meta.url))
     .filter((file) => /\.(?:[cm]?js|ts)$/.test(file))
     .sort();
 
   assert.deepEqual(extensionFiles, ["neuralengine-guard.ts"]);
   assert.equal(
-    existsSync(new URL("../integrations/pi/extensions/deepseek-only.ts", import.meta.url)),
+    existsSync(new URL("../integrations/pi/extensions/local-model-projection.ts", import.meta.url)),
     true,
   );
+  const routeSource = readFileSync(
+    new URL("../integrations/pi/extensions/local-model-projection.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(routeSource, /projectLocalModels/);
+  assert.match(routeSource, /registerProvider/);
+  assert.doesNotMatch(routeSource, /child_process|llm start|llm stop/);
   assert.equal(existsSync(new URL("../control-plane/governor.ts", import.meta.url)), true);
   const coreSource = readFileSync(new URL("../control-plane/governor.ts", import.meta.url), "utf8");
   const adapterSource = readFileSync(new URL("../.pi/extensions/neuralengine-guard.ts", import.meta.url), "utf8");

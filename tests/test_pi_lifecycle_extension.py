@@ -42,7 +42,7 @@ def test_sync_excludes_retired_lifecycle(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     extensions = tmp_path / "home/.pi/agent/extensions"
     assert not (extensions / EXTENSION_PATH.name).exists()
-    assert (extensions / "deepseek-only.ts").is_file()
+    assert (extensions / "local-model-projection.ts").is_file()
 
 
 def test_extension_source_does_not_contain_human_parsing_or_direct_scripts() -> None:

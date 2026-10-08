@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Sole local runtime manager for GENERAL, CODE, and VISION."""
+"""Sole local runtime manager for current deployment compatibility profiles."""
 
 from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import os
 import re
 import signal
@@ -13,47 +14,81 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from io import StringIO
 from collections.abc import Callable, Sequence
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, redirect_stdout, suppress
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, cast
 
-
-def _configured_path(name: str, default: Path) -> Path:
-    """Return a path override while preserving the verified host default."""
-
-    value = os.environ.get(name)
-    return Path(value).expanduser() if value else default
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MANIFEST_PATH = REPO_ROOT / "llm-manifest.json"
 
 
-GENERAL_MODEL = _configured_path(
-    "NEURALENGINE_GENERAL_MODEL",
-    Path("/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf"),
+def _load_manifest() -> dict[str, Any]:
+    try:
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"cannot load canonical local model manifest: {error}") from error
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != 2:
+        raise RuntimeError(f"unsupported canonical local model manifest: {MANIFEST_PATH}")
+    return manifest
+
+
+MANIFEST = _load_manifest()
+MODEL_RECORDS: dict[str, dict[str, Any]] = MANIFEST["models"]
+RUNTIME_RECORDS: dict[str, dict[str, Any]] = MANIFEST["runtime_profiles"]
+
+
+def _profile_defaults(name: str) -> dict[str, Any]:
+    profile = RUNTIME_RECORDS[name]
+    model = MODEL_RECORDS[profile["model_ref"]]
+    projector_ref = profile.get("projector_ref")
+    projector = MODEL_RECORDS[projector_ref]["artifact_path"] if projector_ref else None
+    endpoint = profile["endpoint"]
+    runtime = profile["runtime"]
+    return {
+        "identity": profile["legacy_identity"],
+        "cli_alias": profile["legacy_cli_alias"],
+        "model": Path(model["artifact_path"]),
+        "runtime": Path(runtime["binary"]),
+        "host": endpoint["host"],
+        "port": endpoint["port"],
+        "runtime_args": tuple(profile["arguments"]),
+        "runtime_ctx": profile["context_layers"]["runtime_ctx"],
+        "device": runtime["device"],
+        "mmproj": Path(projector) if projector else None,
+        "runtime_kind": runtime.get("kind", "binary"),
+        "runtime_image": runtime.get("image"),
+        "runtime_image_digest": runtime.get("image_digest"),
+        "container_name": runtime.get("container_name"),
+    }
+
+
+_GENERAL_DEFAULTS = _profile_defaults("current-general")
+_CODE_DEFAULTS = _profile_defaults("current-code")
+_QWEN3_CODER_DEFAULTS = _profile_defaults("current-qwen3-coder")
+_VISION_DEFAULTS = _profile_defaults("current-vision")
+GENERAL_MODEL = _GENERAL_DEFAULTS["model"]
+CODE_MODEL = _CODE_DEFAULTS["model"]
+VISION_MODEL = _VISION_DEFAULTS["model"]
+VISION_MMPROJ = _VISION_DEFAULTS["mmproj"]
+LLAMA_SERVER = _GENERAL_DEFAULTS["runtime"]
+GENERAL_HOST = _GENERAL_DEFAULTS["host"]
+GENERAL_PORT = _GENERAL_DEFAULTS["port"]
+CODE_HOST = _CODE_DEFAULTS["host"]
+CODE_PORT = _CODE_DEFAULTS["port"]
+VISION_HOST = _VISION_DEFAULTS["host"]
+VISION_PORT = _VISION_DEFAULTS["port"]
+QWEN3_CODER_HOST = _QWEN3_CODER_DEFAULTS["host"]
+QWEN3_CODER_PORT = _QWEN3_CODER_DEFAULTS["port"]
+CONFLICT_PORTS = tuple(
+    sorted(
+        {GENERAL_PORT, CODE_PORT, QWEN3_CODER_PORT, VISION_PORT}
+        | set(MANIFEST.get("reserved_conflict_ports", []))
+    )
 )
-CODE_MODEL = _configured_path(
-    "NEURALENGINE_CODE_MODEL",
-    Path("/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf"),
-)
-VISION_MODEL = _configured_path(
-    "NEURALENGINE_VISION_MODEL",
-    Path("/models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf"),
-)
-VISION_MMPROJ = _configured_path(
-    "NEURALENGINE_VISION_MMPROJ",
-    Path("/models/gguf/gemma4-26b-a4b/mmproj-BF16.gguf"),
-)
-LLAMA_SERVER = _configured_path(
-    "NEURALENGINE_LLAMA_SERVER",
-    Path("/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server"),
-)
-GENERAL_HOST = "127.0.0.1"
-GENERAL_PORT = 18081
-CODE_HOST = "127.0.0.1"
-CODE_PORT = 18080
-VISION_PORT = 18082
-CONFLICT_PORTS = (18080, 18081, 18082, 18086, 18087)
 HEALTH_TIMEOUT_SECONDS = 300
 HEALTH_POLL_SECONDS = 1
 HEALTH_REQUEST_TIMEOUT_SECONDS = 2
@@ -69,39 +104,33 @@ class LauncherError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class GeneralProfile:
-    """Nemotron GENERAL baseline; no speculative assets."""
+    """A validated current-deployment compatibility profile from the manifest."""
 
-    model: Path = GENERAL_MODEL
-    runtime: Path = LLAMA_SERVER
-    host: str = GENERAL_HOST
-    port: int = GENERAL_PORT
+    model: Path = _GENERAL_DEFAULTS["model"]
+    identity: str = _GENERAL_DEFAULTS["identity"]
+    cli_alias: str = _GENERAL_DEFAULTS["cli_alias"]
+    runtime: Path = _GENERAL_DEFAULTS["runtime"]
+    host: str = _GENERAL_DEFAULTS["host"]
+    port: int = _GENERAL_DEFAULTS["port"]
+    runtime_args: tuple[str, ...] = _GENERAL_DEFAULTS["runtime_args"]
+    runtime_ctx: int = _GENERAL_DEFAULTS["runtime_ctx"]
+    device: str = _GENERAL_DEFAULTS["device"]
+    mmproj: Path | None = _GENERAL_DEFAULTS["mmproj"]
+    runtime_kind: str = _GENERAL_DEFAULTS["runtime_kind"]
+    runtime_image: str | None = _GENERAL_DEFAULTS["runtime_image"]
+    runtime_image_digest: str | None = _GENERAL_DEFAULTS["runtime_image_digest"]
+    container_name: str | None = _GENERAL_DEFAULTS["container_name"]
 
     def arguments(self) -> tuple[str, ...]:
-        return (
-            "-m",
-            str(self.model),
-            "-dev",
-            "Vulkan0",
-            "-ngl",
-            "999",
-            "-c",
-            "32768",
-            "-b",
-            "2048",
-            "-ub",
-            "512",
-            "-fa",
-            "auto",
-            "--jinja",
-            "--parallel",
-            "1",
-            "-lv",
-            "4",
-            "--host",
-            self.host,
-            "--port",
-            str(self.port),
-        )
+        values = {
+            "model_path": str(self.model),
+            "projector_path": str(self.mmproj) if self.mmproj is not None else "",
+            "device": self.device,
+            "runtime_ctx": str(self.runtime_ctx),
+            "host": self.host,
+            "port": str(self.port),
+        }
+        return tuple(argument.format_map(values) for argument in self.runtime_args)
 
     def command(self) -> tuple[str, ...]:
         return (str(self.runtime), *self.arguments())
@@ -110,86 +139,90 @@ class GeneralProfile:
         return f"http://{self.host}:{self.port}/v1"
 
 
-DEFAULT_PROFILE = GeneralProfile()
+@dataclass(frozen=True, slots=True)
+class CodeProfile(GeneralProfile):
+    """Current CODE deployment compatibility profile."""
+
+    model: Path = _CODE_DEFAULTS["model"]
+    identity: str = _CODE_DEFAULTS["identity"]
+    cli_alias: str = _CODE_DEFAULTS["cli_alias"]
+    runtime: Path = _CODE_DEFAULTS["runtime"]
+    host: str = _CODE_DEFAULTS["host"]
+    port: int = _CODE_DEFAULTS["port"]
+    runtime_args: tuple[str, ...] = _CODE_DEFAULTS["runtime_args"]
+    runtime_ctx: int = _CODE_DEFAULTS["runtime_ctx"]
+    device: str = _CODE_DEFAULTS["device"]
+    mmproj: Path | None = _CODE_DEFAULTS["mmproj"]
+    runtime_kind: str = _CODE_DEFAULTS["runtime_kind"]
+    runtime_image: str | None = _CODE_DEFAULTS["runtime_image"]
+    runtime_image_digest: str | None = _CODE_DEFAULTS["runtime_image_digest"]
+    container_name: str | None = _CODE_DEFAULTS["container_name"]
 
 
 @dataclass(frozen=True, slots=True)
-class CodeProfile(GeneralProfile):
-    """Qwen3-Coder CODE baseline."""
+class Qwen3CoderProfile(GeneralProfile):
+    """Optional historical Qwen3-Coder local coding specialist profile."""
 
-    model: Path = CODE_MODEL
-    port: int = CODE_PORT
-
-    def arguments(self) -> tuple[str, ...]:
-        return (
-            "-m",
-            str(self.model),
-            "-dev",
-            "Vulkan0",
-            "-ngl",
-            "999",
-            "-c",
-            "32768",
-            "-b",
-            "2048",
-            "-ub",
-            "1024",
-            "-fa",
-            "on",
-            "--jinja",
-            "--parallel",
-            "1",
-            "--cache-prompt",
-            "--metrics",
-            "--host",
-            self.host,
-            "--port",
-            str(self.port),
-        )
-
-
-DEFAULT_CODE_PROFILE = CodeProfile()
+    model: Path = _QWEN3_CODER_DEFAULTS["model"]
+    identity: str = _QWEN3_CODER_DEFAULTS["identity"]
+    cli_alias: str = _QWEN3_CODER_DEFAULTS["cli_alias"]
+    runtime: Path = _QWEN3_CODER_DEFAULTS["runtime"]
+    host: str = _QWEN3_CODER_DEFAULTS["host"]
+    port: int = _QWEN3_CODER_DEFAULTS["port"]
+    runtime_args: tuple[str, ...] = _QWEN3_CODER_DEFAULTS["runtime_args"]
+    runtime_ctx: int = _QWEN3_CODER_DEFAULTS["runtime_ctx"]
+    device: str = _QWEN3_CODER_DEFAULTS["device"]
+    mmproj: Path | None = _QWEN3_CODER_DEFAULTS["mmproj"]
+    runtime_kind: str = _QWEN3_CODER_DEFAULTS["runtime_kind"]
+    runtime_image: str | None = _QWEN3_CODER_DEFAULTS["runtime_image"]
+    runtime_image_digest: str | None = _QWEN3_CODER_DEFAULTS["runtime_image_digest"]
+    container_name: str | None = _QWEN3_CODER_DEFAULTS["container_name"]
 
 
 @dataclass(frozen=True, slots=True)
 class VisionProfile(GeneralProfile):
-    """Gemma VISION baseline with projector and reasoning disabled."""
+    """Current VISION deployment compatibility profile."""
 
-    model: Path = VISION_MODEL
-    mmproj: Path = VISION_MMPROJ
-    port: int = VISION_PORT
-
-    def arguments(self) -> tuple[str, ...]:
-        return (
-            "-m",
-            str(self.model),
-            "--mmproj",
-            str(self.mmproj),
-            "-dev",
-            "Vulkan0",
-            "-ngl",
-            "999",
-            "-c",
-            "32768",
-            "-b",
-            "2048",
-            "-ub",
-            "512",
-            "-fa",
-            "auto",
-            "--jinja",
-            "--parallel",
-            "1",
-            "--reasoning",
-            "off",
-            "--host",
-            self.host,
-            "--port",
-            str(self.port),
-        )
+    model: Path = _VISION_DEFAULTS["model"]
+    identity: str = _VISION_DEFAULTS["identity"]
+    cli_alias: str = _VISION_DEFAULTS["cli_alias"]
+    runtime: Path = _VISION_DEFAULTS["runtime"]
+    host: str = _VISION_DEFAULTS["host"]
+    port: int = _VISION_DEFAULTS["port"]
+    runtime_args: tuple[str, ...] = _VISION_DEFAULTS["runtime_args"]
+    runtime_ctx: int = _VISION_DEFAULTS["runtime_ctx"]
+    device: str = _VISION_DEFAULTS["device"]
+    mmproj: Path | None = _VISION_DEFAULTS["mmproj"]
 
 
+DEFAULT_PROFILE = GeneralProfile()
+DEFAULT_CODE_PROFILE = CodeProfile()
+DEFAULT_QWEN3_CODER_PROFILE = Qwen3CoderProfile()
 DEFAULT_VISION_PROFILE = VisionProfile()
+LEGACY_PROFILE_IDENTITIES = tuple(
+    profile["legacy_identity"] for profile in RUNTIME_RECORDS.values()
+)
+CLI_PROFILE_ALIASES = tuple(profile["legacy_cli_alias"] for profile in RUNTIME_RECORDS.values())
+
+
+def _expected_profile_identity(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.upper()
+    if normalized in LEGACY_PROFILE_IDENTITIES:
+        return normalized
+    profile_by_name = RUNTIME_RECORDS.get(value)
+    if isinstance(profile_by_name, dict):
+        return profile_by_name["legacy_identity"]
+    role = MANIFEST["roles"].get(normalized)
+    if isinstance(role, dict):
+        profile = RUNTIME_RECORDS.get(role.get("current_deployment_profile"))
+        if isinstance(profile, dict):
+            return profile["legacy_identity"]
+    for profile in RUNTIME_RECORDS.values():
+        if value.lower() == profile["legacy_cli_alias"]:
+            return profile["legacy_identity"]
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +294,98 @@ def _process_command_line(pid: int) -> tuple[str, ...] | None:
     )
 
 
+def _container_inspect(profile: GeneralProfile) -> dict[str, Any] | None:
+    """Read one manager-owned container identity without changing its state."""
+
+    if profile.runtime_kind != "podman" or not profile.container_name:
+        return None
+    try:
+        result = subprocess.run(
+            [str(profile.runtime), "inspect", profile.container_name],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        records = json.loads(result.stdout)
+    except TypeError, json.JSONDecodeError:
+        return None
+    if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+        return None
+    return cast(dict[str, Any], records[0])
+
+
+def _container_owner_pid(profile: GeneralProfile) -> int | None:
+    """Return the exact running container init PID for a verified profile."""
+
+    record = _container_inspect(profile)
+    if record is None:
+        return None
+    state = record.get("State")
+    config = record.get("Config")
+    if not isinstance(state, dict) or not state.get("Running"):
+        return None
+    if not isinstance(config, dict):
+        return None
+    image_name = config.get("Image")
+    image_name_alt = record.get("ImageName")
+    image_id = str(record.get("Image", ""))
+    expected_image_id = str(profile.runtime_image_digest or "")
+    image_matches = image_name == profile.runtime_image or image_name_alt == profile.runtime_image
+    if not image_matches and expected_image_id:
+        image_matches = image_id.endswith(expected_image_id.removeprefix("sha256:"))
+    if not image_matches:
+        return None
+    try:
+        pid = int(state.get("Pid", 0))
+    except TypeError, ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _container_image_ready(profile: GeneralProfile) -> bool:
+    """Require the pinned local image; never allow an implicit network pull."""
+
+    if profile.runtime_kind != "podman" or not profile.runtime_image:
+        return False
+    try:
+        result = subprocess.run(
+            [str(profile.runtime), "image", "inspect", profile.runtime_image],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError:
+        return False
+    if result.returncode != 0:
+        return False
+    if not profile.runtime_image_digest:
+        return True
+    try:
+        records = json.loads(result.stdout)
+    except TypeError, json.JSONDecodeError:
+        return False
+    if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+        return False
+    digests = records[0].get("RepoDigests", [])
+    return any(
+        isinstance(value, str) and value.endswith(f"@{profile.runtime_image_digest}")
+        for value in digests
+    )
+
+
+def _profile_owner_pid(profile: GeneralProfile, state: PortState) -> int | None:
+    if profile.runtime_kind == "podman":
+        return _container_owner_pid(profile)
+    if len(state.pids) == 1:
+        return state.pids[0]
+    return None
+
+
 def is_general_process(pid: int, profile: GeneralProfile = DEFAULT_PROFILE) -> bool:
     """Verify the complete command line before allowing a stop."""
 
@@ -269,6 +394,17 @@ def is_general_process(pid: int, profile: GeneralProfile = DEFAULT_PROFILE) -> b
 
 def is_code_process(pid: int, profile: CodeProfile = DEFAULT_CODE_PROFILE) -> bool:
     """Verify the complete CODE command line before allowing a stop."""
+
+    if profile.runtime_kind == "podman":
+        owner_pid = _container_owner_pid(profile)
+        return owner_pid is not None and (pid <= 0 or owner_pid == pid)
+    return _process_command_line(pid) == profile.command()
+
+
+def is_qwen3_coder_process(
+    pid: int, profile: Qwen3CoderProfile = DEFAULT_QWEN3_CODER_PROFILE
+) -> bool:
+    """Verify the complete historical Qwen3-Coder command line before stopping."""
 
     return _process_command_line(pid) == profile.command()
 
@@ -325,9 +461,7 @@ def _code_log_path() -> Path:
 def _lifecycle_lock_path() -> Path:
     state_home = os.environ.get("XDG_STATE_HOME")
     root = Path(state_home) if state_home else Path.home() / ".local" / "state"
-    # This lock is shared with every local model launcher, including the
-    # PATCH challenger.  Per-launcher locks cannot serialize cross-entrypoint
-    # startup races.
+    # Per-profile locks cannot serialize cross-entrypoint startup races.
     return root / "neuralengine" / LIFECYCLE_LOCK_FILENAME
 
 
@@ -555,7 +689,7 @@ def serve_general(
 
     _serve_foreground(
         profile,
-        action="GENERAL",
+        action=profile.identity,
         validate=lambda: _validate_general_prerequisites(profile, "serve"),
         port_reader=port_reader or port_state,
         process_replacer=process_replacer,
@@ -565,12 +699,158 @@ def serve_general(
     )
 
 
+def _validate_qwen3_coder_prerequisites(profile: Qwen3CoderProfile, action: str) -> None:
+    _validate_general_prerequisites(profile, action)
+
+
+def _qwen3_coder_log_path() -> Path:
+    return _code_log_path().with_name("qwen3-coder.log")
+
+
+def start_qwen3_coder(
+    profile: Qwen3CoderProfile = DEFAULT_QWEN3_CODER_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    process_factory: Callable[..., subprocess.Popen[bytes]] | None = None,
+    health_waiter: Callable[[Qwen3CoderProfile], bool] | None = None,
+    log_path: Callable[[], Path] | None = None,
+    identity_checker: Callable[[int, Qwen3CoderProfile], bool] | None = None,
+    health_check: Callable[[Qwen3CoderProfile], bool] | None = None,
+) -> None:
+    """Launch the optional historical Qwen3-Coder coding specialist profile."""
+
+    _validate_qwen3_coder_prerequisites(profile, "start")
+    read_port = port_reader or port_state
+    check_identity = identity_checker or is_qwen3_coder_process
+    check_health = health_check or _health_ok
+    own_state = read_port(profile.port)
+    if own_state.listening:
+        verified_pid = detect_verified_running_profile(
+            own_state,
+            identity_checker=lambda pid: check_identity(pid, profile),
+            health_check=lambda: check_health(profile),
+        )
+        if verified_pid is not None and not any(
+            read_port(port).listening for port in CONFLICT_PORTS if port != profile.port
+        ):
+            print("QWEN3_CODER ALREADY READY")
+            print(f"endpoint: {profile.endpoint()}")
+            print(f"pid: {verified_pid}")
+            return
+
+    conflicts = [port for port in CONFLICT_PORTS if read_port(port).listening]
+    if conflicts:
+        raise LauncherError(
+            "QWEN3_CODER start refused: a listener already occupies port(s): "
+            + ", ".join(map(str, conflicts))
+        )
+
+    create_process = process_factory or subprocess.Popen
+    target_log_path = log_path or _qwen3_coder_log_path
+    log_file_path = target_log_path()
+    try:
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_file_path.open("ab") as log_file:
+            process = create_process(
+                profile.command(),
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except OSError as error:
+        raise LauncherError(
+            f"QWEN3_CODER start failed to launch llama-server: {error}"
+        ) from error
+
+    wait_health = health_waiter or (lambda selected_profile: wait_for_health(selected_profile))
+    if not wait_health(profile):
+        _terminate_started_process(process)
+        raise LauncherError(
+            "QWEN3_CODER start failed: /health did not become OK within "
+            f"{HEALTH_TIMEOUT_SECONDS} seconds"
+        )
+
+    print("QWEN3_CODER READY")
+    print(f"endpoint: {profile.endpoint()}")
+    print(f"pid: {process.pid}")
+
+
+def serve_qwen3_coder(
+    profile: Qwen3CoderProfile = DEFAULT_QWEN3_CODER_PROFILE,
+    *,
+    port_reader: Callable[[int], PortState] | None = None,
+    process_replacer: Callable[[str, Sequence[str]], Any] | None = None,
+    process_factory: Callable[..., subprocess.Popen[Any]] | None = None,
+    health_waiter: Callable[[Qwen3CoderProfile], bool] | None = None,
+    process_waiter: Callable[[subprocess.Popen[Any]], int | None] | None = None,
+) -> None:
+    """Run Qwen3-Coder in the foreground for an explicitly started unit."""
+
+    _serve_foreground(
+        profile,
+        action=profile.identity,
+        validate=lambda: _validate_qwen3_coder_prerequisites(profile, "serve"),
+        port_reader=port_reader or port_state,
+        process_replacer=process_replacer,
+        process_factory=process_factory,
+        health_waiter=health_waiter,
+        process_waiter=process_waiter,
+    )
+
+
 def _validate_code_prerequisites(profile: CodeProfile, action: str) -> None:
-    for label, path in (("model", profile.model), ("llama-server runtime", profile.runtime)):
+    runtime_label = "podman runtime" if profile.runtime_kind == "podman" else "llama-server runtime"
+    for label, path in (("model", profile.model), (runtime_label, profile.runtime)):
         if not path.is_file():
             raise LauncherError(f"CODE {action} refused: {label} does not exist: {path}")
     if not os.access(profile.runtime, os.X_OK):
         raise LauncherError(f"CODE {action} refused: runtime is not executable: {profile.runtime}")
+    if profile.runtime_kind == "podman":
+        if not profile.runtime_image or not profile.container_name:
+            raise LauncherError(f"CODE {action} refused: container profile is incomplete")
+        if not _container_image_ready(profile):
+            raise LauncherError(
+                "CODE "
+                f"{action} refused: pinned runtime image is unavailable: {profile.runtime_image}"
+            )
+
+
+def _stop_code_container(
+    profile: CodeProfile,
+    *,
+    expected_pid: int | None = None,
+    closed_waiter: Callable[[int], bool] | None = None,
+    port_reader: Callable[[int], PortState] = port_state,
+) -> None:
+    owner_pid = _container_owner_pid(profile)
+    if owner_pid is None:
+        raise LauncherError("CODE stop refused: verified Halogen container is not running")
+    if expected_pid is not None and owner_pid != expected_pid:
+        raise LauncherError(
+            f"CODE stop refused: container ownership mismatch; expected PID {expected_pid}, "
+            f"observed {owner_pid}"
+        )
+    try:
+        result = subprocess.run(
+            [str(profile.runtime), "stop", "--time", "10", profile.container_name or ""],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError as error:
+        raise LauncherError(f"CODE stop failed for Halogen container: {error}") from error
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "podman stop failed"
+        raise LauncherError(f"CODE stop failed for Halogen container: {detail}")
+    wait_closed = closed_waiter or (
+        lambda selected_port: wait_for_port_closed(selected_port, port_reader=port_reader)
+    )
+    if not wait_closed(profile.port):
+        raise LauncherError(f"CODE stop failed: port {profile.port} is still listening")
+    print("CODE STOPPED")
+    print(f"port {profile.port}: closed")
 
 
 def start_code(
@@ -591,11 +871,15 @@ def start_code(
     check_health = health_check or _health_ok
     own_state = read_port(profile.port)
     if own_state.listening:
-        verified_pid = detect_verified_running_profile(
-            own_state,
-            identity_checker=lambda pid: check_identity(pid, profile),
-            health_check=lambda: check_health(profile),
-        )
+        if profile.runtime_kind == "podman":
+            candidate_pid = _container_owner_pid(profile)
+            verified_pid = candidate_pid if candidate_pid and check_health(profile) else None
+        else:
+            verified_pid = detect_verified_running_profile(
+                own_state,
+                identity_checker=lambda pid: check_identity(pid, profile),
+                health_check=lambda: check_health(profile),
+            )
         if verified_pid is not None and not any(
             read_port(port).listening for port in CONFLICT_PORTS if port != profile.port
         ):
@@ -610,6 +894,39 @@ def start_code(
             "CODE start refused: a listener already occupies port(s): "
             + ", ".join(map(str, conflicts))
         )
+
+    if profile.runtime_kind == "podman":
+        try:
+            result = subprocess.run(
+                profile.command(),
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+        except OSError as error:
+            raise LauncherError(f"CODE start failed to launch Halogen: {error}") from error
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "podman run failed"
+            raise LauncherError(f"CODE start failed to launch Halogen: {detail}")
+        wait_health = health_waiter or (lambda selected_profile: wait_for_health(selected_profile))
+        if not wait_health(profile):
+            with suppress(LauncherError):
+                _stop_code_container(profile, port_reader=read_port)
+            raise LauncherError(
+                "CODE start failed: /health did not become OK within "
+                f"{HEALTH_TIMEOUT_SECONDS} seconds"
+            )
+        owner_pid = _container_owner_pid(profile)
+        if owner_pid is None:
+            with suppress(LauncherError):
+                _stop_code_container(profile, port_reader=read_port)
+            raise LauncherError(
+                "CODE start failed: exact Halogen container identity was not verified"
+            )
+        print("CODE READY")
+        print(f"endpoint: {profile.endpoint()}")
+        print(f"pid: {owner_pid}")
+        return
 
     create_process = process_factory or subprocess.Popen
     target_log_path = log_path or _code_log_path
@@ -651,9 +968,12 @@ def serve_code(
 ) -> None:
     """Run CODE in the foreground for an explicitly started systemd unit."""
 
+    if profile.runtime_kind == "podman":
+        raise LauncherError("CODE serve is unsupported for the detached Halogen profile; use start")
+
     _serve_foreground(
         profile,
-        action="CODE",
+        action=profile.identity,
         validate=lambda: _validate_code_prerequisites(profile, "serve"),
         port_reader=port_reader or port_state,
         process_replacer=process_replacer,
@@ -758,7 +1078,7 @@ def serve_vision(
 
     _serve_foreground(
         profile,
-        action="VISION",
+        action=profile.identity,
         validate=lambda: _validate_vision_prerequisites(profile, "serve"),
         port_reader=port_reader or port_state,
         process_replacer=process_replacer,
@@ -844,6 +1164,19 @@ def _stop_verified_profile(
     killer: Callable[[int, int], Any] | None = None,
     closed_waiter: Callable[[int], bool] | None = None,
 ) -> None:
+    if (
+        getattr(profile, "runtime_kind", "binary") == "podman"
+        and identity_checker is is_code_process
+    ):
+        if not isinstance(profile, CodeProfile):
+            raise LauncherError(f"{profile_name} stop refused: unsupported container profile")
+        _stop_code_container(
+            profile,
+            closed_waiter=closed_waiter,
+            port_reader=port_reader,
+        )
+        return
+
     if len(state.pids) != 1:
         raise LauncherError(
             f"{profile_name} stop refused: owner of port {profile.port} is ambiguous "
@@ -889,13 +1222,16 @@ def status_profiles(
     general_profile: GeneralProfile = DEFAULT_PROFILE,
     *,
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    qwen3_coder_profile: Qwen3CoderProfile = DEFAULT_QWEN3_CODER_PROFILE,
     vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
     port_reader: Callable[[int], PortState] | None = None,
     general_health_check: Callable[[GeneralProfile], bool] | None = None,
     general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
     code_health_check: Callable[[CodeProfile], bool] | None = None,
+    qwen3_coder_health_check: Callable[[Qwen3CoderProfile], bool] | None = None,
     vision_health_check: Callable[[VisionProfile], bool] | None = None,
     code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    qwen3_coder_identity_checker: Callable[[int, Qwen3CoderProfile], bool] | None = None,
     vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
 ) -> None:
     """Report supported profile state without changing any process state."""
@@ -918,17 +1254,22 @@ def status_profiles(
 
     port = active_ports[0]
     if port == general_profile.port:
-        name: str = "GENERAL"
+        name: str = general_profile.identity
         profile: GeneralProfile | CodeProfile | VisionProfile = general_profile
         identity_check = general_identity_checker or is_general_process
         health_check = general_health_check or _health_ok
     elif port == code_profile.port:
-        name = "CODE"
+        name = code_profile.identity
         profile = code_profile
         identity_check = code_identity_checker or is_code_process
         health_check = code_health_check or _health_ok
+    elif port == qwen3_coder_profile.port:
+        name = qwen3_coder_profile.identity
+        profile = qwen3_coder_profile
+        identity_check = qwen3_coder_identity_checker or is_qwen3_coder_process
+        health_check = qwen3_coder_health_check or _health_ok
     elif port == vision_profile.port:
-        name = "VISION"
+        name = vision_profile.identity
         profile = vision_profile
         identity_check = vision_identity_checker or is_vision_process
         health_check = vision_health_check or _health_ok
@@ -939,25 +1280,36 @@ def status_profiles(
         return
 
     state = states[port]
-    identifiable = len(state.pids) == 1 and identity_check(state.pids[0], profile)
+    if profile.runtime_kind == "podman" and code_identity_checker is None:
+        owner_pid = _container_owner_pid(profile)
+        identifiable = owner_pid is not None
+    else:
+        owner_pid = state.pids[0] if len(state.pids) == 1 else None
+        identifiable = owner_pid is not None and identity_check(owner_pid, profile)
     print(f"profile: {name if identifiable else 'unknown'}")
     print(f"active port: {profile.port}")
     print(f"port {profile.port}: listening")
     print(f"health: {'OK' if health_check(profile) else 'not OK or unavailable'}")
-    _print_status_pid(state)
+    if profile.runtime_kind == "podman" and owner_pid is not None:
+        print(f"pid: {owner_pid}")
+    else:
+        _print_status_pid(state)
 
 
 def active_profile_state(
     general_profile: GeneralProfile = DEFAULT_PROFILE,
     *,
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    qwen3_coder_profile: Qwen3CoderProfile = DEFAULT_QWEN3_CODER_PROFILE,
     vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
     port_reader: Callable[[int], PortState] | None = None,
     general_health_check: Callable[[GeneralProfile], bool] | None = None,
     general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
     code_health_check: Callable[[CodeProfile], bool] | None = None,
+    qwen3_coder_health_check: Callable[[Qwen3CoderProfile], bool] | None = None,
     vision_health_check: Callable[[VisionProfile], bool] | None = None,
     code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    qwen3_coder_identity_checker: Callable[[int, Qwen3CoderProfile], bool] | None = None,
     vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
 ) -> str:
     """Return one exact, machine-readable verified production state.
@@ -973,13 +1325,16 @@ def active_profile_state(
     identity = active_profile_identity(
         general_profile,
         code_profile=code_profile,
+        qwen3_coder_profile=qwen3_coder_profile,
         vision_profile=vision_profile,
         port_reader=read_port,
         general_health_check=general_health_check,
         general_identity_checker=general_identity_checker,
         code_health_check=code_health_check,
+        qwen3_coder_health_check=qwen3_coder_health_check,
         vision_health_check=vision_health_check,
         code_identity_checker=code_identity_checker,
+        qwen3_coder_identity_checker=qwen3_coder_identity_checker,
         vision_identity_checker=vision_identity_checker,
     )
     return identity[0] if identity is not None else "UNKNOWN"
@@ -989,13 +1344,16 @@ def active_profile_identity(
     general_profile: GeneralProfile = DEFAULT_PROFILE,
     *,
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    qwen3_coder_profile: Qwen3CoderProfile = DEFAULT_QWEN3_CODER_PROFILE,
     vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
     port_reader: Callable[[int], PortState] | None = None,
     general_health_check: Callable[[GeneralProfile], bool] | None = None,
     general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
     code_health_check: Callable[[CodeProfile], bool] | None = None,
+    qwen3_coder_health_check: Callable[[Qwen3CoderProfile], bool] | None = None,
     vision_health_check: Callable[[VisionProfile], bool] | None = None,
     code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    qwen3_coder_identity_checker: Callable[[int, Qwen3CoderProfile], bool] | None = None,
     vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
 ) -> tuple[str, int] | None:
     """Return the exact verified active profile and PID, or ``None``."""
@@ -1016,6 +1374,11 @@ def active_profile_identity(
         profile = code_profile
         identity_check = code_identity_checker or is_code_process
         health_check = code_health_check or _health_ok
+    elif port == qwen3_coder_profile.port:
+        name = "QWEN3_CODER"
+        profile = qwen3_coder_profile
+        identity_check = qwen3_coder_identity_checker or is_qwen3_coder_process
+        health_check = qwen3_coder_health_check or _health_ok
     elif port == vision_profile.port:
         name = "VISION"
         profile = vision_profile
@@ -1023,11 +1386,16 @@ def active_profile_identity(
         health_check = vision_health_check or _health_ok
     else:
         return None
-    verified_pid = detect_verified_running_profile(
-        states[port],
-        identity_checker=lambda pid: identity_check(pid, profile),
-        health_check=lambda: health_check(profile),
-    )
+    if profile.runtime_kind == "podman" and code_identity_checker is None:
+        verified_pid = _container_owner_pid(profile)
+        if verified_pid is not None and not health_check(profile):
+            verified_pid = None
+    else:
+        verified_pid = detect_verified_running_profile(
+            states[port],
+            identity_checker=lambda pid: identity_check(pid, profile),
+            health_check=lambda: health_check(profile),
+        )
     if verified_pid is None:
         return None
     return name, verified_pid
@@ -1046,6 +1414,141 @@ def machine_profile_identity() -> str:
     return f"{profile_name} {pid}"
 
 
+def project_role(role_name: str) -> dict[str, Any]:
+    """Resolve a client route from a LOCAL_* role without changing runtime state."""
+
+    role = MANIFEST["roles"].get(role_name)
+    if not isinstance(role, dict) or role.get("assignment") != "UNDECIDED":
+        raise LauncherError(f"project refused: unknown or assigned local role {role_name!r}")
+    profile_name = role.get("current_deployment_profile")
+    profile = RUNTIME_RECORDS.get(profile_name)
+    if not isinstance(profile, dict):
+        raise LauncherError(f"project refused: missing compatibility profile for {role_name}")
+    model = MODEL_RECORDS[profile["model_ref"]]
+    layers = profile["context_layers"]
+    model_max_ctx = model["model_max_ctx"]["tokens"]
+    return {
+        "role": role_name,
+        "assignment": role["assignment"],
+        "projection_status": role["projection_status"],
+        "profile": profile_name,
+        "model_id": model["model_id"],
+        "display_name": model["display_name"],
+        "endpoint": (
+            f"http://{profile['endpoint']['host']}:{profile['endpoint']['port']}"
+            f"{profile['endpoint']['path']}"
+        ),
+        "runtime": profile["runtime"],
+        "context_layers": layers,
+        "model_max_ctx": model_max_ctx,
+        "runtime_ctx": layers["runtime_ctx"],
+        "slot_ctx": layers["slot_ctx"],
+        "client_effective_ctx": layers["client_effective_ctx"],
+        "max_output_tokens": profile["max_output_tokens"],
+    }
+
+
+def project_profile(profile_name: str) -> dict[str, Any]:
+    """Resolve one manifest runtime profile without changing runtime state."""
+
+    identity = _expected_profile_identity(profile_name)
+    if identity is None:
+        raise LauncherError(f"project refused: unknown runtime profile {profile_name!r}")
+    profile = next(
+        (
+            record
+            for record in RUNTIME_RECORDS.values()
+            if record.get("legacy_identity") == identity
+        ),
+        None,
+    )
+    if not isinstance(profile, dict):
+        raise LauncherError(f"project refused: missing runtime profile for {profile_name!r}")
+    model = MODEL_RECORDS[profile["model_ref"]]
+    endpoint = profile["endpoint"]
+    layers = profile["context_layers"]
+    return {
+        "profile": next(
+            name for name, record in RUNTIME_RECORDS.items() if record is profile
+        ),
+        "identity": identity,
+        "model_id": model["model_id"],
+        "display_name": model["display_name"],
+        "endpoint": f"http://{endpoint['host']}:{endpoint['port']}{endpoint['path']}",
+        "runtime": profile["runtime"],
+        "context_layers": layers,
+        "model_max_ctx": model["model_max_ctx"]["tokens"],
+        "runtime_ctx": layers["runtime_ctx"],
+        "slot_ctx": layers["slot_ctx"],
+        "client_effective_ctx": layers["client_effective_ctx"],
+        "max_output_tokens": profile["max_output_tokens"],
+        "selection_status": profile.get("selection_status", "CURRENT_DEPLOYMENT"),
+    }
+
+
+def switch_json(target: str) -> None:
+    """Start one profile and emit a strict Pi lifecycle ownership document."""
+
+    target_identity = _expected_profile_identity(target)
+    if target_identity is None:
+        raise LauncherError(f"SWITCH FAILED: unsupported target profile: {target}")
+    with redirect_stdout(StringIO()):
+        identity = start_profile(target)
+    observed = active_profile_identity()
+    if observed is None or observed[0] != target_identity:
+        raise LauncherError("SWITCH FAILED: target profile was not verified READY")
+    document = {
+        "api_version": 1,
+        "operation": "switch",
+        "profile": target_identity,
+        "pid": observed[1],
+        "endpoint": project_profile(target)["endpoint"],
+        "ownership": "STARTED" if identity is not None else "BORROWED",
+    }
+    print(json.dumps(document, sort_keys=True))
+
+
+def stop_owned_json(expected_profile: str, expected_pid: int) -> None:
+    """Stop only the exact profile/PID previously returned as STARTED."""
+
+    expected_identity = _expected_profile_identity(expected_profile)
+    if expected_identity is None or expected_pid <= 0:
+        raise LauncherError("stop-owned refused: expected profile and positive PID are required")
+    with lifecycle_lock():
+        observed = active_profile_identity()
+        if observed != (expected_identity, expected_pid):
+            print(
+                json.dumps(
+                    {
+                        "api_version": 1,
+                        "operation": "stop_owned",
+                        "result": "NOT_OWNED_OR_REPLACED",
+                        "profile": expected_identity,
+                        "pid": expected_pid,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return
+        with redirect_stdout(StringIO()):
+            stop_active_profiles(
+                expected_profile=expected_identity,
+                expected_pid=expected_pid,
+            )
+        print(
+            json.dumps(
+                {
+                    "api_version": 1,
+                    "operation": "stop_owned",
+                    "result": "STOPPED",
+                    "profile": expected_identity,
+                    "pid": expected_pid,
+                },
+                sort_keys=True,
+            )
+        )
+
+
 def switch_profile(
     target: str,
     *,
@@ -1056,8 +1559,8 @@ def switch_profile(
 ) -> None:
     """Switch between verified production profiles while holding the lifecycle lock."""
 
-    target_name = target.upper()
-    if target_name not in {"GENERAL", "CODE", "VISION"}:
+    target_name = _expected_profile_identity(target)
+    if target_name not in LEGACY_PROFILE_IDENTITIES:
         raise LauncherError(f"SWITCH FAILED: unsupported target profile: {target}")
 
     read_state = state_reader or active_profile_state
@@ -1073,7 +1576,12 @@ def switch_profile(
 
     start_target = (
         starter
-        or {"GENERAL": start_general, "CODE": start_code, "VISION": start_vision}[target_name]
+        or {
+            _GENERAL_DEFAULTS["identity"]: start_general,
+            _CODE_DEFAULTS["identity"]: start_code,
+            _QWEN3_CODER_DEFAULTS["identity"]: start_qwen3_coder,
+            _VISION_DEFAULTS["identity"]: start_vision,
+        }[target_name]
     )
 
     with lifecycle_lock(lock_path):
@@ -1085,7 +1593,7 @@ def switch_profile(
         if current == target_name:
             print(f"{target_name} ALREADY READY")
             return
-        if current not in {"STOPPED", "GENERAL", "CODE", "VISION"}:
+        if current not in {"STOPPED", *LEGACY_PROFILE_IDENTITIES}:
             raise LauncherError(f"SWITCH FAILED: unsupported current LLM state: {current}")
 
         try:
@@ -1116,14 +1624,19 @@ def start_profile(
 ) -> tuple[str, int] | None:
     """Start only from STOPPED; return identity only when this call started it."""
 
-    target_name = target.upper()
-    if target_name not in {"GENERAL", "CODE", "VISION"}:
+    target_name = _expected_profile_identity(target)
+    if target_name not in LEGACY_PROFILE_IDENTITIES:
         raise LauncherError(f"START REFUSED: unsupported target profile: {target}")
 
     read_state = state_reader or active_profile_state
     start_target = (
         starter
-        or {"GENERAL": start_general, "CODE": start_code, "VISION": start_vision}[target_name]
+        or {
+            _GENERAL_DEFAULTS["identity"]: start_general,
+            _CODE_DEFAULTS["identity"]: start_code,
+            _QWEN3_CODER_DEFAULTS["identity"]: start_qwen3_coder,
+            _VISION_DEFAULTS["identity"]: start_vision,
+        }[target_name]
     )
     read_identity = identity_reader or active_profile_identity
 
@@ -1164,10 +1677,12 @@ def stop_active_profiles(
     general_profile: GeneralProfile = DEFAULT_PROFILE,
     *,
     code_profile: CodeProfile = DEFAULT_CODE_PROFILE,
+    qwen3_coder_profile: Qwen3CoderProfile = DEFAULT_QWEN3_CODER_PROFILE,
     vision_profile: VisionProfile = DEFAULT_VISION_PROFILE,
     port_reader: Callable[[int], PortState] | None = None,
     general_identity_checker: Callable[[int, GeneralProfile], bool] | None = None,
     code_identity_checker: Callable[[int, CodeProfile], bool] | None = None,
+    qwen3_coder_identity_checker: Callable[[int, Qwen3CoderProfile], bool] | None = None,
     vision_identity_checker: Callable[[int, VisionProfile], bool] | None = None,
     killer: Callable[[int, int], Any] | None = None,
     closed_waiter: Callable[[int], bool] | None = None,
@@ -1176,12 +1691,21 @@ def stop_active_profiles(
 ) -> None:
     """Stop one verified supported profile, refusing conflicts or ambiguity."""
 
+    expected_identity = _expected_profile_identity(expected_profile)
+    if expected_profile is not None and expected_identity is None:
+        raise LauncherError(f"stop refused: unknown expected profile {expected_profile!r}")
     read_port = port_reader or port_state
     states = {port: read_port(port) for port in CONFLICT_PORTS}
     active_ports = [port for port, state in states.items() if state.listening]
     if len(active_ports) > 1 or (
         active_ports
-        and active_ports[0] not in {general_profile.port, code_profile.port, vision_profile.port}
+        and active_ports[0]
+        not in {
+            general_profile.port,
+            code_profile.port,
+            qwen3_coder_profile.port,
+            vision_profile.port,
+        }
     ):
         raise LauncherError(
             "stop refused: conflicting or unsupported listener on ports "
@@ -1196,22 +1720,33 @@ def stop_active_profiles(
 
     port = active_ports[0]
     if port == general_profile.port:
-        name = "GENERAL"
+        name = general_profile.identity
         profile: GeneralProfile | CodeProfile | VisionProfile = general_profile
         identity_check = general_identity_checker or is_general_process
     elif port == code_profile.port:
-        name = "CODE"
+        name = code_profile.identity
         profile = code_profile
         identity_check = code_identity_checker or is_code_process
+    elif port == qwen3_coder_profile.port:
+        name = qwen3_coder_profile.identity
+        profile = qwen3_coder_profile
+        identity_check = qwen3_coder_identity_checker or is_qwen3_coder_process
     else:
-        name = "VISION"
+        name = vision_profile.identity
         profile = vision_profile
         identity_check = vision_identity_checker or is_vision_process
     state = states[port]
+    owner_pid = _profile_owner_pid(profile, state)
+    if profile.runtime_kind == "podman" and code_identity_checker is not None:
+        owner_pid = state.pids[0] if len(state.pids) == 1 else None
     if (expected_profile is not None or expected_pid is not None) and (
-        expected_profile != name or len(state.pids) != 1 or state.pids[0] != expected_pid
+        expected_identity != name or owner_pid != expected_pid
     ):
-        observed_pid = ", ".join(map(str, state.pids)) or "unknown"
+        observed_pid = (
+            str(owner_pid)
+            if owner_pid is not None
+            else ", ".join(map(str, state.pids)) or "unknown"
+        )
         raise LauncherError(
             "stop refused: ownership mismatch; expected "
             f"{expected_profile or 'unknown'} PID {expected_pid or 'unknown'}, "
@@ -1262,31 +1797,68 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=(
             "code",
             "general",
+            "qwen3-coder",
             "vision",
+            "project",
             "serve",
             "switch",
+            "switch-json",
             "start",
+            "stop-owned-json",
             "status",
             "state",
             "identity",
             "stop",
         ),
     )
-    parser.add_argument("profile", nargs="?", choices=("code", "general", "vision"))
-    parser.add_argument("--expected-profile", choices=("GENERAL", "CODE", "VISION"))
+    parser.add_argument(
+        "profile",
+        nargs="?",
+        choices=(*RUNTIME_RECORDS.keys(), *CLI_PROFILE_ALIASES, *MANIFEST["roles"].keys()),
+    )
+    parser.add_argument(
+        "--role",
+        choices=("LOCAL_GENERAL", "LOCAL_CODE", "LOCAL_VISION"),
+    )
+    parser.add_argument(
+        "--profile",
+        dest="runtime_profile",
+        choices=(*RUNTIME_RECORDS.keys(), *LEGACY_PROFILE_IDENTITIES, *CLI_PROFILE_ALIASES),
+    )
+    parser.add_argument(
+        "--expected-profile",
+        choices=(
+            *RUNTIME_RECORDS.keys(),
+            *LEGACY_PROFILE_IDENTITIES,
+            *MANIFEST["roles"].keys(),
+            *CLI_PROFILE_ALIASES,
+        ),
+    )
     parser.add_argument("--expected-pid", type=int)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    if args.command == "switch" and args.profile is None:
-        print("llm: switch requires a target profile", file=sys.stderr)
+    if args.command in {"switch", "switch-json"} and args.profile is None:
+        print(f"llm: {args.command} requires a target profile", file=sys.stderr)
         return 2
     if args.command == "start" and args.profile is None:
         print("llm: start requires a target profile", file=sys.stderr)
         return 2
-    if args.command not in {"switch", "start", "serve"} and args.profile is not None:
+    if args.command == "project" and args.role is None and args.runtime_profile is None:
+        print("llm: project requires --role LOCAL_* or --profile PROFILE", file=sys.stderr)
+        return 2
+    if args.command == "project" and args.role is not None and args.runtime_profile is not None:
+        print("llm: project accepts only one of --role or --profile", file=sys.stderr)
+        return 2
+    if args.command != "project" and args.role is not None:
+        print("llm: --role is only valid with project", file=sys.stderr)
+        return 2
+    if args.command != "project" and args.runtime_profile is not None:
+        print("llm: --profile is only valid with project", file=sys.stderr)
+        return 2
+    if args.command not in {"switch", "switch-json", "start", "serve"} and args.profile is not None:
         print(f"llm: {args.command} does not accept a profile argument", file=sys.stderr)
         return 2
     if (args.expected_profile is None) != (args.expected_pid is None):
@@ -1295,7 +1867,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.command != "stop" and (
+    if args.command not in {"stop", "stop-owned-json"} and (
         args.expected_profile is not None or args.expected_pid is not None
     ):
         print("llm: expected identity options are only valid with stop", file=sys.stderr)
@@ -1303,6 +1875,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "switch":
             switch_profile(args.profile)
+        elif args.command == "switch-json":
+            switch_json(args.profile)
+        elif args.command == "project":
+            projection = (
+                project_profile(args.runtime_profile)
+                if args.runtime_profile is not None
+                else project_role(args.role)
+            )
+            print(json.dumps(projection, sort_keys=True))
+        elif args.command == "stop-owned-json":
+            if args.expected_profile is None or args.expected_pid is None:
+                print(
+                    "llm: stop-owned-json requires --expected-profile and --expected-pid",
+                    file=sys.stderr,
+                )
+                return 2
+            stop_owned_json(args.expected_profile, args.expected_pid)
         elif args.command == "start":
             start_profile(args.profile)
         elif args.command == "code":
@@ -1311,11 +1900,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "general":
             with lifecycle_lock():
                 start_general()
+        elif args.command == "qwen3-coder":
+            with lifecycle_lock():
+                start_qwen3_coder()
         elif args.command == "serve":
-            if args.profile == "code":
+            serve_identity = _expected_profile_identity(args.profile or "general")
+            if serve_identity == _CODE_DEFAULTS["identity"]:
                 serve_code()
-            elif args.profile in {None, "general"}:
+            elif serve_identity == _GENERAL_DEFAULTS["identity"]:
                 serve_general()
+            elif serve_identity == _QWEN3_CODER_DEFAULTS["identity"]:
+                serve_qwen3_coder()
             else:
                 serve_vision()
         elif args.command == "vision":

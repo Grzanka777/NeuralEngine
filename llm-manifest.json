@@ -1,95 +1,253 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "authority": {
+    "model_inventory": "llm-manifest.json",
+    "runtime_profiles": "llm-manifest.json",
+    "endpoints": "llm-manifest.json",
+    "roles": "llm-manifest.json",
+    "lifecycle_owner": "scripts/llm"
+  },
   "runtime_manager": "scripts/llm",
+  "client_harness": {
+    "primary_local_harness": "Pi",
+    "qwen_code": "OPTIONAL_COMPATIBILITY_QWEN_SPECIALIST",
+    "opencode": "PARKED"
+  },
+  "reserved_conflict_ports": [18080, 18086, 18087],
+  "models": {
+    "nemotron-q5": {
+      "model_id": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
+      "artifact_path": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
+      "display_name": "Nemotron 3 Nano 30B A3B Q5_K_M",
+      "kind": "chat",
+      "model_max_ctx": {
+        "tokens": 1048576,
+        "source": "GGUF metadata key nemotron_h_moe.context_length"
+      },
+      "sha256": "b6b52b1bfd9cc3509a0337eb1a4be3b405190ec49863b352ebf33e448c1149af"
+    },
+    "qwen3-coder-q4": {
+      "model_id": "/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf",
+      "artifact_path": "/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf",
+      "display_name": "Qwen3 Coder 30B A3B Instruct UD Q4_K_XL",
+      "kind": "chat",
+      "model_max_ctx": {
+        "tokens": 262144,
+        "source": "GGUF metadata key qwen3moe.context_length"
+      },
+      "sha256": "2841aa314d916434860cfb8990347528dcdfe5c350dbcb9d1461dbee88ff2533"
+    },
+    "qwen38-halogen": {
+      "model_id": "qwen3.8-27b",
+      "artifact_path": "/models/halogen/qwen3.8-27b/qwen3.8-27b-p1w4d-d2.hgn",
+      "display_name": "Qwen3.8-27B",
+      "kind": "chat",
+      "model_max_ctx": {
+        "tokens": 262144,
+        "source": "Halogen 0.1.4 /health context"
+      },
+      "sha256": "274c3fc767fb57faf025dd03c76376b1fc1b32448aef45aaf02d1898fa962089"
+    },
+    "gemma4-q4": {
+      "model_id": "/models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+      "artifact_path": "/models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+      "display_name": "Gemma 4 26B A4B it qat UD Q4_K_XL",
+      "kind": "vision",
+      "model_max_ctx": {
+        "tokens": 262144,
+        "source": "GGUF metadata key gemma4.context_length"
+      },
+      "sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891"
+    },
+    "gemma4-mmproj-bf16": {
+      "artifact_path": "/models/gguf/gemma4-26b-a4b/mmproj-BF16.gguf",
+      "display_name": "Gemma 4 BF16 multimodal projector",
+      "kind": "projector",
+      "sha256": "7b06953ccdbe8cf363f47841a7afaacd2b1c2ff9a8d6b426fdec7521a6878744"
+    }
+  },
   "roles": {
-    "GENERAL": {
-      "enabled": true,
-      "state": "ACTIVE",
-      "model_path": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
-      "expected_v1_models_id": "/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf",
-      "runtime_binary": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server",
-      "runtime_build": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan",
-      "backend": "Vulkan",
-      "device": "Vulkan0",
-      "host": "127.0.0.1",
-      "port": 18081,
-      "context": 32768,
-      "batch": 2048,
-      "ubatch": 512,
-      "ngl": 999,
-      "flash_attention": "auto",
-      "jinja": true,
-      "parallel": 1,
-      "mtp": {
-        "enabled": false
-      },
-      "model_sha256": "b6b52b1bfd9cc3509a0337eb1a4be3b405190ec49863b352ebf33e448c1149af"
+    "LOCAL_GENERAL": {
+      "assignment": "UNDECIDED",
+      "current_deployment_profile": "current-general",
+      "projection_status": "CURRENT_DEPLOYMENT_COMPATIBILITY_ONLY"
     },
-    "CODE": {
-      "enabled": true,
-      "state": "ACTIVE",
-      "model_path": "/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf",
-      "expected_v1_models_id": "/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf",
-      "runtime_binary": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server",
-      "runtime_build": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan",
-      "backend": "Vulkan",
-      "device": "Vulkan0",
-      "host": "127.0.0.1",
-      "port": 18080,
-      "context": 32768,
-      "batch": 2048,
-      "ubatch": 1024,
-      "ngl": 999,
-      "flash_attention": "on",
-      "jinja": true,
-      "parallel": 1,
-      "mtp": {
-        "enabled": false
-      },
-      "model_sha256": "2841aa314d916434860cfb8990347528dcdfe5c350dbcb9d1461dbee88ff2533"
+    "LOCAL_CODE": {
+      "assignment": "UNDECIDED",
+      "current_deployment_profile": "current-code",
+      "projection_status": "QUALIFIED_LOCAL_CODE_CANONICAL"
     },
-    "VISION": {
-      "enabled": true,
-      "state": "ACTIVE",
-      "model_path": "/models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
-      "expected_v1_models_id": "/models/gguf/gemma4-26b-a4b/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
-      "runtime_binary": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server",
-      "runtime_build": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan",
-      "backend": "Vulkan",
-      "device": "Vulkan0",
-      "host": "127.0.0.1",
-      "port": 18082,
-      "context": 32768,
-      "batch": 2048,
-      "ubatch": 512,
-      "ngl": 999,
-      "flash_attention": "auto",
-      "jinja": true,
-      "parallel": 1,
-      "mtp": {
-        "enabled": false
+    "LOCAL_VISION": {
+      "assignment": "UNDECIDED",
+      "current_deployment_profile": "current-vision",
+      "projection_status": "CURRENT_DEPLOYMENT_COMPATIBILITY_ONLY"
+    }
+  },
+  "runtime_profiles": {
+    "current-general": {
+      "legacy_cli_alias": "general",
+      "legacy_identity": "GENERAL",
+      "model_ref": "nemotron-q5",
+      "endpoint": {
+        "host": "127.0.0.1",
+        "port": 18081,
+        "path": "/v1"
       },
-      "reasoning": "off",
-      "mmproj_path": "/models/gguf/gemma4-26b-a4b/mmproj-BF16.gguf",
-      "model_sha256": "a7c5bc715f5ff8e99a3e8901ce7d2b42b402c669bf24f7c5250747633d0f5891",
-      "mmproj_sha256": "7b06953ccdbe8cf363f47841a7afaacd2b1c2ff9a8d6b426fdec7521a6878744"
+      "runtime": {
+        "binary": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server",
+        "build": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan",
+        "backend": "Vulkan",
+        "device": "Vulkan0"
+      },
+      "context_layers": {
+        "model_max_ctx": {"model_ref": "nemotron-q5"},
+        "runtime_ctx": 32768,
+        "slot_ctx": 32768,
+        "client_effective_ctx": 32768
+      },
+      "max_output_tokens": 4096,
+      "arguments": ["-m", "{model_path}", "-dev", "{device}", "-ngl", "999", "-c", "{runtime_ctx}", "-b", "2048", "-ub", "512", "-fa", "auto", "--jinja", "--parallel", "1", "-lv", "4", "--host", "{host}", "--port", "{port}"]
+    },
+    "current-code": {
+      "legacy_cli_alias": "code",
+      "legacy_identity": "CODE",
+      "model_ref": "qwen38-halogen",
+      "endpoint": {
+        "host": "127.0.0.1",
+        "port": 8731,
+        "path": "/v1"
+      },
+      "runtime": {
+        "kind": "podman",
+        "binary": "/usr/bin/podman",
+        "build": "ghcr.io/peonist-ai/halogen:0.1.4",
+        "backend": "ROCm",
+        "device": "gfx1151",
+        "image": "ghcr.io/peonist-ai/halogen:0.1.4",
+        "image_digest": "sha256:dc0a39a0016d6cfc58a197978febaafdf8d28403f724ded6111d98b5fb7ac0ea",
+        "container_name": "neuralengine-local-code"
+      },
+      "context_layers": {
+        "model_max_ctx": {"model_ref": "qwen38-halogen"},
+        "runtime_ctx": 262144,
+        "slot_ctx": 65536,
+        "client_effective_ctx": 65536
+      },
+      "max_output_tokens": 16384,
+      "arguments": [
+        "run", "--rm", "--pull=never", "--network=pasta",
+        "-p", "{host}:{port}:{port}",
+        "--device", "/dev/kfd", "--device", "/dev/dri",
+        "--group-add", "keep-groups", "--security-opt", "seccomp=unconfined",
+        "--ipc=host", "--detach", "--name", "neuralengine-local-code",
+        "-e", "HALOGEN_KV_SLOTS=1", "-e", "HALOGEN_SLOT_CTX=65536",
+        "-e", "HALOGEN_CACHE_MB=4096", "-e", "HALOGEN_DRAFTER=2",
+        "-e", "HALOGEN_W4A4=64", "-e", "HALOGEN_MAX_TOKENS_CAP=16384",
+        "-e", "HALOGEN_QUEUE_TIMEOUT=1800",
+        "-v", "/models/halogen/qwen3.8-27b:/models:ro",
+        "-v", "/models/halogen/qwen3.8-27b/tokenizer:/tokenizer:ro",
+        "ghcr.io/peonist-ai/halogen:0.1.4"
+      ]
+    },
+    "current-qwen3-coder": {
+      "legacy_cli_alias": "qwen3-coder",
+      "legacy_identity": "QWEN3_CODER",
+      "model_ref": "qwen3-coder-q4",
+      "endpoint": {
+        "host": "127.0.0.1",
+        "port": 18080,
+        "path": "/v1"
+      },
+      "runtime": {
+        "binary": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server",
+        "build": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan",
+        "backend": "Vulkan",
+        "device": "Vulkan0"
+      },
+      "context_layers": {
+        "model_max_ctx": {"model_ref": "qwen3-coder-q4"},
+        "runtime_ctx": 32768,
+        "slot_ctx": 32768,
+        "client_effective_ctx": 32768
+      },
+      "max_output_tokens": null,
+      "selection_status": "OPTIONAL_LOCAL_CODING_SPECIALIST",
+      "arguments": [
+        "-m", "{model_path}", "-dev", "{device}", "-ngl", "999",
+        "-c", "{runtime_ctx}", "-b", "2048", "-ub", "1024", "-fa", "on",
+        "--jinja", "--parallel", "1", "--cache-prompt", "--metrics",
+        "--host", "{host}", "--port", "{port}"
+      ]
+    },
+    "current-vision": {
+      "legacy_cli_alias": "vision",
+      "legacy_identity": "VISION",
+      "model_ref": "gemma4-q4",
+      "projector_ref": "gemma4-mmproj-bf16",
+      "endpoint": {
+        "host": "127.0.0.1",
+        "port": 18082,
+        "path": "/v1"
+      },
+      "runtime": {
+        "binary": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan/bin/llama-server",
+        "build": "/home/grzanka/Work/LLM/strix-llama.cpp/build-vulkan",
+        "backend": "Vulkan",
+        "device": "Vulkan0"
+      },
+      "context_layers": {
+        "model_max_ctx": {"model_ref": "gemma4-q4"},
+        "runtime_ctx": 32768,
+        "slot_ctx": 32768,
+        "client_effective_ctx": 32768
+      },
+      "max_output_tokens": 4096,
+      "arguments": ["-m", "{model_path}", "--mmproj", "{projector_path}", "-dev", "{device}", "-ngl", "999", "-c", "{runtime_ctx}", "-b", "2048", "-ub", "512", "-fa", "auto", "--jinja", "--parallel", "1", "--reasoning", "off", "--host", "{host}", "--port", "{port}"]
+    }
+  },
+  "challengers": {
+    "qwen38": {
+      "display_name": "Qwen3.8-27B",
+      "status": "QUALIFIED",
+      "qualified_roles": ["LOCAL_CODE"],
+      "eligible_for_role_assignment": true,
+      "qualification": {
+        "R1": "PASS",
+        "R2.1": "PASS",
+        "R2.1_slot_ctx": 65536,
+        "R2.2_halogen_cache_mb": 4096,
+        "R2.3": "NOT_RUN",
+        "R4.1": "PASS",
+        "R4.1_contract_score": "43/48",
+        "benchmarks_frozen": true
+      }
     }
   },
   "clients": {
-    "pi": {
-      "provider": "deepseek",
-      "model": "deepseek-flash",
-      "local_lifecycle": false
-    },
     "qwen": {
+      "local_roles": ["LOCAL_GENERAL", "LOCAL_CODE", "LOCAL_VISION"],
+      "default_role": "LOCAL_GENERAL",
       "local_only": true,
-      "default_role": "GENERAL",
       "cloud_fallback": false,
-      "contexts": {
-        "GENERAL": 32768,
-        "CODE": 32768,
-        "VISION": 32768
-      }
+      "local_lifecycle": false,
+      "projection_source": "llm-manifest.json",
+      "compaction_owner": "Qwen Code settings"
+    },
+    "pi": {
+      "local_roles": ["LOCAL_GENERAL", "LOCAL_CODE", "LOCAL_VISION"],
+      "local_profiles": ["current-code", "current-general", "current-qwen3-coder", "current-vision"],
+      "provider": "neuralengine-local",
+      "api": "openai-completions",
+      "cloud_default_provider": "deepseek",
+      "cloud_default_model": "deepseek-flash",
+      "cloud_provider_catalog": "Pi built-in providers",
+      "local_lifecycle": false,
+      "projection_source": "llm-manifest.json"
+    },
+    "opencode": {
+      "status": "PARKED",
+      "local_roles": [],
+      "local_lifecycle": false
     }
   }
 }

@@ -1,15 +1,10 @@
 ---
 name: coder
 description: Implement, debug, test, and refactor with minimal verified changes.
-model: "openai:/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf"
 approvalMode: default
 ---
 
-NEURALENGINE_ROLE=CODE
+NEURALENGINE_ROLE=LOCAL_CODE
 Implement, debug, test, and refactor with minimal verified changes.
-Use only the local CODE model. Never use a cloud model or fallback.
-Follow QWEN.md, repository AGENTS.md, and the canonical Command Protocol
-sources in docs/command-protocol/. Read all three canonical documents before
-interpreting protocol commands. Keep scope bounded and evidence explicit.
-Brain is read-only unless separately authorized. Do not install packages,
-stage, commit, or push without explicit authorization.
+Use the manifest's current LOCAL_CODE compatibility projection. The role
+assignment remains undecided and Qwen owns no runtime lifecycle.
