@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Compile supplied deterministic repository evidence into a bounded handoff."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+UNKNOWN = "UNKNOWN"
+
+FIELDS = (
+    ("TASK", "task", False),
+    ("SYMPTOM", "symptom", False),
+    ("ROOT_CAUSE_OR_OPEN_QUESTION", "root_cause_or_open_question", False),
+    ("WORKING_HYPOTHESIS", "working_hypothesis", False),
+    ("EXACT_FILES", "exact_files", True),
+    ("EXACT_SYMBOLS", "exact_symbols", True),
+    ("KNOWN_INVARIANTS", "known_invariants", True),
+    ("KNOWN_TESTS", "known_tests", True),
+    ("FAILING_EVIDENCE", "failing_evidence", True),
+    ("ALLOWED_CHANGES", "allowed_changes", True),
+    ("FORBIDDEN_CHANGES", "forbidden_changes", True),
+    ("VALIDATION_COMMANDS", "validation_commands", True),
+    ("STOP_CONDITIONS", "stop_conditions", True),
+)
+
+
+def _scalar(value: Any, field: str) -> str:
+    if value is None:
+        return UNKNOWN
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    return value.strip() or UNKNOWN
+
+
+def _items(value: Any, field: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{field} must be an array of strings")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"{field} must contain only strings")
+        normalized = item.strip()
+        if normalized:
+            items.append(normalized)
+    return items
+
+
+def render_evidence_pack(evidence: Mapping[str, Any]) -> str:
+    """Render the fixed handoff fields without deriving or retrieving evidence."""
+    known_keys = {key for _label, key, _is_list in FIELDS} | {"evidence_status"}
+    unexpected = sorted(set(evidence) - known_keys)
+    if unexpected:
+        raise ValueError(f"unknown evidence field: {unexpected[0]}")
+
+    statuses = evidence.get("evidence_status", {})
+    if not isinstance(statuses, dict):
+        raise ValueError("evidence_status must be an object")
+    for key, status in statuses.items():
+        if key not in known_keys - {"evidence_status"} or status not in {"KNOWN", "INFERRED", "UNKNOWN"}:
+            raise ValueError("evidence_status contains an unknown field or status")
+    sections = ["# Evidence Pack v1"]
+    for label, key, is_list in FIELDS:
+        sections.append(f"\n## {label}")
+        if is_list:
+            values = _items(evidence.get(key), key)
+            sections.extend(f"- {item}" for item in values or [UNKNOWN])
+        else:
+            sections.append(_scalar(evidence.get(key), key))
+    sections.append("\n## EVIDENCE_STATUS")
+    for _label, key, is_list in FIELDS:
+        supplied = bool(_items(evidence.get(key), key)) if is_list else _scalar(evidence.get(key), key) != UNKNOWN
+        status = statuses.get(key, "UNKNOWN" if not supplied else "INFERRED" if key in {"root_cause_or_open_question", "working_hypothesis"} else "KNOWN")
+        if status == "KNOWN" and not supplied:
+            raise ValueError(f"{key} cannot be KNOWN without supplied evidence")
+        sections.append(f"- {key}: {status}")
+    return "\n".join(sections) + "\n"
+
+
+def _read_input(source: str) -> Mapping[str, Any]:
+    raw = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("evidence input must be a JSON object")
+    return value
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", default="-", help="JSON evidence object path; default: stdin")
+    args = parser.parse_args()
+    try:
+        sys.stdout.write(render_evidence_pack(_read_input(args.input)))
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        print(f"evidence-compiler: {error}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
