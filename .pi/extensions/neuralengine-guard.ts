@@ -32,6 +32,68 @@ function freezeToolInput(value: unknown, visited = new Set<object>()): void {
 }
 
 // A narrow early refusal for common policy violations. AGENTS.md remains authoritative.
+const GIT_MUTATION_REASON = "Git staging and history operations require separate authorization";
+const NEURAL_MUTATION_REASON = "Brain writes require separate authorization";
+const PRIVILEGED_MUTATION_REASON = "Privileged system mutation requires separate explicit authorization";
+const RECURSIVE_REMOVAL_REASON = "Recursive removal requires separate explicit authorization";
+
+function tokenizeShellWords(command: string): string[] | undefined {
+  if (/[;&|`$<>\\\n\r]/.test(command)) return undefined;
+  const words: string[] = [];
+  let index = 0;
+  while (index < command.length) {
+    while (/\s/.test(command[index] ?? "")) index += 1;
+    if (index >= command.length) break;
+    const quote = command[index] === "'" || command[index] === '"' ? command[index] : undefined;
+    if (quote) {
+      index += 1;
+      const end = command.indexOf(quote, index);
+      if (end < 0) return undefined;
+      const word = command.slice(index, end);
+      if (!word || word.includes(quote)) return undefined;
+      words.push(word);
+      index = end + 1;
+      if (index < command.length && !/\s/.test(command[index] ?? "")) return undefined;
+    } else {
+      const start = index;
+      while (index < command.length && !/\s/.test(command[index] ?? "")) index += 1;
+      words.push(command.slice(start, index));
+    }
+  }
+  return words.length > 0 ? words : undefined;
+}
+
+function isProtectedGitMutation(command: string): boolean {
+  const words = tokenizeShellWords(command.trim());
+  if (!words || words[0] !== "git" || !words[1]) return false;
+
+  const optionsWithValues = new Set([
+    "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env",
+  ]);
+  let index = 1;
+  while (index < words.length && words[index]?.startsWith("-")) {
+    const option = words[index] ?? "";
+    index += optionsWithValues.has(option) ? 2 : 1;
+  }
+
+  const subcommand = words[index];
+  if (!subcommand) return false;
+  if (["add", "commit", "push", "merge", "tag", "rm", "reset", "clean", "stash", "rebase", "restore", "checkout"].includes(subcommand)) {
+    return true;
+  }
+  return subcommand === "apply" && words.slice(index + 1).includes("--cached");
+}
+
+function classifyProtectedCommand(command: string): string | undefined {
+  if (isProtectedGitMutation(command)) return GIT_MUTATION_REASON;
+  if (/\bneural\s+(?:init\b|decision\s+(?:add\b|accept\b|action\s+add\b|outcome\s+add\b|review\s+add\b)|experience\s+(?:add\b|from-observation\b|from-review\b)|evaluation\s+add\b|knowledge\s+(?:add\b|from-experience\b)|playbook\s+add\b|proposal\s+(?:add\b|status\b)|revision\s+(?:add\b|activate\b|supersede\b|reject\b)|run\s+add\b|development-evidence\s+apply\b|brain\s+(?:recover\b|adopt\b))/i.test(command)) {
+    return NEURAL_MUTATION_REASON;
+  }
+  if (/\bsudo(?:\s|$)/i.test(command)) return PRIVILEGED_MUTATION_REASON;
+  if (/\brm\s+(?:-[^\s]*r[^\s]*\b|--recursive\b)/i.test(command)) return RECURSIVE_REMOVAL_REASON;
+  return undefined;
+}
+
 export function guardToolCall(
   toolName: string,
   input: Record<string, unknown>,
@@ -50,10 +112,8 @@ export function guardToolCall(
   if (toolName === "bash") {
     if (typeof input.command !== "string") return "Missing shell command";
     const command = input.command;
-    if (/\bgit\s+(?:add|commit|push|merge|tag|rm|reset|clean|stash|rebase|restore|checkout)\b/.test(command))
-      return "Git staging and history operations require separate authorization";
-    if (/\bneural\s+(?:observation|experience|knowledge|playbook|decision|brain)\s+(?:add|create|accept|apply|promote|adopt|recover|set|update|delete|remove|restore|rebind)\b/.test(command))
-      return "Brain writes require separate authorization";
+    const protectedCommandReason = classifyProtectedCommand(command);
+    if (protectedCommandReason) return protectedCommandReason;
   }
   return undefined;
 }
