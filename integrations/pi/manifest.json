@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "name": "neuralengine-model-lifecycle",
+      "scope": "GLOBAL",
+      "source": "integrations/pi/extensions/neuralengine-model-lifecycle.ts",
+      "destination": "extensions/neuralengine-model-lifecycle.ts"
+    },
+    {
+      "name": "command-protocol",
+      "scope": "GLOBAL",
+      "source": "integrations/pi/skills/command-protocol",
+      "destination": "skills/command-protocol"
+    },
+    {
+      "name": "neuralengine-guard",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/extensions/neuralengine-guard.ts"
+    },
+    {
+      "name": "local-models",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/skills/local-models"
+    },
+    {
+      "name": "prompt-arch",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/arch.md"
+    },
+    {
+      "name": "prompt-checkpoint",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/checkpoint.md"
+    },
+    {
+      "name": "prompt-fix",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/fix.md"
+    },
+    {
+      "name": "prompt-kill",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/kill.md"
+    },
+    {
+      "name": "prompt-next",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/next.md"
+    },
+    {
+      "name": "prompt-optimize",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/optimize.md"
+    },
+    {
+      "name": "prompt-recheck",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/recheck.md"
+    },
+    {
+      "name": "prompt-research",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/research.md"
+    },
+    {
+      "name": "prompt-review",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/review.md"
+    },
+    {
+      "name": "prompt-reviewer",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/reviewer.md"
+    },
+    {
+      "name": "prompt-seek",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/seek.md"
+    },
+    {
+      "name": "prompt-ship",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/prompts/ship.md"
+    },
+    {
+      "name": "project-settings",
+      "scope": "PROJECT_LOCAL",
+      "source": ".pi/settings.json"
+    }
+  ]
+}

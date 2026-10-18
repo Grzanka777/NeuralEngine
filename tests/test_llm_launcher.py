@@ -140,7 +140,7 @@ def test_port_already_occupied_refuses_to_launch(tmp_path: Path) -> None:
         )
 
     # 18081 is read first for the idempotency pre-scan; CONFLICT_PORTS follow
-    assert calls == [18081, 18080, 18081, 18082, 18084]
+    assert calls == [18081, *launcher.CONFLICT_PORTS]
 
 
 def test_start_reports_endpoint_after_health_success(tmp_path: Path, capsys: Any) -> None:
@@ -209,17 +209,18 @@ def test_code_profile_has_only_the_frozen_non_speculative_arguments(tmp_path: Pa
         "-ngl",
         "999",
         "-c",
-        "65536",
+        "32768",
         "-b",
         "2048",
         "-ub",
-        "1024",
-        "-np",
-        "1",
+        "512",
         "-fa",
-        "on",
-        "--cache-prompt",
-        "--metrics",
+        "auto",
+        "--jinja",
+        "--parallel",
+        "1",
+        "-lv",
+        "4",
         "--host",
         "127.0.0.1",
         "--port",
@@ -439,44 +440,35 @@ def test_vision_profile_matches_verified_frozen_arguments(tmp_path: Path) -> Non
 
 def test_vision_missing_main_model_is_reported_before_launch(tmp_path: Path) -> None:
     profile = _vision_profile(tmp_path)
-    profile.model.unlink()
-    launched = False
-
-    def process_factory(*args: Any, **kwargs: Any) -> Any:
-        nonlocal launched
-        launched = True
-        return None
-
-    with pytest.raises(launcher.LauncherError, match="VISION start refused: model does not exist"):
+    with pytest.raises(launcher.LauncherError, match="VISION is UNFILLED"):
         launcher.start_vision(
             profile,
-            port_reader=_free_ports,
-            process_factory=process_factory,
+            port_reader=lambda _: pytest.fail(
+                "unfilled VISION must not inspect or start a runtime"
+            ),
         )
-
-    assert launched is False
 
 
 def test_vision_missing_runtime_is_reported_before_launch(tmp_path: Path) -> None:
     profile = _vision_profile(tmp_path)
-    profile.runtime.unlink()
-
-    with pytest.raises(
-        launcher.LauncherError,
-        match="VISION start refused: llama-server runtime does not exist",
-    ):
-        launcher.start_vision(profile, port_reader=_free_ports)
+    with pytest.raises(launcher.LauncherError, match="VISION is UNFILLED"):
+        launcher.start_vision(
+            profile,
+            port_reader=lambda _: pytest.fail(
+                "unfilled VISION must not inspect or start a runtime"
+            ),
+        )
 
 
 def test_vision_non_executable_runtime_is_reported_before_launch(tmp_path: Path) -> None:
     profile = _vision_profile(tmp_path)
-    profile.runtime.chmod(0o644)
-
-    with pytest.raises(
-        launcher.LauncherError,
-        match="VISION start refused: runtime is not executable",
-    ):
-        launcher.start_vision(profile, port_reader=_free_ports)
+    with pytest.raises(launcher.LauncherError, match="VISION is UNFILLED"):
+        launcher.start_vision(
+            profile,
+            port_reader=lambda _: pytest.fail(
+                "unfilled VISION must not inspect or start a runtime"
+            ),
+        )
 
 
 @pytest.mark.parametrize("missing_field", ("mmproj", "mtp"))
@@ -484,33 +476,25 @@ def test_vision_missing_required_auxiliary_file_is_reported(
     tmp_path: Path, missing_field: str
 ) -> None:
     profile = _vision_profile(tmp_path)
-    getattr(profile, missing_field).unlink()
-
-    with pytest.raises(launcher.LauncherError, match="VISION start refused"):
-        launcher.start_vision(profile, port_reader=_free_ports)
+    with pytest.raises(launcher.LauncherError, match="VISION is UNFILLED"):
+        launcher.start_vision(
+            profile,
+            port_reader=lambda _: pytest.fail(
+                "unfilled VISION must not inspect or start a runtime"
+            ),
+        )
 
 
 @pytest.mark.parametrize("blocked_port", (18080, 18081, 18082, 18084))
 def test_vision_refuses_any_conflicting_listener(tmp_path: Path, blocked_port: int) -> None:
     profile = _vision_profile(tmp_path)
-    launched = False
-
-    def process_factory(*args: Any, **kwargs: Any) -> Any:
-        nonlocal launched
-        launched = True
-        return None
-
-    def occupied_ports(port: int) -> Any:
-        return launcher.PortState(listening=port == blocked_port, pids=(1234,))
-
-    with pytest.raises(launcher.LauncherError, match=str(blocked_port)):
+    with pytest.raises(launcher.LauncherError, match="VISION is UNFILLED"):
         launcher.start_vision(
             profile,
-            port_reader=occupied_ports,
-            process_factory=process_factory,
+            port_reader=lambda _: pytest.fail(
+                "unfilled VISION must not inspect or start a runtime"
+            ),
         )
-
-    assert launched is False
 
 
 def test_vision_health_accepts_http_200_healthy_json(
@@ -550,62 +534,24 @@ def test_vision_health_accepts_http_200_healthy_json(
 
 def test_start_vision_reports_endpoint_after_health_success(tmp_path: Path, capsys: Any) -> None:
     profile = _vision_profile(tmp_path)
-    log_path = tmp_path / "state" / "vision.log"
-    started: dict[str, Any] = {}
-
-    class FakeProcess:
-        pid = 4330
-
-        def poll(self) -> None:
-            return None
-
-    def process_factory(command: tuple[str, ...], **kwargs: Any) -> FakeProcess:
-        started["command"] = command
-        started["kwargs"] = kwargs
-        return FakeProcess()
-
-    launcher.start_vision(
-        profile,
-        port_reader=_free_ports,
-        process_factory=process_factory,
-        health_waiter=lambda selected: selected is profile,
-        log_path=lambda: log_path,
-    )
-
-    output = capsys.readouterr().out
-    assert "VISION READY" in output
-    assert "endpoint: http://127.0.0.1:18082/v1" in output
-    assert "pid: 4330" in output
-    assert started["command"] == profile.command()
-    assert started["kwargs"]["start_new_session"] is True
+    with pytest.raises(launcher.LauncherError, match="VISION is UNFILLED"):
+        launcher.start_vision(
+            profile,
+            port_reader=lambda _: pytest.fail(
+                "unfilled VISION must not inspect or start a runtime"
+            ),
+        )
 
 
 def test_vision_health_timeout_terminates_started_process(tmp_path: Path) -> None:
     profile = _vision_profile(tmp_path)
-    state: dict[str, Any] = {"terminated": False, "waited": False}
-
-    class FakeProcess:
-        pid = 4331
-
-        def poll(self) -> None:
-            return None
-
-        def terminate(self) -> None:
-            state["terminated"] = True
-
-        def wait(self, timeout: float) -> None:
-            state["waited"] = timeout == 5
-
-    with pytest.raises(launcher.LauncherError, match="did not become healthy"):
+    with pytest.raises(launcher.LauncherError, match="VISION is UNFILLED"):
         launcher.start_vision(
             profile,
-            port_reader=_free_ports,
-            process_factory=lambda *args, **kwargs: FakeProcess(),
-            health_waiter=lambda _: False,
-            log_path=lambda: tmp_path / "state" / "vision.log",
+            port_reader=lambda _: pytest.fail(
+                "unfilled VISION must not inspect or start a runtime"
+            ),
         )
-
-    assert state == {"terminated": True, "waited": True}
 
 
 def test_status_reports_no_profile_running(capsys: Any) -> None:
@@ -828,7 +774,7 @@ def test_start_profile_refuses_different_active_profile_without_switching(
 def test_start_profile_refuses_unknown_state_without_starting(tmp_path: Path) -> None:
     with pytest.raises(launcher.LauncherError, match="START REFUSED: current LLM state is UNKNOWN"):
         launcher.start_profile(
-            "vision",
+            "code",
             state_reader=lambda: "UNKNOWN",
             starter=lambda: pytest.fail("UNKNOWN must not start a profile"),
             lock_path=tmp_path / "lifecycle.lock",
@@ -915,7 +861,7 @@ def test_switch_refuses_unknown_state_without_stopping_or_starting(tmp_path: Pat
 def test_switch_reports_failure_without_automatic_fallback(tmp_path: Path) -> None:
     with pytest.raises(launcher.LauncherError, match="SWITCH FAILED: target unavailable"):
         launcher.switch_profile(
-            "vision",
+            "code",
             state_reader=lambda: "STOPPED",
             starter=lambda: (_ for _ in ()).throw(launcher.LauncherError("target unavailable")),
             lock_path=tmp_path / "lifecycle.lock",
@@ -1272,28 +1218,14 @@ def test_code_already_running_verified_healthy_returns_success(tmp_path: Path, c
 def test_vision_already_running_verified_healthy_returns_success(
     tmp_path: Path, capsys: Any
 ) -> None:
-    """Exact verified + healthy VISION -> VISION ALREADY READY, no spawn."""
     profile = _vision_profile(tmp_path)
-    spawned = False
-
-    def process_factory(*args: Any, **kwargs: Any) -> Any:
-        nonlocal spawned
-        spawned = True
-        return None
-
-    launcher.start_vision(
-        profile,
-        port_reader=_occupied_own_port(profile.port, 8820),
-        process_factory=process_factory,
-        identity_checker=lambda pid, _: pid == 8820,
-        health_check=lambda _: True,
-    )
-
-    output = capsys.readouterr().out
-    assert "VISION ALREADY READY" in output
-    assert "endpoint: http://127.0.0.1:18082/v1" in output
-    assert "pid: 8820" in output
-    assert spawned is False
+    with pytest.raises(launcher.LauncherError, match="VISION is UNFILLED"):
+        launcher.start_vision(
+            profile,
+            port_reader=lambda _: pytest.fail(
+                "unfilled VISION must not inspect or start a runtime"
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1498,3 +1430,27 @@ def test_detect_verified_running_profile_returns_none_when_health_fails() -> Non
         health_check=lambda: False,
     )
     assert result is None
+
+
+def test_unfilled_vision_cli_refuses_before_lock(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.setattr(launcher, "lifecycle_lock", lambda *args: pytest.fail("must not lock"))
+    for arguments in (["vision"], ["start", "vision"], ["switch", "vision"]):
+        assert launcher.main(arguments) == 1
+    assert capsys.readouterr().err.count("VISION is UNFILLED") == 3
+
+
+@pytest.mark.parametrize("port", (18084, 18086, 18087))
+def test_retired_and_challenger_ports_fail_closed(port: int) -> None:
+    def reader(candidate: int) -> Any:
+        return launcher.PortState(
+            listening=candidate == port, pids=(777,) if candidate == port else ()
+        )
+
+    assert launcher.active_profile_state(port_reader=reader) == "UNKNOWN"
+    assert launcher.active_profile_identity(port_reader=reader) is None
+    with pytest.raises(launcher.LauncherError, match=str(port)):
+        launcher.stop_active_profiles(
+            port_reader=reader, killer=lambda *_: pytest.fail("must not signal")
+        )

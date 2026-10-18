@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "roles": {
+    "PATCH": {
+      "enabled": true,
+      "state": "SPECIALIST",
+      "model_path": "/models/gguf/gpt-oss-20b/gpt-oss-20b-MXFP4.gguf",
+      "model_sha256": "27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901",
+      "launcher": "scripts/challenger gptoss",
+      "port": 18086,
+      "mapped_to_code": false
+    }
+  }
+}
