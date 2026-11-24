@@ -39,7 +39,7 @@ GENERAL_MTP = _configured_path(
 )
 CODE_MODEL = _configured_path(
     "NEURALENGINE_CODE_MODEL",
-    Path("/models/gguf/qwen3-coder-30b-a3b/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf"),
+    Path("/models/gguf/nemotron-3-nano-30b-a3b/nvidia_Nemotron-3-Nano-30B-A3B-Q5_K_M.gguf"),
 )
 VISION_MODEL = _configured_path(
     "NEURALENGINE_VISION_MODEL",
@@ -63,7 +63,8 @@ CODE_HOST = "127.0.0.1"
 CODE_PORT = 18080
 VISION_HOST = "127.0.0.1"
 VISION_PORT = 18082
-CONFLICT_PORTS = (18080, 18081, 18082, 18084)
+UNFILLED_ROLES = {"VISION"}
+CONFLICT_PORTS = (18080, 18081, 18082, 18084, 18086, 18087)
 HEALTH_TIMEOUT_SECONDS = 300
 HEALTH_POLL_SECONDS = 1
 HEALTH_REQUEST_TIMEOUT_SECONDS = 2
@@ -141,7 +142,7 @@ DEFAULT_PROFILE = GeneralProfile()
 
 @dataclass(frozen=True, slots=True)
 class CodeProfile:
-    """The immutable production CODE profile."""
+    """The verified Nemotron Q5 CODE profile."""
 
     model: Path = CODE_MODEL
     runtime: Path = LLAMA_SERVER
@@ -149,8 +150,6 @@ class CodeProfile:
     port: int = CODE_PORT
 
     def arguments(self) -> tuple[str, ...]:
-        """Return the frozen llama-server arguments after the executable."""
-
         return (
             "-m",
             str(self.model),
@@ -159,17 +158,18 @@ class CodeProfile:
             "-ngl",
             "999",
             "-c",
-            "65536",
+            "32768",
             "-b",
             "2048",
             "-ub",
-            "1024",
-            "-np",
-            "1",
+            "512",
             "-fa",
-            "on",
-            "--cache-prompt",
-            "--metrics",
+            "auto",
+            "--jinja",
+            "--parallel",
+            "1",
+            "-lv",
+            "4",
             "--host",
             self.host,
             "--port",
@@ -177,13 +177,9 @@ class CodeProfile:
         )
 
     def command(self) -> tuple[str, ...]:
-        """Return the complete frozen command line."""
-
         return (str(self.runtime), *self.arguments())
 
     def endpoint(self) -> str:
-        """Return the OpenAI-compatible endpoint."""
-
         return f"http://{self.host}:{self.port}/v1"
 
 
@@ -489,7 +485,7 @@ def _vision_state_log_path() -> Path:
 def _lifecycle_lock_path() -> Path:
     state_home = os.environ.get("XDG_STATE_HOME")
     root = Path(state_home) if state_home else Path.home() / ".local" / "state"
-    return root / "llm" / LIFECYCLE_LOCK_FILENAME
+    return root / "neuralengine" / LIFECYCLE_LOCK_FILENAME
 
 
 @contextmanager
@@ -725,6 +721,7 @@ def start_vision(
     prints VISION ALREADY READY and returns without spawning a new process.
     """
 
+    raise LauncherError("VISION is UNFILLED/unsupported: no model is assigned")
     for label, path in (
         ("model", profile.model),
         ("mmproj", profile.mmproj),
@@ -1054,6 +1051,9 @@ def active_profile_state(
     """
 
     read_port = port_reader or port_state
+    for conflict_port in (18084, 18086, 18087):
+        if read_port(conflict_port).listening:
+            return "UNKNOWN"
     profile_specs = (
         (
             "CODE",
@@ -1113,6 +1113,9 @@ def active_profile_identity(
     """Return the exact verified active profile and PID, or ``None``."""
 
     read_port = port_reader or port_state
+    for conflict_port in (18084, 18086, 18087):
+        if read_port(conflict_port).listening:
+            return None
     profile_specs = (
         (
             "CODE",
@@ -1180,6 +1183,8 @@ def switch_profile(
     """Switch between verified production profiles while holding the lifecycle lock."""
 
     target_name = target.upper()
+    if target_name in UNFILLED_ROLES:
+        raise LauncherError("VISION is UNFILLED/unsupported: no model is assigned")
     if target_name not in {"GENERAL", "CODE", "VISION"}:
         raise LauncherError(f"SWITCH FAILED: unsupported target profile: {target}")
 
@@ -1235,6 +1240,8 @@ def start_profile(
     """Start only from STOPPED; return identity only when this call started it."""
 
     target_name = target.upper()
+    if target_name in UNFILLED_ROLES:
+        raise LauncherError("VISION is UNFILLED/unsupported: no model is assigned")
     if target_name not in {"GENERAL", "CODE", "VISION"}:
         raise LauncherError(f"START REFUSED: unsupported target profile: {target}")
 
@@ -1299,6 +1306,9 @@ def stop_active_profiles(
     """Stop one verified supported profile, refusing conflicts or ambiguity."""
 
     read_port = port_reader or port_state
+    for conflict_port in (18084, 18086, 18087):
+        if read_port(conflict_port).listening:
+            raise LauncherError(f"conflicting or unsupported listener on port {conflict_port}")
     code_state = read_port(code_profile.port)
     general_state = read_port(general_profile.port)
     vision_state = read_port(vision_profile.port)
@@ -1394,6 +1404,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.command == "vision" or args.profile == "vision":
+        print("llm: VISION is UNFILLED/unsupported: no model is assigned", file=sys.stderr)
+        return 1
     if args.command == "switch" and args.profile is None:
         print("llm: switch requires a target profile", file=sys.stderr)
         return 2

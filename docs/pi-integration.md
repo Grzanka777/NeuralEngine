@@ -1,127 +1,80 @@
 # Pi integration
 
-Pi 1.0.0 (project baseline) is configured as a thin, DeepSeek-only
-NeuralEngine client through the project `.pi/` configuration. Verify the
-running version with `pi --version`; the integration uses only stable
-mechanisms (project settings, skills, prompt templates, and the `tool_call`
-extension hook) and does not depend on version-specific behavior.
+Pi is the canonical reference host for NeuralEngine local GENERAL, CODE, and
+PATCH. The integration baseline is Pi 1.0.0; check `pi --version` on the host.
+The model catalog is user-managed, so installed resource packaging alone does
+not prove model/provider readiness.
 
-## Launch
+## Distribution and launch
 
-From this repository:
+Run `uv run --no-sync python scripts/sync-pi-resources` from the repository.
+`integrations/pi/manifest.json` is the resource inventory. GLOBAL resources
+(Command Protocol and model lifecycle extension) install into `~/.pi/agent/`.
+Each must load exactly once, including outside the repository. Never put their
+copies in `.pi/skills/command-protocol` or `.pi/extensions/`.
+PROJECT_LOCAL `.pi/` retains Guard, local-models, development and roles skills,
+prompts, settings, and the system-context adapter. Guard imports the canonical
+Governor from `control-plane/`. The development skill loads
+`.claude/skills/neuralengine/SKILL.md`; `AGENTS.md` remains project authority.
+
+From the repository use `pi` for GENERAL, or the explicit runner:
 
 ```bash
-pi
+scripts/pi-local general -- PI_ARGS...
+scripts/pi-local code --policy PATH -- PI_ARGS...
+scripts/pi-local patch --policy PATH -- PI_ARGS...
+scripts/pi-model status
 ```
 
-On the first run, approve this project when Pi asks to load project settings,
-skills, prompts, and the guard extension. `pi --approve` is the verified
-one-run alternative. Pi discovers the nearest `AGENTS.md` automatically; the
-project `APPEND_SYSTEM.md` only points Pi at the additional NeuralEngine
-context and canonical authorities.
+Approve project resources interactively when Pi requests approval. No
+experimental project launcher is required. `.pi/settings.json` explicitly
+references project skills, Guard, and prompts; the default is local GENERAL.
 
-The reusable NeuralEngine Development adapter loads the canonical
-`.claude/skills/neuralengine/SKILL.md`. The Command Protocol adapter and its
-prompt templates are referenced directly from
-`integrations/opencode/command-protocol/`; no Pi semantic copy is maintained.
+## Roles and provider contract
 
-## DeepSeek-only project policy
-
-The project `enabledModels` scope is exactly:
-
-```json
-["deepseek/*"]
-```
-
-Only the DeepSeek provider is enabled for the project. The project does not
-enable `openai`, `openai-codex`, `google`, or any other native Pi provider.
-This matches the authenticated account used for this worktree: DeepSeek only.
-
-| Model reference | Role | Notes |
+| Role | Provider | Model |
 | --- | --- | --- |
-| `deepseek/deepseek-flash` | FLASH (default) | Default execution model |
-| `deepseek/deepseek-v4-pro` | PRO (escalation) | Architecture, persistence, security, critical reasoning |
+| GENERAL | `neural-general` | Qwen3.6 |
+| CODE | `neural-code` | Nemotron Q5 |
+| PATCH | `local-gptoss` | GPT-OSS |
+| VISION | none | UNFILLED, refused |
 
-Pi matches each `enabledModels` pattern with `minimatch` against
-`provider/model`; `*` does not span `/`, so `deepseek/*` covers every model on
-the DeepSeek provider without enabling any other provider.
+REVIEW and SEEK are GENERAL workflow overlays. CODE uses context 32768,
+batch 2048, ubatch 512. CODE and PATCH require a Governor policy with matching
+ROLE; UI confirmation cannot bypass bounded policy. Select local models
+explicitly; a skill declaration alone does not bind a model.
 
-### Authentication
+Cloud escalation requires explicit operator selection and a stated reason.
+Optional DeepSeek FLASH (`deepseek/deepseek-flash`) and PRO
+(`deepseek/deepseek-v4-pro`) remain cloud choices, with no automatic cloud
+fallback. There is no DeepSeek-only project model filter. Private `auth.json`
+and environment credentials stay outside the repository. `models-store.json`
+is a cached catalog, not authorization or readiness evidence. Never print,
+copy, or commit credentials.
 
-Use Pi's `/login` flow or its documented private `auth.json` store, or set
-`DEEPSEEK_API_KEY` in the environment. Never print, copy, commit, or place
-credentials in `.pi/`, repository files, shell configuration, or tracked
-configuration. A non-secret readiness check is:
+## Lifecycle ownership
 
-```bash
-pi auth check --provider deepseek --json --no-refresh
-```
+The global extension reacts to actual `model_select`, calls the machine API
+`scripts/pi-model switch-json ROLE`, and retains STARTED or BORROWED ownership.
+On `session_shutdown` it uses `stop-owned-json --profile PROFILE --pid PID`.
+Only the exact session-started runtime can stop; borrowed runtimes and
+replacement PIDs remain untouched. GPTOSS cleanup uses stable profile/PID
+ownership, with two identity revalidations before stop. Unknown, conflicting,
+or changed runtime identity fails closed. `scripts/pi-local` also guarantees
+owned cleanup on exit. Neither path grants arbitrary process termination.
 
-The DeepSeek API key remains private user configuration; the project does not
-store it.
+## Command Protocol and safety
 
-### Model store and provider policy
+Project prompts live in `.pi/prompts/`. GLOBAL packaged Command Protocol
+references must equal canonical `docs/command-protocol/` sources. `REVIEW` is a
+workflow state; `CHECKPOINT` and `RECHECK` are controls. Adapters do not redefine
+semantics or grant mutation authority.
 
-Pi's cached model catalog (`models-store.json`) records the models Pi knows
-about; it does not define the project's active provider policy. The project
-policy is the `enabledModels` scope in `.pi/settings.json`. A model appearing
-in the cache does not make its provider part of this project.
-
-## Roles
-
-Roles are execution guidance underneath the Command Protocol; they do not
-redefine any command, preset, gate, or lifecycle semantic. The full contract
-lives in the `neuralengine-roles` skill
-(`.pi/skills/neuralengine-roles/SKILL.md`).
-
-- FLASH (`deepseek/deepseek-flash`) is the default role for `//SEEK`,
-  `//ANALYSE`, standard `//FIX`, implementation, tests, documentation, and
-  mechanical or repetitive work.
-- PRO (`deepseek/deepseek-v4-pro`) is the escalation role for architecture,
-  Brain-related reasoning, persistence, migrations, security, public API or
-  persisted schema changes, critical review, and difficult root-cause
-  analysis.
-
-FLASH escalates to PRO when the task crosses a PRO boundary, stating the
-reason. Pi does not bind a model to a skill or role declaration, and this
-project does not enable an automatic model router or silently switch models
-during a task. Select the role's model explicitly with `/model`,
-`pi --provider deepseek --model <id>`, or a saved default. Pi's virtual-model
-extension mechanism exists, but no automatic role switching is configured in
-this worktree.
-
-## Command Protocol controls
-
-The existing thin prompt adapters are available as:
-
-`/arch`, `/checkpoint`, `/fix`, `/kill`, `/next`, `/optimize`, `/recheck`,
-`/research`, `/seek`, and `/ship`.
-
-They load the `command-protocol` skill and forward to the canonical protocol
-documents in `docs/command-protocol/`. `REVIEW` and `VERIFY` remain workflow
-semantics and skills rather than invented standalone Pi commands. Unknown
-commands remain unknown. Use `/skill:command-protocol` when the adapter must be
-loaded explicitly.
-
-The canonical controls retain their gates: `//SEEK` is read-only,
-`//FIX` requires diagnosis/root cause/minimal correction/verification,
-`CHECKPOINT` binds evidence to exact state, `RECHECK` returns only
-`PROCEED | REVISE | STOP`, and critical `//AGENT` work still requires
-`review -> CHECKPOINT -> RECHECK -> explicit launch`.
-
-## Local models
-
-Local Qwen, llama.cpp, Ollama, LM Studio, localhost endpoints, and the
-NeuralEngine `scripts/llm` integration are not part of this project
-configuration. No local model integration is included in this worktree.
-
-## Safety boundary
-
-Pi's `tool_call` extension blocks recognized Git mutations, selected durable
-`neural` writes, `sudo`, and recursive removal in non-interactive runs. In an
-interactive run it asks for one-command authorization. This is a narrow
-defense-in-depth guard, not a shell parser or operating-system sandbox; nested,
-aliased, or otherwise obfuscated commands require normal review and remain
-outside its coverage. Brain writes remain separately authorized by the
-canonical repository contract, and Pi does not automatically create records,
-mutate Playbooks, persist learning, stage, commit, or push.
+Guard preserves current-main protected commands: Git mutations, selected
+Brain writes, sudo, and recursive removal. Outside bounded execution it asks
+for explicit one-command authorization interactively and blocks recognized
+protected commands in non-interactive runs. In bounded execution, Governor
+policy is enforced independently of confirmation. The guard is defense in
+depth, not a shell parser or operating-system sandbox; obfuscated commands
+still require normal review. Brain writes and Git mutations remain separately
+authorized. Pi does not automatically persist learning or durable records.

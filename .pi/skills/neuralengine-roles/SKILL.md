@@ -1,64 +1,43 @@
 ---
 name: neuralengine-roles
-description: Select the NeuralEngine Pi execution role (FLASH or PRO) for a task and decide when to escalate. Use when starting, scoping, or escalating NeuralEngine work in Pi.
+description: Select GENERAL, bounded CODE, or bounded PATCH for NeuralEngine Pi work; cloud escalation requires explicit operator selection.
 ---
 
 # NeuralEngine Pi roles
 
-This skill is execution guidance underneath the repository-owned Command
-Protocol. It does not define, rename, or reinterpret any command, preset,
-gate, or lifecycle semantic. Follow `AGENTS.md` and the canonical
-`.claude/skills/neuralengine/SKILL.md` first. Do not redefine Command
-Protocol commands here; roles only describe which model an authorized task
-warrants.
+Follow `AGENTS.md` and `.claude/skills/neuralengine/SKILL.md`. Roles are
+capabilities underneath the canonical Command Protocol; they do not redefine
+commands, controls, workflow states, or authorization.
 
 ## Model mapping
 
-| Role | Pi model reference | Position |
-| --- | --- | --- |
-| FLASH | `deepseek/deepseek-flash` | Default execution role |
-| PRO | `deepseek/deepseek-v4-pro` | Escalation role |
+| Role | Pi provider | Model | Position |
+| --- | --- | --- | --- |
+| GENERAL | `neural-general` | Qwen3.6 | Default local reasoning |
+| CODE | `neural-code` | Nemotron Q5 | Bounded implementation |
+| PATCH | `local-gptoss` | GPT-OSS | Explicit bounded patch specialist |
+| VISION | none | UNFILLED | Fail closed |
 
-Both models belong to the project-allowed `deepseek/*` provider scope.
+REVIEW and SEEK are workflow overlays on GENERAL. SEEK remains read-only.
+Use GENERAL for analysis, review, architecture, and task scoping. CODE uses
+context 32768, batch 2048, ubatch 512. PATCH is not an automatic CODE substitute.
 
-## FLASH
+## Selection and lifecycle
 
-Default role. Use it for:
+Use `scripts/pi-local general -- PI_ARGS...`, or
+`scripts/pi-local code --policy PATH -- PI_ARGS...` / `scripts/pi-local patch
+--policy PATH -- PI_ARGS...`. CODE policies declare ROLE=CODE and PATCH
+policies ROLE=PATCH. A skill declaration does not itself bind the active model.
+The runner selects provider/model explicitly. The global lifecycle extension
+reacts to actual Pi `model_select`, acquires STARTED or BORROWED identity, and
+cleans up only the exact STARTED profile/PID on shutdown. A changed or unknown
+runtime fails closed; never kill an unrelated listener.
 
-- `//SEEK`, `//ANALYSE`, and other read-only investigation
-- standard `//FIX` and bounded implementation
-- tests, debugging, and documentation
-- mechanical, repetitive, or well-specified work
+## Explicit cloud escalation
 
-FLASH must escalate instead of guessing when a task crosses a critical
-boundary. It must not bluff past uncertainty or invent project state.
-
-## PRO
-
-Escalation role. Use it for:
-
-- architecture and cross-layer design
-- Brain-related reasoning
-- persistence, migrations, and durable state
-- security-sensitive changes
-- public API or persisted schema changes
-- critical review of high-risk work
-- difficult ambiguity or root-cause analysis
-
-## Escalation
-
-Escalate FLASH -> PRO when the task touches any PRO boundary above. State the
-reason for the escalation explicitly. Prefer PRO for review of work that
-itself changed an architectural, persistence, security, or public-API
-boundary.
-
-Returning from PRO to FLASH for mechanical follow-through is allowed once the
-critical decision is settled.
-
-## Runtime limitation
-
-Pi does not bind a model to a skill or role declaration, and this project
-does not enable an automatic model router or silently switch models during a
-task. Roles are model-selection guidance only. The operator selects the model
-with `/model`, `pi --provider deepseek --model <id>`, or a saved default; the
-role contract tells the operator and the model which model a task warrants.
+When local capability or evidence is insufficient, report the reason and stop
+for explicit operator selection. Optional cloud choices are FLASH
+(`deepseek/deepseek-flash`) for mechanical follow-through and PRO
+(`deepseek/deepseek-v4-pro`) for difficult architecture, persistence, security,
+or critical review. There is no automatic cloud fallback or silent cloud
+selection. No model or role grants Brain writes or Git mutation authority.
