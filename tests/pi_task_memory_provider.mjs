@@ -13,6 +13,9 @@ const fetchMock = async (input, options) => {
   if (!url.endsWith("/chat/completions") || typeof body !== "string") {
     throw new Error("Unexpected test transport request");
   }
+  if (process.env.MEMORY_TEST_REQUIRE_NO_REDIRECT && options?.redirect !== "error") {
+    throw new Error("Projected Qwen request must deny redirects");
+  }
   const request = JSON.parse(body);
   appendFileSync(process.env.MEMORY_TEST_REQUESTS, JSON.stringify({ url, request }) + "\n");
   if (process.env.MEMORY_TEST_OUTCOME === "failed") {

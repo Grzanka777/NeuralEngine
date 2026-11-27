@@ -16,6 +16,8 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parent.parent
 PI_ENTRYPOINT = Path.home() / ".local" / "bin" / "pi"
 ROLE_ALIASES = {"general": "GENERAL", "code": "CODE", "patch": "GPTOSS", "gptoss": "GPTOSS"}
+PROVIDER_EXTENSION = Path("integrations/pi/extensions/local-model-projection.ts")
+MEMORY_EXTENSION = Path(".pi/optional/neuralengine-task-memory.ts")
 GUARD_EXTENSION = Path(".pi/extensions/neuralengine-guard.ts")
 
 
@@ -99,14 +101,76 @@ def _environment(role: str, policy: Path | None) -> dict[str, str]:
     return environment
 
 
+def _run_general(pi_arguments: Sequence[str], requested_policy: str | None) -> int:
+    if requested_policy is not None:
+        raise LocalPiError("GENERAL does not use a bounded mutation policy")
+    if pi_arguments and pi_arguments[0] == "--":
+        pi_arguments = pi_arguments[1:]
+    _reject_role_overrides(pi_arguments)
+    for argument in pi_arguments:
+        if argument == "--":
+            break
+        if argument in {"--extension", "-e", "--api-key"} or argument.startswith(
+            ("--extension=", "--api-key=", "-e=")
+        ):
+            raise LocalPiError("GENERAL uses the repository provider projection exclusively")
+    try:
+        manifest = json.loads((ROOT / "llm-manifest.json").read_bytes())
+        profile = manifest["clients"]["pi"]["role_profiles"]["GENERAL"]
+        result = subprocess.run(
+            [str(ROOT / "scripts/llm"), "project-profile", profile],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        destination = json.loads(result.stdout)["destination"]
+    except (ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        raise LocalPiError("GENERAL manifest projection refused") from error
+    executable = PI_ENTRYPOINT.resolve(strict=True)
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise LocalPiError(f"upstream Pi executable is unavailable: {PI_ENTRYPOINT}")
+    environment = _environment("GENERAL", None)
+    environment["NEURALENGINE_MANIFEST"] = str(ROOT / "llm-manifest.json")
+    for key in tuple(environment):
+        if key.upper() in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"}:
+            environment.pop(key)
+    environment.update(HTTP_PROXY="", HTTPS_PROXY="", ALL_PROXY="", NO_PROXY="127.0.0.1")
+    command = [
+        str(executable),
+        "--provider",
+        destination["provider"],
+        "--model",
+        destination["model"],
+        "--no-extensions",
+        "--no-mcp",
+        "--extension",
+        str(ROOT / PROVIDER_EXTENSION),
+        "--extension",
+        str(_guard_extension_path()),
+    ]
+    if environment.get("NEURAL_TASK_MEMORY_POLICY"):
+        command += [
+            "--no-skills",
+            "--no-context-files",
+            "--no-prompt-templates",
+            "--extension",
+            str(ROOT / MEMORY_EXTENSION),
+        ]
+    return subprocess.run(
+        [*command, *pi_arguments], cwd=ROOT, env=environment, check=False
+    ).returncode
+
+
 def _run_role(role: str, pi_arguments: Sequence[str], requested_policy: str | None) -> int:
+    if role == "GENERAL":
+        return _run_general(pi_arguments, requested_policy)
     adapter = _load_adapter()
     guard_required = role in {"CODE", "GPTOSS"}
     _reject_role_overrides(pi_arguments, guard_required=guard_required)
     policy = _policy_path(role, requested_policy) if guard_required else None
     guard_extension = _guard_extension_path() if guard_required else None
-    if role == "GENERAL" and requested_policy is not None:
-        raise LocalPiError("GENERAL does not use a bounded mutation policy")
     executable = PI_ENTRYPOINT.resolve(strict=True)
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise LocalPiError(f"upstream Pi executable is unavailable: {PI_ENTRYPOINT}")
