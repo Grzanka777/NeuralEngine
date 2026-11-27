@@ -1,4 +1,6 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { accessSync, constants, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { devNull } from "node:os";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
@@ -67,9 +69,9 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 function projectRootFor(cwd: string): string {
-  const realCwd = realpathSync(cwd);
+  const realCwd = nativePath(cwd);
   const configuredRoot = process.env[PROJECT_ROOT_ENV];
-  const root = realpathSync(configuredRoot ?? cwd);
+  const root = nativePath(configuredRoot ?? cwd);
   if (!isInside(root, realCwd)) {
     throw new Error(`${PROJECT_ROOT_ENV} does not contain the Pi working directory`);
   }
@@ -83,6 +85,116 @@ function freezeToolInput(value: unknown, visited = new Set<object>()): void {
   Object.freeze(value);
 }
 
+const UNRESOLVED_DESTINATION = "Protected destination could not be resolved; failing closed";
+
+function isAmbiguousPiPath(value: string): boolean {
+  // Pi 1.6.1 rewrites special path forms in its mutation tools. Admit plain paths only.
+  return value.startsWith("@") || value === "~" || /^~[/\\]/.test(value) ||
+    /^file:\/\//i.test(value) || /(?! )\p{Zs}/u.test(value) ||
+    (process.platform === "win32" && /^\/(?:mnt|cygdrive)\//i.test(value));
+}
+
+function nativePath(value: string): string {
+  const resolved = realpathSync.native(value);
+  if (resolved.includes("\uFFFD")) throw new Error("Filesystem path cannot be compared as UTF-8");
+  return resolved;
+}
+
+function existingDirectory(value: string): string {
+  const resolved = nativePath(value);
+  if (!statSync(resolved).isDirectory()) throw new Error("Expected a directory");
+  return resolved;
+}
+
+function canonicalizePath(absolute: string): string {
+  let current = absolute;
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      lstatSync(current);
+      break;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      suffix.push(path.basename(current));
+      current = parent;
+    }
+  }
+  // Resolve an existing symlink outside the ENOENT loop so dangling links fail closed.
+  if (suffix.length === 0) return nativePath(current);
+  return path.join(existingDirectory(current), ...suffix.reverse());
+}
+
+function resolveBrainRoot(home: string): string {
+  const configuredHome = process.env.NEURAL_HOME;
+  if (configuredHome === undefined) {
+    if (!path.isAbsolute(home)) throw new Error("Invalid HOME for Brain path protection");
+    return canonicalizePath(path.join(existingDirectory(home), ".neural", "brain"));
+  }
+  if (
+    !path.isAbsolute(configuredHome) ||
+    configuredHome !== configuredHome.trim() ||
+    /^[\x1c-\x1f\x85]|[\x1c-\x1f\x85]$|[~\0]/.test(configuredHome)
+  ) {
+    throw new Error("Invalid NEURAL_HOME for Brain path protection");
+  }
+  // Do not join or normalize before the kernel traverses the configured root.
+  const directory = existingDirectory(configuredHome);
+  accessSync(directory, constants.R_OK | constants.X_OK);
+  return canonicalizePath(path.join(directory, "brain"));
+}
+
+function gitMarkerFor(directory: string): string | undefined {
+  let current = existingDirectory(directory);
+  while (true) {
+    const marker = path.join(current, ".git");
+    try {
+      lstatSync(marker);
+      return marker;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+function gitMetadataRoots(cwd: string, projectRoot: string): Set<string> {
+  const roots = new Set([path.join(projectRoot, ".git")]);
+  const markers = new Set([gitMarkerFor(cwd), gitMarkerFor(projectRoot)]);
+  for (const marker of markers) {
+    if (marker === undefined) continue;
+    const resolved = nativePath(marker);
+    const entry = statSync(resolved);
+    if (!entry.isFile() && !entry.isDirectory()) throw new Error("Invalid Git metadata marker");
+    // An explicit Git directory makes a malformed local marker an error, never a discovery fallback.
+    const output = execFileSync(
+      "git",
+      ["--no-optional-locks", "--git-dir=" + marker, "rev-parse", "--absolute-git-dir", "--path-format=absolute", "--git-common-dir"],
+      {
+        cwd: path.dirname(marker),
+        env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull },
+        encoding: "utf8",
+        timeout: 5_000,
+        maxBuffer: 64 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const directories = output.split("\n");
+    if (
+      directories.length !== 3 || directories.pop() !== "" ||
+      directories.some(directory => !path.isAbsolute(directory) || /[\r\uFFFD]/.test(directory))
+    ) throw new Error("Unresolved Git metadata directories");
+    roots.add(marker);
+    roots.add(resolved);
+    for (const directory of directories) roots.add(existingDirectory(directory));
+  }
+  return roots;
+}
+
 // A narrow early refusal for common policy violations. AGENTS.md remains authoritative.
 export function guardToolCall(
   toolName: string,
@@ -92,12 +204,25 @@ export function guardToolCall(
   projectRoot = cwd,
 ): string | undefined {
   if (toolName === "write" || toolName === "edit") {
-    if (typeof input.path !== "string") return "Missing file path";
-    const target = path.resolve(cwd, input.path);
-    const brain = path.resolve(process.env.NEURAL_HOME ?? path.join(home, ".neural"), "brain");
-    const git = path.resolve(projectRoot, ".git");
-    if (target === brain || target.startsWith(brain + path.sep)) return "Brain writes require separate authorization";
-    if (target === git || target.startsWith(git + path.sep)) return "Direct Git metadata writes are blocked";
+    if (typeof input.path !== "string" || input.path.trim() === "") return "Missing file path";
+    if (!path.isAbsolute(cwd) || isAmbiguousPiPath(cwd) || isAmbiguousPiPath(input.path)) {
+      return "Ambiguous Pi file path; use a plain filesystem path";
+    }
+    const absolute = path.resolve(cwd, input.path);
+    try {
+      const target = canonicalizePath(absolute);
+      const brain = resolveBrainRoot(home);
+      if (isInside(brain, target)) return "Brain writes require separate authorization";
+      const git = gitMetadataRoots(cwd, projectRoot);
+      if ([...git].some(root => isInside(root, absolute) || isInside(root, target))) {
+        return "Direct Git metadata writes are blocked";
+      }
+      if (boundedCodeWasRequested() && target !== absolute) {
+        return "Bounded Pi file paths must resolve to their canonical destination";
+      }
+    } catch {
+      return UNRESOLVED_DESTINATION;
+    }
   }
   if (toolName === "bash") {
     if (typeof input.command !== "string") return "Missing shell command";
@@ -252,6 +377,9 @@ export default function (pi: ExtensionAPI): void {
         const stopReason = error instanceof Error ? error.message : String(error);
         refuseBoundedStart(ctx, stopReason);
         return { block: true, reason: `Governor STOP: ${stopReason}`, terminate: true };
+      }
+      if (event.toolName === "write" || event.toolName === "edit") {
+        return { block: true, reason: UNRESOLVED_DESTINATION };
       }
     }
     const basicReason = guardToolCall(event.toolName, event.input, ctx.cwd, process.env.HOME ?? "", projectRoot);
