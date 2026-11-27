@@ -181,6 +181,7 @@ from neural_engine.ports.knowledge_repository import KnowledgeRepositoryError
 from neural_engine.ports.playbook_revision_repository import (
     PlaybookRevisionRepositoryError,
 )
+from neural_engine.task_memory_cli import app as task_memory_app
 
 app = typer.Typer(
     add_completion=False,
@@ -249,6 +250,7 @@ app.add_typer(proposal_app, name="proposal")
 app.add_typer(revision_app, name="revision")
 app.add_typer(run_app, name="run")
 app.add_typer(brain_app, name="brain")
+app.add_typer(task_memory_app, name="memory")
 app.add_typer(development_evidence_app, name="development-evidence")
 app.add_typer(handoff_app, name="handoff")
 app.add_typer(opencode_app, name="opencode")
@@ -276,7 +278,7 @@ _OPENCODE_COMPATIBILITY_EXIT_CODES = {
 def main(ctx: typer.Context) -> None:
     """Neural Engine entry point."""
 
-    if ctx.invoked_subcommand in {"doctor", "handoff", "init", "opencode", "status"}:
+    if ctx.invoked_subcommand in {"doctor", "handoff", "init", "opencode", "status", "memory"}:
         return
 
     if ctx.invoked_subcommand is None:

@@ -95,28 +95,33 @@ class NeuralDoctorService:
         self._supported_brain_format_version = supported_brain_format_version
         self._brain_trust_inspector = brain_trust_inspector
 
-    def inspect(self) -> NeuralDoctorReport:
+    def inspect(self, *, require_writable: bool = True) -> NeuralDoctorReport:
         try:
             paths = self._path_resolver()
         except NeuralHomeError as error:
             return self._unresolved_report(error)
 
         evidence = self._probe.inspect(paths)
-        return self._resolved_report(paths, evidence)
+        return self._resolved_report(paths, evidence, require_writable=require_writable)
 
     def _resolved_report(
         self,
         paths: NeuralPaths,
         evidence: NeuralDoctorEvidence,
+        *,
+        require_writable: bool,
     ) -> NeuralDoctorReport:
         selection_checks = (
             DoctorCheck("Path resolution", DoctorState.PASS, "selected without fallback"),
         )
-        home_checks = self._directory_checks(evidence.home)
+        home_checks = self._directory_checks(evidence.home, require_writable)
         home_ready = self._all_pass(home_checks)
-        brain_checks = self._brain_checks(evidence, home_ready)
+        brain_checks = self._brain_checks(evidence, home_ready, require_writable)
         brain_path_ready = self._all_pass(brain_checks[:4])
-        stores = tuple(self._store_result(store, brain_path_ready) for store in evidence.stores)
+        stores = tuple(
+            self._store_result(store, brain_path_ready, require_writable)
+            for store in evidence.stores
+        )
         stores_ready = all(store.state == DoctorState.PASS for store in stores)
         integrity_checks = self._integrity_checks(evidence.stores, stores_ready)
         manifest = self._manifest(evidence.stores, stores_ready)
@@ -153,12 +158,13 @@ class NeuralDoctorService:
         self,
         evidence: NeuralDoctorEvidence,
         home_ready: bool,
+        require_writable: bool,
     ) -> tuple[DoctorCheck, ...]:
         if not home_ready:
             skipped = DoctorCheck("Brain prerequisite", DoctorState.SKIP, "home check failed")
             return (skipped, skipped, skipped, skipped, skipped, skipped)
 
-        path_checks = self._directory_checks(evidence.brain)
+        path_checks = self._directory_checks(evidence.brain, require_writable)
         brain_ready = self._all_pass(path_checks)
         version = self._version_check(evidence, brain_ready)
         config = self._config_check(evidence.config, brain_ready)
@@ -199,7 +205,7 @@ class NeuralDoctorService:
         return DoctorCheck("config.toml", DoctorState.PASS, "readable")
 
     @staticmethod
-    def _directory_checks(path: PathEvidence) -> tuple[DoctorCheck, ...]:
+    def _directory_checks(path: PathEvidence, require_writable: bool) -> tuple[DoctorCheck, ...]:
         if path.inspection_failed:
             failed = DoctorCheck("Exists", DoctorState.FAIL, "inspection failed")
             skipped = DoctorCheck("Dependent check", DoctorState.SKIP, "inspection failed")
@@ -227,13 +233,15 @@ class NeuralDoctorService:
         )
         writable = DoctorCheck(
             "Writable",
-            DoctorState.PASS if path.writable else DoctorState.FAIL,
-            "yes" if path.writable else "no",
+            DoctorState.PASS if path.writable or not require_writable else DoctorState.FAIL,
+            "yes" if path.writable else "no" if require_writable else "optional",
         )
         return (exists, directory, readable, writable)
 
     @staticmethod
-    def _store_result(store: StoreEvidence, brain_ready: bool) -> DoctorStoreResult:
+    def _store_result(
+        store: StoreEvidence, brain_ready: bool, require_writable: bool
+    ) -> DoctorStoreResult:
         if not brain_ready:
             return DoctorStoreResult(store.name, DoctorState.SKIP, 0, "Brain check failed")
         path = store.path_evidence
@@ -247,7 +255,7 @@ class NeuralDoctorService:
         else:
             if not path.readable:
                 failures.append("unreadable")
-            if not path.writable:
+            if require_writable and not path.writable:
                 failures.append("not writable")
         return DoctorStoreResult(
             store.name,
