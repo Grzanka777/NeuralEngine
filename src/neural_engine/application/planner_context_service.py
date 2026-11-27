@@ -376,7 +376,10 @@ class PlannerContextService:
                 unreadable.append(item)
             elif item.source_type is SourceType.BRAIN_KNOWLEDGE:
                 knowledge.append(item)
-            elif item.source_type is SourceType.HISTORICAL_EVIDENCE:
+            elif item.source_type is SourceType.HISTORICAL_EVIDENCE or item.evidence_state in {
+                EvidenceState.HISTORICAL,
+                EvidenceState.FROZEN_RELEASE_EVIDENCE,
+            }:
                 historical.append(item)
             elif item.evidence_state is EvidenceState.CURRENT:
                 current.append(item)

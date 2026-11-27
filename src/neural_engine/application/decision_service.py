@@ -55,6 +55,15 @@ class DecisionSupersededProjectMismatchError(DecisionError):
         )
 
 
+class DecisionSupersessionCycleError(DecisionError):
+    """Raised when a supersession cycle is detected in a project lineage."""
+
+    def __init__(self, cycle_ids: tuple[UUID, ...]) -> None:
+        self.cycle_ids = cycle_ids
+        formatted_ids = ", ".join(str(item) for item in cycle_ids)
+        super().__init__(f"Decision supersession cycle detected: {formatted_ids}")
+
+
 class DecisionIdempotencyConflictError(DecisionError):
     """Raised when an idempotency key is reused with a different payload."""
 
@@ -159,6 +168,63 @@ class DecisionService:
         return [
             decision for decision in decisions if decision.project_key == normalized_project_key
         ]
+
+    def get_active_decisions(self, project_key: str) -> list[Decision]:
+        normalized_project_key = project_key.strip()
+        if not normalized_project_key:
+            raise DecisionProjectKeyRequiredError()
+
+        all_decisions = self._decision_repository.load_all()
+        decisions_by_id = {decision.id: decision for decision in all_decisions}
+        project_decisions = [
+            decision for decision in all_decisions if decision.project_key == normalized_project_key
+        ]
+
+        if not project_decisions:
+            return []
+
+        superseded_ids: set[UUID] = set()
+        predecessor_map: dict[UUID, UUID] = {}
+
+        for decision in project_decisions:
+            if decision.supersedes_decision_id is not None:
+                target_id = decision.supersedes_decision_id
+                target = decisions_by_id.get(target_id)
+                if target is None:
+                    raise DecisionSupersededNotFoundError(target_id)
+                if target.project_key != normalized_project_key:
+                    raise DecisionSupersededProjectMismatchError(
+                        decision_id=target_id,
+                        expected_project_key=normalized_project_key,
+                        actual_project_key=target.project_key,
+                    )
+                superseded_ids.add(target_id)
+                predecessor_map[decision.id] = target_id
+
+        visited: set[UUID] = set()
+        visiting: set[UUID] = set()
+
+        for decision in project_decisions:
+            if decision.id not in visited:
+                current: UUID | None = decision.id
+                path: list[UUID] = []
+                while current is not None:
+                    if current in visiting:
+                        cycle_start_index = path.index(current)
+                        cycle_ids = tuple(path[cycle_start_index:])
+                        first = min(range(len(cycle_ids)), key=lambda i: str(cycle_ids[i]))
+                        raise DecisionSupersessionCycleError(cycle_ids[first:] + cycle_ids[:first])
+                    if current in visited:
+                        break
+                    visiting.add(current)
+                    path.append(current)
+                    current = predecessor_map.get(current)
+
+                visited.update(path)
+                visiting.difference_update(path)
+
+        active = [decision for decision in project_decisions if decision.id not in superseded_ids]
+        return sorted(active, key=lambda d: (d.created_at, str(d.id)))
 
     def show(self, decision_id: UUID) -> Decision:
         decision = self._decision_repository.get_by_id(decision_id)
