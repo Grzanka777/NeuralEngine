@@ -28,6 +28,8 @@ PROTECTED_CASES: tuple[tuple[str, str], ...] = (
     ("sudo true", PRIVILEGED_REASON),
     ("rm -rf /tmp/example", RECURSIVE_REASON),
     ("neural decision add ...", NEURAL_REASON),
+    ("uv run neural memory apply ...", NEURAL_REASON),
+    ("uv run neural memory start ...", NEURAL_REASON),
 )
 
 ALLOWED_CASES: tuple[str, ...] = (

@@ -20,7 +20,7 @@ const protectedCommands: ProtectedCommand[] = [
 	{
 		reason: "NeuralEngine durable-state mutation requires separate explicit authorization",
 		pattern:
-			/\bneural\s+(?:init\b|decision\s+(?:add\b|accept\b|action\s+add\b|outcome\s+add\b|review\s+add\b)|experience\s+(?:add\b|from-observation\b|from-review\b)|evaluation\s+add\b|knowledge\s+(?:add\b|from-experience\b)|playbook\s+add\b|proposal\s+(?:add\b|status\b)|revision\s+(?:add\b|activate\b|supersede\b|reject\b)|run\s+add\b|development-evidence\s+apply\b|brain\s+(?:recover\b|adopt\b))/i,
+			/\bneural\s+(?:init\b|decision\s+(?:add\b|accept\b|action\s+add\b|outcome\s+add\b|review\s+add\b)|experience\s+(?:add\b|from-observation\b|from-review\b)|evaluation\s+add\b|knowledge\s+(?:add\b|from-experience\b)|playbook\s+add\b|proposal\s+(?:add\b|status\b)|revision\s+(?:add\b|activate\b|supersede\b|reject\b)|run\s+add\b|development-evidence\s+apply\b|memory\s+(?:start\b|finish\b|apply\b|show\b)|brain\s+(?:recover\b|adopt\b))/i,
 	},
 	{
 		reason: "Privileged system mutation requires separate explicit authorization",

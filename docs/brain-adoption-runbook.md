@@ -4,6 +4,153 @@ This runbook defines the minimal, read-first daily workflow for supplying
 project-scoped NeuralEngine Brain context to existing coding and review agents
 without expanding schemas, Planner enrichment, or Governor rules.
 
+## Automatic task memory in Pi
+
+Pi 1.6.1 supports one ephemeral print task per invocation. Configure the
+workspace and project once, then send the same two-line ticket invocation.
+The Pi extension reads the ticket and supplies eligible Brain evidence before
+inference. It reports a receipt ID and the result on stderr. The provider
+receives the ticket and a separate, untrusted evidence message.
+
+Create a directory outside the workspace with mode `0700` for the operator
+policy and receipts. Create `policy.json` in it with mode `0600`. Use exact,
+canonical absolute paths for the workspace, Brain home and verifier. The
+selected Brain must already be adopted and healthy. Use an existing runtime
+catalog and set `share_with` to the exact provider, model, API and base URL
+approved for project evidence. The default `null` denies automatic disclosure
+and skips pre-task Brain retrieval. The policy applies to both topic matches
+and bounded project fallback.
+
+Example policy for an authorized local review:
+
+```json
+{
+  "workspace": "/absolute/path/to/checkout",
+  "project": "NeuralEngine",
+  "topic": "brain",
+  "brain_home": "/absolute/path/to/approved-neural-home",
+  "max_bytes": 4096,
+  "share_with": {
+    "provider": "neural-general",
+    "model": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+    "api": "openai-completions",
+    "base_url": "http://127.0.0.1:18081/v1"
+  }
+}
+```
+
+From the configured project root, select the existing agent and explicit
+extension once in your launch command or shell alias. The local GENERAL runner
+retains responsibility for the local model lifecycle.
+
+```bash
+export NEURAL_TASK_MEMORY_POLICY=/absolute/path/to/operator-directory/policy.json
+scripts/pi-local general -- --offline --print --no-session --no-extensions --no-mcp \
+  --no-tools --no-context-files --no-skills \
+  --extension "$PWD/.pi/optional/neuralengine-task-memory.ts" -- \
+  $'Read and execute:\n.agent-work/prompts/TASK.md'
+```
+
+For DeepSeek, use native `pi` with the same arguments from `--offline` onward
+and add `--provider deepseek --model deepseek-v4-flash` before the final `--`.
+Verify the exact model and base URL against the operator's Pi catalog before
+allowing disclosure. Use `share_with: null` when the provider has no authority
+to receive Brain data. `--offline` disables Pi startup network operations. The
+selected provider can still receive inference requests.
+
+For tool-enabled Pi runs, load the existing project Guard explicitly, set
+`NEURAL_PI_POLICY_FILE` to the bounded Governor policy, and replace
+`--no-tools` with `--extension "$PWD/.pi/extensions/neuralengine-guard.ts"`
+before the task-memory extension. Use the native Pi CLI with exact provider and
+model arguments for this mode. Keep Brain, operator files, and Brain-reading
+commands outside the Governor allowlists. The Guard remains a process-level
+control. The runtime trusts the operator's model catalog, authorized files,
+verification programs and transport configuration. A shared host process or
+provider proxy with broader access needs its own authorization before use.
+
+### Completion and authorization
+
+The extension records safe metadata outside Brain, including task hash, context
+hash and record IDs, fallback selection, omissions, and whether the provider
+request was assembled with evidence. It distinguishes `AVAILABLE`, `EMPTY`,
+`TRUNCATED`, `DISCLOSURE_DENIED`, `RETRIEVAL_ERROR` and `INTEGRITY_ERROR`.
+The last two stop the task before inference. The evidence contains no new
+acceptance object and Planner enrichment stays off. A started receipt without
+a result means completion could not be established. Graceful interruption
+produces an `INTERRUPTED` result. Receipt files contain no full prompts,
+transcripts, model responses or logs.
+
+For repeatable tasks, register an existing independently maintained verifier
+under the task basename in the policy's optional `verifiers` map:
+
+```json
+{
+  "verifiers": {
+    "TASK": {
+      "executable": "/absolute/path/to/operator-owned-verifier",
+      "sha256": "REPLACE_WITH_THE_64_LOWERCASE_HEX_DIGEST"
+    }
+  }
+}
+```
+
+A project can use `default_verifier` with the same executable and hash fields
+to cover multiple tasks. Per-task entries override the default. The verifier
+runs after a successful Pi completion, with the workspace as its
+working directory. It receives the admission receipt on stdin with only
+bounded metadata, and emits one JSON result on stdout. Use
+`{"passed": true}` on verified tasks with no durable lesson. For a candidate,
+also emit `evidence_path` and `evidence_sha256` for a checked workspace artifact
+and one `learning` object:
+
+- Proposed Decision fields are `kind` set to `decision`, `title`, `objective`,
+  `alternatives`, `proposed_option`, and `rationale`.
+- Knowledge fields are `kind` set to `knowledge`, `subject`, `statement`,
+  `rationale`, and `experience_id` for an existing successful Experience tagged
+  with the same project.
+
+The verifier establishes the task outcome and any stated finding from the
+actual evidence. Its executable and stdout are bounded and checked. A missing
+verifier produces `NO_VERIFIER`. Failed checks, invalid evidence, and missing
+Experience provenance suppress write candidates. Keep secrets and full
+reports out of verifier results. Generic semantic extraction from agent prose
+requires an independent fact source and is outside this lane.
+
+For `AWAITING_AUTHORIZATION`, Pi displays the compact candidate and prints the
+complete authorization command. Execute that exact command only if you
+authorize the candidate. The digest binds authorization to the private receipt.
+Use `neural memory show SESSION --policy PATH` to inspect its full provenance. Apply requires the same
+Brain identity, rechecks conflicts, and calls existing services through the
+Brain Trust coordinator. Exact replay leaves the existing record in place.
+`HOLD_CONFLICT` requires operator resolution. Equivalence and conflict checks
+use normalized Decision titles and payloads, Knowledge statement/rationale,
+subject and Experience references. Cross-title semantic conflict detection
+requires human judgment. Proposal authorization does not accept or supersede a
+Decision. Use the separate existing Decision authority workflow for those
+operations. If a write returned a pending transition, inspect the Brain and
+use the existing separately authorized recovery procedure before retrying.
+
+| Engine | Pre-task retrieval and injection | Result collection | Candidate and authorized apply | Runtime evidence |
+| --- | --- | --- | --- | --- |
+| Pi with DeepSeek | Automatic for a matching policy | Automatic | Automatic preparation with an eligible verifier. Explicit apply. | Native CLI and serialized request tested offline with mocked transport. |
+| Local Qwen 3.6 via Pi | Automatic for a matching policy | Automatic | Same Pi contract | Native CLI with the configured GENERAL provider/model tested offline with mocked transport. |
+| Codex | Existing instruction-level retrieval only | Unsupported in this integration | Shared operator CLI applies existing Pi receipts | Native lifecycle enforcement unverified. |
+| Antigravity | Existing instruction-level retrieval only | Unsupported in this integration | Shared operator CLI applies existing Pi receipts | No runtime lifecycle hook established. |
+
+### First production task proposal
+
+Use `NeuralEngine` with topic `brain` on the candidate in the local Qwen 3.6
+GENERAL lane. With separately authorized read-only production Brain access,
+ask the agent to identify from the supplied context which lifecycle decisions
+are currently accepted and whether any evidence establishes permission to
+persist new records. Use the exact loopback destination above, `--no-tools`,
+no verifier, no external provider permission, and no production write
+authorization. Expect a scoped context receipt and `NO_VERIFIER` on normal
+completion. Inspect only the context status, IDs and omitted counts to judge
+retrieval. This proposal does not activate production.
+
+## Manual workflow for engines without runtime integration
+
 ## Scope and Rules
 
 - **Read-only retrieval**: `neural context`, `neural status`, `neural doctor`,

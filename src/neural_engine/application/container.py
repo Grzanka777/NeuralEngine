@@ -1,3 +1,5 @@
+from functools import partial
+
 from neural_engine.application.brain_context_service import BrainContextService
 from neural_engine.application.brain_trust_inspector import BrainTrustInspector
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
@@ -30,6 +32,7 @@ from neural_engine.application.playbook_revision_application_service import (
 from neural_engine.application.playbook_revision_service import PlaybookRevisionService
 from neural_engine.application.playbook_run_service import PlaybookRunService
 from neural_engine.application.playbook_service import PlaybookService
+from neural_engine.application.task_memory_service import TaskMemoryService
 from neural_engine.core.brain import BRAIN_FORMAT_VERSION
 from neural_engine.core.paths import NeuralPaths, resolve_neural_paths
 from neural_engine.infrastructure.json_decision_acceptance_repository import (
@@ -167,6 +170,16 @@ class Container:
             JsonDecisionRepository(paths=paths),
             JsonDecisionAcceptanceRepository(paths=paths),
             JsonKnowledgeRepository(paths=paths),
+        )
+
+    def task_memory_service(self) -> TaskMemoryService:
+        scoped = Container(self._resolved_paths())
+        return TaskMemoryService(
+            scoped.brain_context_service(),
+            partial(scoped.neural_doctor_service().inspect, require_writable=False),
+            scoped.decision_service(),
+            scoped.experience_service(),
+            scoped.knowledge_service(),
         )
 
     def opencode_handoff_service(self) -> OpencodeHandoffService:
