@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from neural_engine.application.brain_context_service import BrainContextService
 from neural_engine.application.brain_trust_inspector import BrainTrustInspector
 from neural_engine.application.container import Container
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
@@ -349,3 +350,12 @@ def test_container_wires_playbook_revision_application_service_with_json_reposit
     assert isinstance(service._activation_service, PlaybookRevisionActivationService)
     assert service._controlled_writer is service._application_repository
     assert service._mutation_coordinator is not None
+
+
+def test_container_wires_read_only_brain_context_service() -> None:
+    service = Container().brain_context_service()
+
+    assert isinstance(service, BrainContextService)
+    assert isinstance(service._decision_repository, JsonDecisionRepository)
+    assert isinstance(service._acceptance_repository, JsonDecisionAcceptanceRepository)
+    assert isinstance(service._knowledge_repository, JsonKnowledgeRepository)

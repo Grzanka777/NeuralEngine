@@ -12,6 +12,11 @@ from rich.console import Console
 from rich.table import Table
 
 from neural_engine import APP_NAME, __version__
+from neural_engine.application.brain_context_service import (
+    DEFAULT_CONTEXT_MAX_BYTES,
+    BrainContextError,
+    BrainContextFormat,
+)
 from neural_engine.application.brain_trust_adoption import (
     AdoptionPlan,
     AdoptionResult,
@@ -325,6 +330,38 @@ def doctor() -> None:
     _render_neural_doctor(report)
     if not report.ready:
         raise typer.Exit(code=1)
+
+
+@app.command("context")
+def export_brain_context(
+    project_key: Annotated[str, typer.Option("--project", help="Exact project key.")],
+    topic: Annotated[
+        str | None,
+        typer.Option("--topic", help="Optional case-insensitive topic or keyword filter."),
+    ] = None,
+    max_bytes: Annotated[
+        int,
+        typer.Option("--max-bytes", help="Maximum UTF-8 output bytes (512-16384)."),
+    ] = DEFAULT_CONTEXT_MAX_BYTES,
+    output_format: Annotated[
+        BrainContextFormat,
+        typer.Option("--format", help="Output format: json or markdown."),
+    ] = BrainContextFormat.JSON,
+) -> None:
+    """Export compact, read-only, project-scoped Brain context for an agent prompt."""
+
+    try:
+        _, rendered = container.brain_context_service().assemble_rendered(
+            project_key,
+            topic=topic,
+            max_bytes=max_bytes,
+            output_format=output_format,
+        )
+    except BrainContextError as error:
+        console.print(f"[red]{error}[/red]")
+        raise typer.Exit(code=1) from error
+
+    typer.echo(rendered)
 
 
 @opencode_app.command("doctor")

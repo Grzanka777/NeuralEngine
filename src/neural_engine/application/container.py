@@ -1,3 +1,4 @@
+from neural_engine.application.brain_context_service import BrainContextService
 from neural_engine.application.brain_trust_inspector import BrainTrustInspector
 from neural_engine.application.decision_acceptance_service import DecisionAcceptanceService
 from neural_engine.application.decision_action_service import DecisionActionService
@@ -158,6 +159,15 @@ class Container:
         """Build the bounded read-only planner-context use case (no CLI exposure)."""
         readers = LocalPlannerContextReaders(self._resolved_paths())
         return PlannerContextService(readers, readers, readers, readers, readers)
+
+    def brain_context_service(self) -> BrainContextService:
+        """Build the read-only, project-scoped Brain context assembler."""
+        paths = self._resolved_paths()
+        return BrainContextService(
+            JsonDecisionRepository(paths=paths),
+            JsonDecisionAcceptanceRepository(paths=paths),
+            JsonKnowledgeRepository(paths=paths),
+        )
 
     def opencode_handoff_service(self) -> OpencodeHandoffService:
         """Build a read-only manual OpenCode fresh-session handoff use case."""

@@ -111,6 +111,21 @@ CODE uses the frozen Vulkan profile without speculative decoding, MTP, or
 EAGLE3 flags. VISION uses the verified Gemma 4 projector and draft-MTP n2
 profile. Only one supported profile may run at a time.
 
+### Project-scoped Brain context export
+
+`neural context` exports a compact, read-only, UTF-8 byte-bounded bundle of
+project Decisions (with raw acceptance status and supersession links) and
+project-tagged Knowledge for agent task prompts, without Planner enrichment or
+Brain writes:
+
+```bash
+neural context --project my-project --topic registry --max-bytes 4096
+neural context --project my-project --topic registry --format markdown
+```
+
+See [the Daily Brain Adoption Runbook](docs/brain-adoption-runbook.md) for the
+operator workflow, engine compatibility boundaries, and observation checklist.
+
 ### Manual OpenCode fresh-session handoff
 
 `neural handoff opencode` renders a compact, copy/paste-ready checkpoint for a

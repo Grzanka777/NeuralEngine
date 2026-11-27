@@ -8727,3 +8727,25 @@ def test_brain_recover_is_explicit_and_completes_existing_knowledge_suffix(
         ).accepted_generation
         == 2
     )
+
+
+def test_cli_context_rejects_blank_project_and_reports_uninitialized_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from neural_engine.application.container import Container
+
+    empty_home = tmp_path / "uninitialized"
+    empty_home.mkdir()
+    monkeypatch.setenv("NEURAL_HOME", str(empty_home))
+    monkeypatch.setattr(cli, "container", Container())
+    runner = CliRunner()
+
+    missing_brain = runner.invoke(cli.app, ["context", "--project", "fir"])
+    assert missing_brain.exit_code == 1
+    assert "Neural Brain is not initialized" in missing_brain.output
+
+    Brain(resolve_neural_paths(environ={"NEURAL_HOME": str(empty_home)})).initialize()
+    blank_project = runner.invoke(cli.app, ["context", "--project", "   "])
+    assert blank_project.exit_code == 1
+    assert "Project key must not be blank." in blank_project.output
