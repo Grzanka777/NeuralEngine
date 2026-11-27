@@ -33,25 +33,39 @@ absolute `workspace` and `brain_home`, `project: "NeuralEngine"`,
 `topic: "brain"` and `max_bytes: 4096`. The deployed route uses
 `neuralengine-local/qwen3.6-35b-a3b-q6` at `http://127.0.0.1:18086/v1`.
 
-From the configured project root, run the manifest-backed GENERAL launcher.
-It explicitly loads the repository provider projection, Guard and memory
-extension when the policy is present. The projection starts or borrows the
-exact runtime and cleans up only its owned process on Pi shutdown.
+From the configured project root, create one reusable `0600` policy per supported
+model route inside a `0700` directory outside the workspace (for example
+`~/.local/state/neuralengine/qwen-policy.json` and
+`~/.local/state/neuralengine/deepseek-policy.json`). Set `"topic": null` (or a
+default subsystem topic) and optional `"default_verifier"` once so daily tasks
+reuse the same policy without per-task edits.
+
+Run the manifest-backed GENERAL launcher for local Qwen 3.6 Q6_K. It explicitly
+loads the repository provider projection, Guard, and memory extension when the
+policy is present. The projection starts or borrows the exact runtime and cleans
+up only its owned process on Pi shutdown:
 
 ```bash
-export NEURAL_TASK_MEMORY_POLICY=/absolute/path/to/operator-directory/policy.json
+export NEURAL_TASK_MEMORY_POLICY=/absolute/path/to/operator-directory/qwen-policy.json
 scripts/pi-local general -- --offline --print --no-session --no-tools -- \
   $'Read and execute:\n.agent-work/prompts/TASK.md'
 ```
 
-For DeepSeek, use native `pi` in print mode with `--offline --no-session
---no-extensions --no-mcp --no-tools --no-skills --no-context-files`,
-explicit `--extension "$PWD/.pi/optional/neuralengine-task-memory.ts"`, and
-`--provider deepseek --model deepseek-v4-flash` before the final `--`.
-Verify the exact model and base URL before allowing disclosure. Use
-`share_with: null` when the provider has no authority to receive Brain data.
-`--offline` disables Pi startup network operations. The selected provider can
-still receive inference requests.
+For explicit cloud escalation to DeepSeek, use `scripts/pi-local deepseek` with
+a separate policy whose `share_with` is `null` (to deny Brain disclosure) or
+explicitly matches `deepseek` / `deepseek-flash` / `openai-completions` /
+`https://api.deepseek.com` (Pi's built-in catalog model ID; `deepseek-v4-pro` is
+also available via native `pi --provider deepseek --model deepseek-v4-pro`).
+`scripts/pi-local` never falls back from `general` to `deepseek` automatically:
+
+```bash
+export NEURAL_TASK_MEMORY_POLICY=/absolute/path/to/operator-directory/deepseek-policy.json
+scripts/pi-local deepseek -- --offline --print --no-session --no-tools -- \
+  $'Read and execute:\n.agent-work/prompts/TASK.md'
+```
+
+`--offline` disables Pi startup network operations; only an explicit `deepseek`
+invocation with provider credentials sends inference requests to DeepSeek.
 
 For tool-enabled Pi runs, load the existing project Guard explicitly, set
 `NEURAL_PI_POLICY_FILE` to the bounded Governor policy, and replace

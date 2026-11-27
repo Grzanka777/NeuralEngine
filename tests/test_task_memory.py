@@ -51,7 +51,7 @@ DESTINATIONS = {
     },
     "deepseek": {
         "provider": "deepseek",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "base_url": "https://api.deepseek.com",
         "api": "openai-completions",
     },
