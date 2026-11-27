@@ -1059,6 +1059,290 @@ def test_assemble_routes_each_source_state_to_one_category(
         assert item not in package.current_authoritative_sources
 
 
+HISTORICAL_CATEGORY_STATES = (EvidenceState.HISTORICAL, EvidenceState.FROZEN_RELEASE_EVIDENCE)
+EVIDENCE_CATEGORIES = (
+    "current_authoritative_sources",
+    "supporting_brain_knowledge",
+    "historical_evidence",
+    "stale_or_conflicting_sources",
+    "missing_evidence",
+    "unreadable_or_inaccessible_sources",
+)
+
+
+@pytest.mark.parametrize("state", HISTORICAL_CATEGORY_STATES)
+@pytest.mark.parametrize(
+    "source_type",
+    (
+        SourceType.REPOSITORY_METADATA,
+        SourceType.DESIGNATED_DOCUMENT,
+        SourceType.DESIGNATED_REVIEW,
+    ),
+)
+def test_historical_state_on_repository_source_is_visible_in_historical_evidence(
+    source_type: SourceType, state: EvidenceState
+) -> None:
+    item = _item(source_type, state, f"g7/{source_type.value}/{state.value}")
+    package = _service()._assemble((item,), [])
+
+    assert package.historical_evidence == (item,)
+    assert [name for name in EVIDENCE_CATEGORIES if item in getattr(package, name)] == [
+        "historical_evidence"
+    ]
+    assert package.provenance == (item,)
+    assert package.historical_evidence[0].evidence_state is state
+    assert package.historical_evidence[0].source_type is source_type
+    assert package.historical_evidence[0].authority_class == item.authority_class
+    assert package.current_authoritative_sources == ()
+
+
+def test_g7_historical_designated_document_through_prepare_keeps_state_and_authority() -> None:
+    item = _item(SourceType.DESIGNATED_DOCUMENT, EvidenceState.HISTORICAL, "docs/older.md")
+
+    package = _service((item,)).prepare(_request())
+
+    assert item in package.historical_evidence
+    assert item in package.provenance
+    assert item not in package.current_authoritative_sources
+    stored = next(entry for entry in package.provenance if entry == item)
+    assert stored.evidence_state is EvidenceState.HISTORICAL
+    assert stored.authority_class == "fixture authority"
+
+
+def test_historical_routing_keeps_other_categories_order_and_deduplication() -> None:
+    current = _item(SourceType.DESIGNATED_DOCUMENT, EvidenceState.CURRENT, "g7/current.md")
+    stale = _item(SourceType.DESIGNATED_DOCUMENT, EvidenceState.STALE, "g7/stale.md")
+    conflicting = _item(SourceType.DESIGNATED_REVIEW, EvidenceState.CONFLICTING, "g7/conflict.md")
+    old_doc = _item(SourceType.DESIGNATED_DOCUMENT, EvidenceState.HISTORICAL, "g7/old.md")
+    frozen_review = _item(
+        SourceType.DESIGNATED_REVIEW, EvidenceState.FROZEN_RELEASE_EVIDENCE, "g7/frozen.md"
+    )
+    items = (current, stale, conflicting, old_doc, frozen_review)
+
+    forward = _service()._assemble((*items, old_doc), [])
+    backward = _service()._assemble(tuple(reversed(items)), [])
+
+    assert forward.model_dump_json() == backward.model_dump_json()
+    assert forward.current_authoritative_sources == (current,)
+    assert forward.stale_or_conflicting_sources == (stale, conflicting)
+    assert forward.historical_evidence == (old_doc, frozen_review)
+    assert forward.supporting_brain_knowledge == ()
+    assert forward.missing_evidence == ()
+    assert forward.unreadable_or_inaccessible_sources == ()
+    assert len(forward.provenance) == len(items)
+
+
+SIGNAL_SOURCE_TYPES = (
+    SourceType.DESIGNATED_DOCUMENT,
+    SourceType.BRAIN_KNOWLEDGE,
+    SourceType.HISTORICAL_EVIDENCE,
+)
+
+
+def _signal(
+    source_type: SourceType,
+    state: EvidenceState,
+    locator: str,
+    *,
+    diagnostic: str | None = None,
+    subject: str | None = None,
+    excerpt: str = "fixture excerpt",
+    identity: str | None = None,
+    checkpoint: str = "a" * 40,
+) -> SourceEvidence:
+    return _item(source_type, state, locator).model_copy(
+        update={
+            "authority_class": f"reader authority for {locator}",
+            "diagnostic": diagnostic,
+            "asserted_subject_key": subject,
+            "excerpt": excerpt,
+            "stable_identity": identity or f"id:{locator}",
+            "checkpoint_or_version": checkpoint,
+        }
+    )
+
+
+def _count_in_provenance(package: PlannerContextPackage, item: SourceEvidence) -> int:
+    return sum(entry == item for entry in package.provenance)
+
+
+@pytest.mark.parametrize("source_type", SIGNAL_SOURCE_TYPES)
+def test_reader_supplied_conflicting_is_preserved_once_without_inference(
+    source_type: SourceType,
+) -> None:
+    item = _signal(
+        source_type,
+        EvidenceState.CONFLICTING,
+        f"signal/{source_type.name}",
+        diagnostic="reader: claims incompatible",
+    )
+
+    package = _service((item,)).prepare(_request())
+
+    assert package.stale_or_conflicting_sources == (item,)
+    assert _count_in_provenance(package, item) == 1
+    stored = package.stale_or_conflicting_sources[0]
+    assert stored.evidence_state is EvidenceState.CONFLICTING
+    assert stored.authority_class == item.authority_class
+    assert stored.stable_identity == item.stable_identity
+    assert stored.diagnostic == "reader: claims incompatible"
+    assert [e for e in package.provenance if e.evidence_state is EvidenceState.CONFLICTING] == [
+        item
+    ]
+    assert package.warnings == ()
+
+
+@pytest.mark.parametrize("source_type", SIGNAL_SOURCE_TYPES)
+def test_reader_supplied_ambiguous_routes_to_missing_without_conversion(
+    source_type: SourceType,
+) -> None:
+    item = _signal(
+        source_type,
+        EvidenceState.AMBIGUOUS,
+        f"ambiguous/{source_type.name}",
+        diagnostic="reader: classification uncertain",
+    )
+
+    package = _service((item,)).prepare(_request())
+
+    assert item in package.missing_evidence
+    assert _count_in_provenance(package, item) == 1
+    stored = next(entry for entry in package.missing_evidence if entry == item)
+    assert stored.evidence_state is EvidenceState.AMBIGUOUS
+    assert stored.diagnostic == "reader: classification uncertain"
+    assert item not in package.stale_or_conflicting_sources
+    assert not any(
+        entry.evidence_state is EvidenceState.CONFLICTING for entry in package.provenance
+    )
+    assert package.warnings == ()
+
+
+@pytest.mark.parametrize(
+    ("historical_type", "historical_category"),
+    [
+        (SourceType.BRAIN_KNOWLEDGE, "supporting_brain_knowledge"),
+        (SourceType.DESIGNATED_DOCUMENT, "historical_evidence"),
+    ],
+)
+def test_reader_marked_historical_disagreement_keeps_states_and_adds_no_warning(
+    historical_type: SourceType, historical_category: str
+) -> None:
+    current = _signal(SourceType.DESIGNATED_DOCUMENT, EvidenceState.CURRENT, "disagree/current.md")
+    historical = _signal(
+        historical_type,
+        EvidenceState.HISTORICAL,
+        "disagree/historical",
+        diagnostic="reader: disagrees with disagree/current.md",
+    )
+
+    package = _service((current, historical)).prepare(_request())
+
+    assert current in package.current_authoritative_sources
+    assert historical in getattr(package, historical_category)
+    assert _count_in_provenance(package, current) == 1
+    assert _count_in_provenance(package, historical) == 1
+    assert (
+        next(e for e in package.provenance if e == historical).evidence_state
+        is EvidenceState.HISTORICAL
+    )
+    assert next(e for e in package.provenance if e == current).evidence_state is (
+        EvidenceState.CURRENT
+    )
+    assert not any(entry.evidence_state is EvidenceState.STALE for entry in package.provenance)
+    assert package.stale_or_conflicting_sources == ()
+    assert package.warnings == ()
+
+
+def test_same_subject_key_with_different_excerpts_is_not_a_contradiction() -> None:
+    current = _signal(
+        SourceType.DESIGNATED_DOCUMENT,
+        EvidenceState.CURRENT,
+        "subject/current.md",
+        subject="feature-x",
+        excerpt="feature x is enabled",
+    )
+    historical = _signal(
+        SourceType.BRAIN_KNOWLEDGE,
+        EvidenceState.HISTORICAL,
+        "subject/historical",
+        subject="feature-x",
+        excerpt="feature x is disabled",
+    )
+
+    package = _service((current, historical)).prepare(_request())
+
+    assert current in package.current_authoritative_sources
+    assert historical in package.supporting_brain_knowledge
+    assert package.stale_or_conflicting_sources == ()
+    assert package.missing_evidence == ()
+    assert package.warnings == ()
+    states = {entry.normalized_locator: entry.evidence_state for entry in package.provenance}
+    assert states["subject/current.md"] is EvidenceState.CURRENT
+    assert states["subject/historical"] is EvidenceState.HISTORICAL
+
+
+def test_multiple_reader_conflicting_current_sources_are_all_kept_deterministically() -> None:
+    first = _signal(
+        SourceType.DESIGNATED_DOCUMENT, EvidenceState.CONFLICTING, "conflict/a.md", diagnostic="a"
+    )
+    second = _signal(
+        SourceType.DESIGNATED_DOCUMENT, EvidenceState.CONFLICTING, "conflict/b.md", diagnostic="b"
+    )
+
+    forward = _service()._assemble((first, second), [])
+    backward = _service()._assemble((second, first), [])
+
+    assert forward.model_dump_json() == backward.model_dump_json()
+    assert forward.stale_or_conflicting_sources == (first, second)
+    assert forward.provenance == (first, second)
+    assert forward.current_authoritative_sources == ()
+    assert forward.warnings == ()
+    assert {entry.diagnostic for entry in forward.provenance} == {"a", "b"}
+
+
+@pytest.mark.parametrize(
+    ("state", "category"),
+    [
+        (EvidenceState.CONFLICTING, "stale_or_conflicting_sources"),
+        (EvidenceState.HISTORICAL, "historical_evidence"),
+    ],
+)
+def test_duplicate_reader_evidence_collapses_without_conflict_or_warning(
+    state: EvidenceState, category: str
+) -> None:
+    item = _signal(SourceType.DESIGNATED_DOCUMENT, state, "duplicate/doc.md", diagnostic="d")
+    twin = item.model_copy()
+
+    package = _service()._assemble((item, twin), [])
+
+    assert getattr(package, category) == (item,)
+    assert package.provenance == (item,)
+    assert package.warnings == ()
+
+
+def test_document_versions_with_distinct_identities_are_both_kept_without_signal() -> None:
+    current = _signal(
+        SourceType.DESIGNATED_DOCUMENT, EvidenceState.CURRENT, "docs/spec.md", checkpoint="a" * 40
+    )
+    older = _signal(
+        SourceType.DESIGNATED_DOCUMENT,
+        EvidenceState.HISTORICAL,
+        "docs/spec.md",
+        identity="id:docs/spec.md@older",
+        checkpoint="b" * 40,
+    )
+
+    package = _service()._assemble((current, older), [])
+
+    assert package.current_authoritative_sources == (current,)
+    assert package.historical_evidence == (older,)
+    assert len(package.provenance) == 2
+    assert package.stale_or_conflicting_sources == ()
+    assert package.missing_evidence == ()
+    assert package.warnings == ()
+    assert older.evidence_state is EvidenceState.HISTORICAL
+
+
 @pytest.mark.parametrize(
     "fixture_id",
     (
