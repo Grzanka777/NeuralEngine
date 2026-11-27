@@ -385,3 +385,39 @@ def test_general_routes_through_pinned_projection_and_preserves_guard(
     assert calls[-1][-len(arguments) + 1 :] == arguments[1:]
     with pytest.raises(runner["LocalPiError"], match="repository provider projection"):
         runner["_run_role"]("GENERAL", ["--extension", "unrelated.ts"], None)
+
+
+def test_deepseek_routes_through_manifest_cloud_defaults_and_preserves_guard(
+    runner: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shutil import copyfile
+
+    root = Path(__file__).resolve().parents[1]
+    copyfile(root / "llm-manifest.json", tmp_path / "llm-manifest.json")
+    guard = _install_guard(tmp_path)
+    executable = tmp_path / "pi"
+    executable.touch(mode=0o755)
+    namespace = runner["_run_role"].__globals__
+    monkeypatch.setitem(namespace, "ROOT", tmp_path)
+    monkeypatch.setitem(namespace, "PI_ENTRYPOINT", executable)
+    monkeypatch.setenv("NEURAL_TASK_MEMORY_POLICY", "/synthetic/deepseek-policy.json")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        assert "NEURAL_PI_BOUNDED_CODE" not in kwargs["env"]
+        return subprocess.CompletedProcess(command, 5)
+
+    monkeypatch.setitem(namespace["subprocess"].__dict__, "run", fake_run)
+    arguments = ["--", "--offline", "--print", "--no-session", "--no-tools", "--", "ticket"]
+    assert runner["_run_role"]("DEEPSEEK", arguments, None) == 5
+    assert calls[-1][1:5] == ["--provider", "deepseek", "--model", "deepseek-flash"]
+    assert "--no-extensions" in calls[-1] and "--no-mcp" in calls[-1]
+    assert str(guard) in calls[-1]
+    assert str(tmp_path / runner["PROVIDER_EXTENSION"]) not in calls[-1]
+    assert str(tmp_path / runner["MEMORY_EXTENSION"]) in calls[-1]
+    assert calls[-1][-len(arguments) + 1 :] == arguments[1:]
+    with pytest.raises(runner["LocalPiError"], match="manifest cloud route"):
+        runner["_run_role"]("DEEPSEEK", ["--extension", "unrelated.ts"], None)
+    with pytest.raises(runner["LocalPiError"], match="bounded mutation policy"):
+        runner["_run_role"]("DEEPSEEK", arguments, "policy.json")
