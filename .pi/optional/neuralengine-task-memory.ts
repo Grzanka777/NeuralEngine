@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 const INVOCATION = /^Read and execute:[ \t]*\n[ \t]*\.agent-work\/prompts\/[A-Za-z0-9_.-]+\.md$/;
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const MEMORY_EXTENSION = path.join(ROOT, ".pi/optional/neuralengine-task-memory.ts");
+const PROVIDER_EXTENSION = path.join(ROOT, "integrations/pi/extensions/local-model-projection.ts");
 const GUARD_EXTENSION = path.join(ROOT, ".pi/extensions/neuralengine-guard.ts");
 const PI_OPTIONS = {
   offline: { type: "boolean" },
@@ -60,7 +61,10 @@ function admittedInvocation(text: string, cwd: string): boolean {
     const extensions = values.extension?.map((value) => path.resolve(cwd, value)) ?? [];
     if (
       extensions.filter((value) => value === MEMORY_EXTENSION).length !== 1 ||
-      extensions.some((value) => value !== MEMORY_EXTENSION && value !== GUARD_EXTENSION)
+      extensions.filter((value) => value === PROVIDER_EXTENSION).length > 1 ||
+      extensions.some((value) =>
+        value !== MEMORY_EXTENSION && value !== GUARD_EXTENSION && value !== PROVIDER_EXTENSION
+      )
     ) return false;
     const guarded = extensions.filter((value) => value === GUARD_EXTENSION).length === 1 &&
       Boolean(process.env.NEURAL_PI_POLICY_FILE?.trim());

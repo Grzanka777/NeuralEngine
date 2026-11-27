@@ -971,13 +971,13 @@ def test_human_cli_still_produces_readable_output(
     adapter: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Human-readable CLI (positional target) output format is unchanged."""
-    switch_result = _make_switch_result(adapter, "GENERAL", 42, "STARTED")
+    switch_result = _make_switch_result(adapter, "CODE", 42, "STARTED")
     namespace = adapter["main"].__globals__
     import io
 
     out = io.StringIO()
     monkeypatch.setattr("sys.stdout", out)
-    monkeypatch.setattr("sys.argv", ["pi-model", "GENERAL"])
+    monkeypatch.setattr("sys.argv", ["pi-model", "CODE"])
     monkeypatch.setitem(namespace, "switch", lambda target, **_kw: switch_result)
     monkeypatch.setitem(namespace, "normalize_target", lambda r: r.upper())
     monkeypatch.setitem(namespace, "validate_catalog_entry", lambda _: None)
@@ -992,3 +992,18 @@ def test_human_cli_still_produces_readable_output(
     # Human output contains recognisable tokens.
     assert "READY" in output
     assert "pid=42" in output
+
+
+@pytest.mark.parametrize("arguments", [["GENERAL"], ["switch-json", "GENERAL"]])
+def test_retired_general_switch_refuses_before_lifecycle(
+    adapter: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+) -> None:
+    monkeypatch.setattr("sys.argv", ["pi-model", *arguments])
+    monkeypatch.setitem(
+        adapter["main"].__globals__, "switch", lambda *_a, **_k: pytest.fail("must not switch")
+    )
+    assert adapter["main"]() == 1
+    assert "use scripts/pi-local general" in capsys.readouterr().err

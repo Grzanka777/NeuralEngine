@@ -21,42 +21,37 @@ approved for project evidence. The default `null` denies automatic disclosure
 and skips pre-task Brain retrieval. The policy applies to both topic matches
 and bounded project fallback.
 
-Example policy for an authorized local review:
+For an authorized local review, derive the exact `share_with` object from
+the current manifest. This command only reads the manifest.
 
-```json
-{
-  "workspace": "/absolute/path/to/checkout",
-  "project": "NeuralEngine",
-  "topic": "brain",
-  "brain_home": "/absolute/path/to/approved-neural-home",
-  "max_bytes": 4096,
-  "share_with": {
-    "provider": "neural-general",
-    "model": "/models/gguf/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
-    "api": "openai-completions",
-    "base_url": "http://127.0.0.1:18081/v1"
-  }
-}
+```bash
+scripts/llm project-profile current-qwen36
 ```
 
-From the configured project root, select the existing agent and explicit
-extension once in your launch command or shell alias. The local GENERAL runner
-retains responsibility for the local model lifecycle.
+Use its `destination` as `share_with` in the private policy alongside the
+absolute `workspace` and `brain_home`, `project: "NeuralEngine"`,
+`topic: "brain"` and `max_bytes: 4096`. The deployed route uses
+`neuralengine-local/qwen3.6-35b-a3b-q6` at `http://127.0.0.1:18086/v1`.
+
+From the configured project root, run the manifest-backed GENERAL launcher.
+It explicitly loads the repository provider projection, Guard and memory
+extension when the policy is present. The projection starts or borrows the
+exact runtime and cleans up only its owned process on Pi shutdown.
 
 ```bash
 export NEURAL_TASK_MEMORY_POLICY=/absolute/path/to/operator-directory/policy.json
-scripts/pi-local general -- --offline --print --no-session --no-extensions --no-mcp \
-  --no-tools --no-context-files --no-skills \
-  --extension "$PWD/.pi/optional/neuralengine-task-memory.ts" -- \
+scripts/pi-local general -- --offline --print --no-session --no-tools -- \
   $'Read and execute:\n.agent-work/prompts/TASK.md'
 ```
 
-For DeepSeek, use native `pi` with the same arguments from `--offline` onward
-and add `--provider deepseek --model deepseek-v4-flash` before the final `--`.
-Verify the exact model and base URL against the operator's Pi catalog before
-allowing disclosure. Use `share_with: null` when the provider has no authority
-to receive Brain data. `--offline` disables Pi startup network operations. The
-selected provider can still receive inference requests.
+For DeepSeek, use native `pi` in print mode with `--offline --no-session
+--no-extensions --no-mcp --no-tools --no-skills --no-context-files`,
+explicit `--extension "$PWD/.pi/optional/neuralengine-task-memory.ts"`, and
+`--provider deepseek --model deepseek-v4-flash` before the final `--`.
+Verify the exact model and base URL before allowing disclosure. Use
+`share_with: null` when the provider has no authority to receive Brain data.
+`--offline` disables Pi startup network operations. The selected provider can
+still receive inference requests.
 
 For tool-enabled Pi runs, load the existing project Guard explicitly, set
 `NEURAL_PI_POLICY_FILE` to the bounded Governor policy, and replace
@@ -244,7 +239,7 @@ engine-specific memory adapters or pass credentials in prompts.
 | **DeepSeek (via Pi)** (`deepseek/deepseek-flash`, `deepseek/deepseek-v4-pro`) | Preload the `neural context` JSON/Markdown block into the task prompt. | **Qualified** on synthetic Brain-assisted tasks (`NE-EVAL-MEMORY-UTILITY-01`, `NE-BRAIN-PRACTICAL-UTILITY-01`). Cloud escalation requires explicit operator selection. In bounded Pi (`NEURAL_PI_BOUNDED_CODE=1`), preloading is mandatory because `bash` and `read` are scope-locked. |
 | **Codex** | Preload `neural context` into the task prompt (or authorize read-only `neural context` execution inside the session). | Prompt/instruction contract via `CODEX.md` and `AGENTS.md`. `CODEX_RUNTIME_ENFORCEMENT=UNPROVEN` (`docs/control-plane-governor.md`). |
 | **Antigravity** | Preload `neural context` into the task prompt (or authorize read-only `neural context` execution when Brain access is enabled). | Instruction-level contract via `.agents/skills/command-protocol/SKILL.md`; no runtime Governor hook or Brain-write enforcement. |
-| **Local Qwen 3.6** (`neural-general` via `scripts/pi-local general` / `scripts/llm general`) | Preload `neural context` into the task prompt before starting `GENERAL` / `REVIEW` / `SEEK`. | **Unqualified on live Brain benchmarks**; contingent on local `llama-server` (`127.0.0.1:18081`) and GGUF model availability. `GENERAL` runs without a bounded Governor policy (`scripts/pi-local code` uses Nemotron Q5). |
+| **Local Qwen 3.6** via `scripts/pi-local general` | Use the automatic Pi workflow above for the supported local route. | Offline native Pi and provider transport verified. Live production use requires separate authorization. |
 
 Include an explicit instruction in the agent prompt:
 

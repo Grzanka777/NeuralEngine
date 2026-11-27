@@ -493,6 +493,12 @@ def main() -> int:
         sub.add_argument("--batch", type=int)
         sub.add_argument("--ubatch", type=int)
         args = sub.parse_args(sys.argv[2:])
+        if args.role.strip().upper() == "GENERAL":
+            print(
+                "pi-model: retired GENERAL switch route, use scripts/pi-local general",
+                file=sys.stderr,
+            )
+            return 1
         return _switch_json(args.role, context=args.context, batch=args.batch, ubatch=args.ubatch)
 
     if len(sys.argv) >= 2 and sys.argv[1] == "stop-owned-json":
@@ -514,6 +520,11 @@ def main() -> int:
         target = normalize_target(args.target)
     except SwitchError as error:
         parser.error(str(error))
+    if target == "GENERAL":
+        print(
+            "pi-model: retired GENERAL switch route, use scripts/pi-local general", file=sys.stderr
+        )
+        return 1
     if any(value is not None for value in tuning) and target != "GPTOSS":
         parser.error("runtime tuning options are only valid with GPTOSS")
     try:

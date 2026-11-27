@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -16,8 +17,9 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
+from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 from typing import Any, cast
 
@@ -260,6 +262,7 @@ class PortState:
 
     listening: bool
     pids: tuple[int, ...] = ()
+    addresses: tuple[str, ...] = field(default=(), compare=False)
 
 
 def _local_port(address: str) -> int | None:
@@ -277,7 +280,7 @@ def _local_port(address: str) -> int | None:
 
 def _port_state_from_ss_output(output: str, port: int) -> PortState:
     pids: set[int] = set()
-    listening = False
+    addresses: list[str] = []
 
     for line in output.splitlines():
         fields = line.split()
@@ -286,10 +289,10 @@ def _port_state_from_ss_output(output: str, port: int) -> PortState:
         if _local_port(fields[3]) != port:
             continue
 
-        listening = True
+        addresses.append(fields[3])
         pids.update(int(match) for match in _PID_PATTERN.findall(line))
 
-    return PortState(listening=listening, pids=tuple(sorted(pids)))
+    return PortState(bool(addresses), tuple(sorted(pids)), tuple(sorted(addresses)))
 
 
 def port_state(port: int) -> PortState:
@@ -1380,6 +1383,477 @@ def status_general(
         print("pid: unknown (ss did not expose the owner)")
 
 
+def process_start_ticks(pid: int) -> int | None:
+    """Return Linux /proc starttime ticks, which distinguishes a reused PID."""
+
+    try:
+        stat_line = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except OSError, UnicodeError:
+        return None
+    close_paren = stat_line.rfind(")")
+    if close_paren < 0:
+        return None
+    fields_after_comm = stat_line[close_paren + 1 :].split()
+    # /proc/PID/stat field 22 is starttime; fields_after_comm starts at field 3.
+    if len(fields_after_comm) <= 19:
+        return None
+    try:
+        value = int(fields_after_comm[19])
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def verify_gguf_inventory(
+    path: Path,
+    *,
+    expected_size_bytes: int,
+    expected_sha256: str,
+    expected_version: int,
+) -> None:
+    """Fail closed unless the exact regular GGUF artifact matches inventory."""
+
+    if path.is_symlink() or not path.is_file():
+        raise LauncherError(
+            f"QWEN36 model refused: artifact is not a regular non-symlink file: {path}"
+        )
+    try:
+        if path.stat().st_size != expected_size_bytes:
+            raise LauncherError(f"QWEN36 model refused: artifact size mismatch: {path}")
+        with path.open("rb") as handle:
+            header = handle.read(8)
+            handle.seek(0)
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    except OSError as error:
+        raise LauncherError(f"QWEN36 model refused: cannot read artifact: {error}") from error
+    expected_header = b"GGUF" + expected_version.to_bytes(4, "little")
+    if header != expected_header:
+        raise LauncherError(f"QWEN36 model refused: GGUF header/version mismatch: {path}")
+    if digest != expected_sha256:
+        raise LauncherError(f"QWEN36 model refused: artifact SHA-256 mismatch: {path}")
+
+
+def verify_qwen36_runtime(profile: Qwen36Profile) -> None:
+    """Verify the pinned llama.cpp build and Vulkan device without loading weights."""
+
+    try:
+        version = subprocess.run(
+            [str(profile.runtime), "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+        devices = subprocess.run(
+            [str(profile.runtime), "--list-devices"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise LauncherError(f"QWEN36 runtime refused: metadata probe failed: {error}") from error
+    version_output = version.stdout + version.stderr
+    version_line = re.compile(
+        rf"(?m)^version:\s*{re.escape(profile.runtime_version)} "
+        rf"\(build {profile.runtime_build_number}, commit {re.escape(profile.runtime_commit)}\)$"
+    )
+    if version.returncode != 0 or not version_line.search(version_output):
+        raise LauncherError("QWEN36 runtime refused: llama-server version/build identity mismatch")
+    device_lines = [
+        line.strip()
+        for line in (devices.stdout + devices.stderr).splitlines()
+        if line.strip().startswith(f"{profile.device}:")
+    ]
+    if (
+        devices.returncode != 0
+        or len(device_lines) != 1
+        or profile.device_name not in device_lines[0]
+    ):
+        raise LauncherError(
+            "QWEN36 runtime refused: expected Vulkan device is unavailable or ambiguous"
+        )
+
+
+def _signal_verified_process(
+    pid: int,
+    profile: Any,
+    *,
+    identity_checker: Callable[[int, Any], bool],
+    expected_start_ticks: int | None,
+    killer: Callable[[int, int], Any] | None,
+    profile_name: str,
+) -> None:
+    """Signal only a process whose PID, start time and command still match."""
+
+    if killer is not None:
+        if expected_start_ticks is not None and process_start_ticks(pid) != expected_start_ticks:
+            raise LauncherError(f"{profile_name} stop refused: process start identity is stale")
+        if not identity_checker(pid, profile):
+            raise LauncherError(
+                f"{profile_name} stop refused: PID {pid} is not the verified profile"
+            )
+        try:
+            killer(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError as error:
+            raise LauncherError(
+                f"{profile_name} stop failed for verified PID {pid}: {error}"
+            ) from error
+        return
+
+    before = process_start_ticks(pid)
+    if before is None or (expected_start_ticks is not None and before != expected_start_ticks):
+        raise LauncherError(
+            f"{profile_name} stop refused: process start identity is stale or unavailable"
+        )
+    pidfd_open = getattr(os, "pidfd_open", None)
+    pidfd_send_signal = getattr(signal, "pidfd_send_signal", None)
+    if pidfd_open is None or pidfd_send_signal is None:
+        raise LauncherError(f"{profile_name} stop refused: exact PID signalling is unavailable")
+    try:
+        pidfd = pidfd_open(pid, 0)
+    except ProcessLookupError:
+        return
+    except OSError as error:
+        raise LauncherError(
+            f"{profile_name} stop failed to pin verified PID {pid}: {error}"
+        ) from error
+    try:
+        after = process_start_ticks(pid)
+        if (
+            after is None
+            or after != before
+            or (expected_start_ticks is not None and after != expected_start_ticks)
+        ):
+            raise LauncherError(f"{profile_name} stop refused: PID was replaced before signal")
+        if not identity_checker(pid, profile):
+            raise LauncherError(
+                f"{profile_name} stop refused: PID {pid} is not the verified profile"
+            )
+        try:
+            pidfd_send_signal(pidfd, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError as error:
+            raise LauncherError(
+                f"{profile_name} stop failed for verified PID {pid}: {error}"
+            ) from error
+    finally:
+        os.close(pidfd)
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+@dataclass(frozen=True, slots=True)
+class Qwen36Profile:
+    name: str
+    identity: str
+    model: Path
+    model_id: str
+    model_size_bytes: int
+    model_sha256: str
+    gguf_version: int
+    runtime: Path
+    runtime_version: str
+    runtime_build_number: int
+    runtime_commit: str
+    device: str
+    device_name: str
+    host: str
+    port: int
+    api_path: str
+    runtime_ctx: int
+    client_ctx: int
+    provider: str
+    api: str
+    arguments: tuple[str, ...]
+
+    def endpoint(self) -> str:
+        return f"http://{self.host}:{self.port}{self.api_path}"
+
+    def command(self) -> tuple[str, ...]:
+        return (str(self.runtime), *self.arguments)
+
+    def destination(self) -> dict[str, str]:
+        return {
+            "provider": self.provider,
+            "model": self.model_id,
+            "api": self.api,
+            "base_url": self.endpoint(),
+        }
+
+
+def qwen36_profile() -> Qwen36Profile:
+    """Read the deployed GENERAL route using the existing Pi manifest projection."""
+    try:
+        manifest = json.loads((ROOT / "llm-manifest.json").read_bytes())
+        pi = manifest["clients"]["pi"]
+        name = pi["role_profiles"]["GENERAL"]
+        if manifest["schema_version"] != 2 or pi["local_profiles"] != [name]:
+            raise ValueError("unsupported local manifest projection")
+        profile = manifest["runtime_profiles"][name]
+        model = manifest["models"][profile["model_ref"]]
+        runtime, endpoint, layers = (
+            profile["runtime"],
+            profile["endpoint"],
+            profile["context_layers"],
+        )
+        artifact, binary = Path(model["artifact_path"]), Path(runtime["binary"])
+        if (
+            endpoint["host"] != "127.0.0.1"
+            or endpoint["path"] != "/v1"
+            or runtime["backend"] != "Vulkan"
+            or not artifact.is_absolute()
+            or not binary.is_absolute()
+            or not re.fullmatch(r"[a-f0-9]{64}", model["sha256"])
+            or pi["api"] != "openai-completions"
+            or not 1 <= endpoint["port"] <= 65535
+            or not 0
+            < layers["client_effective_ctx"]
+            <= layers["slot_ctx"]
+            <= layers["runtime_ctx"]
+            <= model["model_max_ctx"]["tokens"]
+        ):
+            raise ValueError("unsafe runtime, endpoint, inventory or context settings")
+        arguments = tuple(
+            argument.format(
+                model_path=artifact,
+                device=runtime["device"],
+                runtime_ctx=layers["runtime_ctx"],
+                host=endpoint["host"],
+                port=endpoint["port"],
+            )
+            for argument in profile["arguments"]
+        )
+        expected = {
+            "-m": str(artifact),
+            "-dev": runtime["device"],
+            "--host": endpoint["host"],
+            "--port": str(endpoint["port"]),
+            "-c": str(layers["runtime_ctx"]),
+            "--parallel": "1",
+            "--reasoning": "off",
+        }
+        if arguments.count("--jinja") != 1:
+            raise ValueError("runtime requires the deployed Jinja template mode")
+        pairs = iter(arg for arg in arguments if arg != "--jinja")
+        supplied = list(zip(pairs, pairs, strict=True))
+        flags = dict(supplied)
+        if (
+            len(supplied) != len(flags)
+            or flags.keys() != expected.keys() | {"-ngl", "-b", "-ub", "-fa"}
+            or any(flags.get(option) != value for option, value in expected.items())
+            or any(
+                not re.fullmatch(r"[1-9][0-9]*", flags[option]) for option in ("-ngl", "-b", "-ub")
+            )
+            or flags["-fa"] != "on"
+        ):
+            raise ValueError("runtime arguments do not match the deployed profile")
+        return Qwen36Profile(
+            name,
+            profile["legacy_identity"],
+            artifact,
+            model["model_id"],
+            model["size_bytes"],
+            model["sha256"],
+            model["gguf_version"],
+            binary,
+            runtime["version"],
+            runtime["build_number"],
+            runtime["commit"],
+            runtime["device"],
+            runtime["device_name"],
+            endpoint["host"],
+            endpoint["port"],
+            endpoint["path"],
+            layers["runtime_ctx"],
+            layers["client_effective_ctx"],
+            pi["provider"],
+            pi["api"],
+            arguments,
+        )
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
+        raise LauncherError(f"Qwen manifest refused: {error}") from error
+
+
+def is_qwen36_process(pid: int, profile: Qwen36Profile) -> bool:
+    try:
+        # Do not resolve away the kernel's "(deleted)" suffix on an upgraded executable.
+        executable = Path(f"/proc/{pid}/exe").readlink()
+        return executable == profile.runtime.resolve(strict=True) and (
+            _process_command_line(pid) == profile.command()
+        )
+    except OSError:
+        return False
+
+
+def _qwen36_health_ok(profile: Qwen36Profile) -> bool:
+    """Read only the exact local health endpoint, without configured proxies."""
+    connection = HTTPConnection(profile.host, profile.port, timeout=HEALTH_REQUEST_TIMEOUT_SECONDS)
+    try:
+        connection.request("GET", "/health", headers={"Accept": "application/json"})
+        with connection.getresponse() as response:
+            if response.status != HTTPStatus.OK:
+                return False
+            raw = response.read(4097)
+        value = json.loads(raw) if len(raw) <= 4096 else None
+    except OSError, HTTPException, UnicodeError, ValueError:
+        return False
+    finally:
+        connection.close()
+    return isinstance(value, dict) and value.get("status") == "ok"
+
+
+def _qwen36_state(profile: Qwen36Profile) -> PortState:
+    for port in sorted(set(CONFLICT_PORTS) - {profile.port}):
+        if port_state(port).listening:
+            raise LauncherError(f"Qwen runtime refused: conflicting listener on port {port}")
+    return port_state(profile.port)
+
+
+def _same_qwen36_listener(profile: Qwen36Profile, state: PortState) -> bool:
+    current = _qwen36_state(profile)
+    return current == state and current.addresses == state.addresses
+
+
+def _qwen36_owner(profile: Qwen36Profile, state: PortState) -> tuple[int, int]:
+    if len(state.pids) != 1 or state.addresses != (f"{profile.host}:{profile.port}",):
+        raise LauncherError(
+            "Qwen runtime refused: listener ownership or loopback binding is ambiguous"
+        )
+    pid = state.pids[0]
+    ticks = process_start_ticks(pid)
+    if (
+        ticks is None
+        or not is_qwen36_process(pid, profile)
+        or not _qwen36_health_ok(profile)
+        or not _same_qwen36_listener(profile, state)
+        or process_start_ticks(pid) != ticks
+        or not is_qwen36_process(pid, profile)
+    ):
+        raise LauncherError("Qwen runtime refused: listener identity is stale or unready")
+    return pid, ticks
+
+
+def _start_qwen36(profile: Qwen36Profile) -> tuple[int, int, str]:
+    verify_gguf_inventory(
+        profile.model,
+        expected_size_bytes=profile.model_size_bytes,
+        expected_sha256=profile.model_sha256,
+        expected_version=profile.gguf_version,
+    )
+    verify_qwen36_runtime(profile)
+    state = _qwen36_state(profile)
+    if state.listening:
+        return (*_qwen36_owner(profile, state), "BORROWED")
+    log = _state_log_path().with_name("qwen36.log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("ab") as handle:
+        process = subprocess.Popen(
+            profile.command(),
+            stdin=subprocess.DEVNULL,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
+    try:
+        started_ticks = process_start_ticks(process.pid)
+        if started_ticks is None or not wait_for_health(
+            health_check=lambda: _qwen36_health_ok(profile)
+        ):
+            raise LauncherError("Qwen runtime start failed: process did not become ready")
+        pid, ticks = _qwen36_owner(profile, _qwen36_state(profile))
+        if (pid, ticks) != (process.pid, started_ticks) or process.poll() is not None:
+            raise LauncherError(
+                "Qwen runtime start failed: ready listener is not the started process"
+            )
+    except BaseException:
+        _terminate_started_process(process)
+        raise
+    return pid, ticks, "STARTED"
+
+
+def _interrupt_qwen36_start(_signum: int, _frame: object) -> None:
+    raise LauncherError("Qwen runtime startup interrupted")
+
+
+def _qwen36_machine(args: argparse.Namespace) -> None:
+    profile = qwen36_profile()
+    if args.command in {"project-profile", "switch-json"}:
+        if args.profile != profile.name or any(
+            value is not None
+            for value in (args.expected_profile, args.expected_pid, args.expected_start_ticks)
+        ):
+            raise LauncherError("Qwen runtime requires its exact manifest profile")
+        if args.command == "project-profile":
+            print(
+                json.dumps(
+                    {
+                        "profile": profile.name,
+                        "destination": profile.destination(),
+                        "runtime_ctx": profile.runtime_ctx,
+                        "client_effective_ctx": profile.client_ctx,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return
+        with lifecycle_lock():
+            previous_term = signal.signal(signal.SIGTERM, _interrupt_qwen36_start)
+            try:
+                pid, ticks, ownership = _start_qwen36(profile)
+            finally:
+                signal.signal(signal.SIGTERM, previous_term)
+        fields = {"operation": "switch", "ownership": ownership, "endpoint": profile.endpoint()}
+    else:
+        pid, ticks = args.expected_pid, args.expected_start_ticks
+        if args.profile or args.expected_profile != profile.identity or not pid or not ticks:
+            raise LauncherError("Qwen runtime requires its exact profile, PID and start time")
+        if pid < 1 or ticks < 1:
+            raise LauncherError("Qwen runtime requires a positive PID and start time")
+        with lifecycle_lock():
+            state = _qwen36_state(profile)
+            owner = _qwen36_owner(profile, state) if state.listening else None
+            if args.command == "verify-json":
+                if owner != (pid, ticks):
+                    raise LauncherError("Qwen runtime verification refused: receipt is stale")
+                fields = {
+                    "operation": "verify",
+                    "result": "VERIFIED",
+                    "endpoint": profile.endpoint(),
+                }
+            else:
+                fields = {"operation": "stop_owned", "result": "NOT_OWNED_OR_REPLACED"}
+                if owner == (pid, ticks):
+                    _signal_verified_process(
+                        pid,
+                        profile,
+                        identity_checker=is_qwen36_process,
+                        expected_start_ticks=ticks,
+                        killer=None,
+                        profile_name=profile.identity,
+                    )
+                    if not wait_for_port_closed(profile.port):
+                        raise LauncherError("Qwen runtime cleanup failed: port still listening")
+                    fields["result"] = "STOPPED"
+    print(
+        json.dumps(
+            {
+                "api_version": 1,
+                "profile": profile.identity,
+                "pid": pid,
+                "process_start_ticks": ticks,
+                **fields,
+            },
+            sort_keys=True,
+        )
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="llm", description=__doc__)
     parser.add_argument(
@@ -1394,16 +1868,40 @@ def _build_parser() -> argparse.ArgumentParser:
             "state",
             "identity",
             "stop",
+            "project-profile",
+            "switch-json",
+            "verify-json",
+            "stop-owned-json",
         ),
     )
-    parser.add_argument("profile", nargs="?", choices=("code", "general", "vision"))
-    parser.add_argument("--expected-profile", choices=("GENERAL", "CODE", "VISION"))
+    parser.add_argument("profile", nargs="?")
+    parser.add_argument("--expected-profile")
     parser.add_argument("--expected-pid", type=int)
+    parser.add_argument("--expected-start-ticks", type=int)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.command in {"project-profile", "switch-json", "verify-json", "stop-owned-json"}:
+        try:
+            _qwen36_machine(args)
+        except (OSError, LauncherError) as error:
+            print(f"llm: {error}", file=sys.stderr)
+            return 1
+        return 0
+    if (
+        args.profile not in {None, "code", "general", "vision"}
+        or args.expected_profile not in {None, "GENERAL", "CODE", "VISION"}
+        or args.expected_start_ticks is not None
+    ):
+        parser.error("invalid profile or expected identity for this command")
+    if args.command == "general" or (
+        args.command in {"start", "switch"} and args.profile == "general"
+    ):
+        print("llm: retired GENERAL start route, use scripts/pi-local general", file=sys.stderr)
+        return 1
     if args.command == "vision" or args.profile == "vision":
         print("llm: VISION is UNFILLED/unsupported: no model is assigned", file=sys.stderr)
         return 1
@@ -1435,9 +1933,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "code":
             with lifecycle_lock():
                 start_code()
-        elif args.command == "general":
-            with lifecycle_lock():
-                start_general()
         elif args.command == "vision":
             with lifecycle_lock():
                 start_vision()

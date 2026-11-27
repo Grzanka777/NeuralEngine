@@ -13,7 +13,7 @@ commands, controls, workflow states, or authorization.
 
 | Role | Pi provider | Model | Position |
 | --- | --- | --- | --- |
-| GENERAL | `neural-general` | Qwen3.6 | Default local reasoning |
+| GENERAL | `neuralengine-local` | Qwen3.6 Q6_K | Default local reasoning |
 | CODE | `neural-code` | Nemotron Q5 | Bounded implementation |
 | PATCH | `local-gptoss` | GPT-OSS | Explicit bounded patch specialist |
 | VISION | none | UNFILLED | Fail closed |
@@ -28,10 +28,10 @@ Use `scripts/pi-local general -- PI_ARGS...`, or
 `scripts/pi-local code --policy PATH -- PI_ARGS...` / `scripts/pi-local patch
 --policy PATH -- PI_ARGS...`. CODE policies declare ROLE=CODE and PATCH
 policies ROLE=PATCH. A skill declaration does not itself bind the active model.
-The runner selects provider/model explicitly. The global lifecycle extension
-reacts to actual Pi `model_select`, acquires STARTED or BORROWED identity, and
-cleans up only the exact STARTED profile/PID on shutdown. A changed or unknown
-runtime fails closed; never kill an unrelated listener.
+The runner selects provider/model explicitly. For GENERAL, the repository
+projection verifies the STARTED or BORROWED profile, PID and start ticks
+through `scripts/llm`. Shutdown cleans up only an exact STARTED receipt.
+An unverified runtime fails closed.
 
 ## Explicit cloud escalation
 

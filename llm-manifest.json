@@ -1,5 +1,84 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "authority": {
+    "model_inventory": "llm-manifest.json",
+    "runtime_profiles": "llm-manifest.json",
+    "endpoints": "llm-manifest.json",
+    "roles": "llm-manifest.json",
+    "lifecycle_owner": "scripts/llm"
+  },
+  "runtime_manager": "scripts/llm",
+  "models": {
+    "qwen36-q6": {
+      "model_id": "qwen3.6-35b-a3b-q6",
+      "artifact_path": "/models/gguf/qwen3.6-35b-q6/Qwen3.6-35B-A3B-Q6_K.gguf",
+      "display_name": "Qwen3.6 35B A3B Q6_K",
+      "kind": "chat",
+      "model_max_ctx": {
+        "tokens": 262144,
+        "source": "GGUF metadata key qwen35moe.context_length"
+      },
+      "sha256": "5eab4fcad800d277cbfbc28294e699d3fc1d488ed3c4f735213752404af686c8",
+      "size_bytes": 28514152480,
+      "gguf_version": 3
+    }
+  },
+  "runtime_profiles": {
+    "current-qwen36": {
+      "legacy_cli_alias": "qwen36",
+      "legacy_identity": "QWEN36",
+      "model_ref": "qwen36-q6",
+      "endpoint": {
+        "host": "127.0.0.1",
+        "port": 18086,
+        "path": "/v1"
+      },
+      "runtime": {
+        "binary": "/usr/bin/llama-server",
+        "backend": "Vulkan",
+        "device": "Vulkan0",
+        "version": "1.0.0-dev",
+        "build_number": 12359,
+        "commit": "b1b770d90d",
+        "device_name": "AMD Radeon 8060S Graphics (RADV STRIX_HALO)"
+      },
+      "context_layers": {
+        "model_max_ctx": {
+          "model_ref": "qwen36-q6"
+        },
+        "runtime_ctx": 32768,
+        "slot_ctx": 32768,
+        "client_effective_ctx": 32768
+      },
+      "max_output_tokens": null,
+      "selection_status": "OPTIONAL_MANUAL_QWEN36",
+      "arguments": [
+        "-m",
+        "{model_path}",
+        "-dev",
+        "{device}",
+        "-ngl",
+        "99",
+        "-c",
+        "{runtime_ctx}",
+        "-b",
+        "1024",
+        "-ub",
+        "512",
+        "-fa",
+        "on",
+        "--jinja",
+        "--parallel",
+        "1",
+        "--reasoning",
+        "off",
+        "--host",
+        "{host}",
+        "--port",
+        "{port}"
+      ]
+    }
+  },
   "roles": {
     "PATCH": {
       "enabled": true,
@@ -9,6 +88,31 @@
       "launcher": "scripts/challenger gptoss",
       "port": 18086,
       "mapped_to_code": false
+    },
+    "LOCAL_GENERAL": {
+      "assignment": "UNDECIDED",
+      "current_deployment_profile": "current-qwen36",
+      "projection_status": "CURRENT_DEPLOYMENT_COMPATIBILITY_ONLY"
+    }
+  },
+  "clients": {
+    "pi": {
+      "local_roles": [
+        "LOCAL_GENERAL"
+      ],
+      "local_profiles": [
+        "current-qwen36"
+      ],
+      "role_profiles": {
+        "GENERAL": "current-qwen36"
+      },
+      "provider": "neuralengine-local",
+      "api": "openai-completions",
+      "cloud_default_provider": "deepseek",
+      "cloud_default_model": "deepseek-flash",
+      "cloud_provider_catalog": "Pi built-in providers",
+      "local_lifecycle": false,
+      "projection_source": "llm-manifest.json"
     }
   }
 }

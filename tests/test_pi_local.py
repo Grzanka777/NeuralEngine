@@ -120,11 +120,10 @@ def test_code_runner_selects_exact_provider_model_and_bounded_policy(
 @pytest.mark.parametrize(
     ("role", "provider", "model"),
     [
-        ("GENERAL", "neural-general", "/models/general.gguf"),
         ("GPTOSS", "local-gptoss", "/models/patch.gguf"),
     ],
 )
-def test_runner_maps_general_and_patch_without_fallback(
+def test_runner_maps_patch_without_fallback(
     runner: dict[str, Any],
     role: str,
     provider: str,
@@ -221,8 +220,9 @@ def test_bounded_runner_fails_closed_when_guard_is_missing(
 
 
 def test_runner_propagates_pi_exit_and_guarded_cleanup(
-    runner: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: dict[str, Any], tmp_path: Path, policy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _install_guard(tmp_path)
     fake = _fake_adapter()
     executable = tmp_path / "pi"
     executable.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
@@ -238,13 +238,14 @@ def test_runner_propagates_pi_exit_and_guarded_cleanup(
         lambda command, **kwargs: subprocess.CompletedProcess(command, 7),
     )
 
-    assert runner["_run_role"]("GENERAL", [], None) == 7
-    assert fake.calls == [("switch", "GENERAL"), ("stop_owned", "GENERAL:123")]
+    assert runner["_run_role"]("CODE", [], str(policy)) == 7
+    assert fake.calls == [("switch", "CODE"), ("stop_owned", "CODE:123")]
 
 
 def test_runner_preserves_borrowed_runtime(
-    runner: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: dict[str, Any], tmp_path: Path, policy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _install_guard(tmp_path)
     fake = _fake_adapter(ownership="BORROWED")
     executable = tmp_path / "pi"
     executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -259,13 +260,14 @@ def test_runner_preserves_borrowed_runtime(
         lambda command, **kwargs: subprocess.CompletedProcess(command, 0),
     )
 
-    assert runner["_run_role"]("GENERAL", [], None) == 0
-    assert fake.calls == [("switch", "GENERAL")]
+    assert runner["_run_role"]("CODE", [], str(policy)) == 0
+    assert fake.calls == [("switch", "CODE")]
 
 
 def test_runner_cleans_owned_runtime_when_pi_is_interrupted(
-    runner: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    runner: dict[str, Any], tmp_path: Path, policy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _install_guard(tmp_path)
     fake = _fake_adapter()
     executable = tmp_path / "pi"
     executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -281,8 +283,8 @@ def test_runner_cleans_owned_runtime_when_pi_is_interrupted(
     monkeypatch.setitem(namespace["subprocess"].__dict__, "run", interrupt)
 
     with pytest.raises(KeyboardInterrupt):
-        runner["_run_role"]("GENERAL", [], None)
-    assert fake.calls == [("switch", "GENERAL"), ("stop_owned", "GENERAL:123")]
+        runner["_run_role"]("CODE", [], str(policy))
+    assert fake.calls == [("switch", "CODE"), ("stop_owned", "CODE:123")]
 
 
 def test_vision_is_fail_closed(runner: dict[str, Any], capsys: pytest.CaptureFixture[str]) -> None:
@@ -338,3 +340,48 @@ def test_pi_model_status_running_reports_actual_identity(
     assert "ACTIVE_PID=123" in output
     assert "ACTIVE_ENDPOINT=http://127.0.0.1:18080/v1" in output
     assert "ACTUAL_IDENTITY=/models/gguf/nemotron-3-nano-30b-a3b/" in output
+
+
+def test_general_routes_through_pinned_projection_and_preserves_guard(
+    runner: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shutil import copyfile
+
+    root = Path(__file__).resolve().parents[1]
+    copyfile(root / "llm-manifest.json", tmp_path / "llm-manifest.json")
+    guard = _install_guard(tmp_path)
+    executable = tmp_path / "pi"
+    executable.touch(mode=0o755)
+    namespace = runner["_run_role"].__globals__
+    monkeypatch.setitem(namespace, "ROOT", tmp_path)
+    monkeypatch.setitem(namespace, "PI_ENTRYPOINT", executable)
+    monkeypatch.setenv("NEURAL_TASK_MEMORY_POLICY", "/synthetic/policy.json")
+    monkeypatch.setenv("NEURALENGINE_MANIFEST", "/untrusted/manifest.json")
+    monkeypatch.setenv("https_proxy", "http://external.invalid")
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if len(calls) == 1:
+            assert command == [str(tmp_path / "scripts/llm"), "project-profile", "current-qwen36"]
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                '{"destination":{"provider":"neuralengine-local","model":"qwen3.6-35b-a3b-q6"}}',
+            )
+        assert kwargs["env"]["NEURALENGINE_MANIFEST"] == str(tmp_path / "llm-manifest.json")
+        assert "https_proxy" not in kwargs["env"]
+        assert kwargs["env"]["NO_PROXY"] == "127.0.0.1"
+        return subprocess.CompletedProcess(command, 7)
+
+    monkeypatch.setitem(namespace["subprocess"].__dict__, "run", fake_run)
+    arguments = ["--", "--offline", "--print", "--no-session", "--no-tools", "--", "ticket"]
+    assert runner["_run_role"]("GENERAL", arguments, None) == 7
+    assert calls[-1][1:5] == ["--provider", "neuralengine-local", "--model", "qwen3.6-35b-a3b-q6"]
+    assert "--no-extensions" in calls[-1] and "--no-mcp" in calls[-1]
+    assert str(guard) in calls[-1]
+    assert str(tmp_path / runner["PROVIDER_EXTENSION"]) in calls[-1]
+    assert str(tmp_path / runner["MEMORY_EXTENSION"]) in calls[-1]
+    assert calls[-1][-len(arguments) + 1 :] == arguments[1:]
+    with pytest.raises(runner["LocalPiError"], match="repository provider projection"):
+        runner["_run_role"]("GENERAL", ["--extension", "unrelated.ts"], None)

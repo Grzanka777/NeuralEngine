@@ -1307,35 +1307,15 @@ def test_general_refuses_when_port_18084_is_occupied(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_main_returns_zero_when_general_already_ready(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+@pytest.mark.parametrize("arguments", [["general"], ["start", "general"], ["switch", "general"]])
+def test_retired_general_cli_refuses_before_lifecycle(
+    arguments: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """main() must return 0 (exit code 0) when GENERAL ALREADY READY."""
-    profile = _profile(tmp_path)
-
-    monkeypatch.setenv("NEURALENGINE_GENERAL_MODEL", str(profile.model))
-    monkeypatch.setenv("NEURALENGINE_GENERAL_MTP", str(profile.mtp))
-    monkeypatch.setenv("NEURALENGINE_LLAMA_SERVER", str(profile.runtime))
-    configured = _load_launcher("neural_engine_llm_launcher_general_ready_cli")
-    assert configured.DEFAULT_PROFILE.model == profile.model
-    assert configured.DEFAULT_PROFILE.mtp == profile.mtp
-    assert configured.DEFAULT_PROFILE.runtime == profile.runtime
-
     monkeypatch.setattr(
-        configured,
-        "port_state",
-        lambda port: configured.PortState(
-            listening=port == profile.port,
-            pids=(6001,) if port == profile.port else (),
-        ),
+        launcher, "lifecycle_lock", lambda: pytest.fail("must refuse before locking")
     )
-    monkeypatch.setattr(configured, "is_general_process", lambda pid, _: pid == 6001)
-    monkeypatch.setattr(configured, "_health_ok", lambda _: True)
-    monkeypatch.setattr(configured, "_lifecycle_lock_path", lambda: tmp_path / "lifecycle.lock")
-
-    result = configured.main(["general"])
-    assert result == 0
-    assert "GENERAL ALREADY READY" in capsys.readouterr().out
+    assert launcher.main(arguments) == 1
+    assert "use scripts/pi-local general" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -1454,3 +1434,163 @@ def test_retired_and_challenger_ports_fail_closed(port: int) -> None:
         launcher.stop_active_profiles(
             port_reader=reader, killer=lambda *_: pytest.fail("must not signal")
         )
+
+
+def test_qwen_projection_and_manifest_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    profile = launcher.qwen36_profile()
+    assert profile.name == "current-qwen36"
+    assert profile.runtime_ctx == profile.client_ctx == 32768
+    assert profile.destination() == {
+        "provider": "neuralengine-local",
+        "model": "qwen3.6-35b-a3b-q6",
+        "api": "openai-completions",
+        "base_url": "http://127.0.0.1:18086/v1",
+    }
+    assert profile.command()[0] == "/usr/bin/llama-server"
+    assert str(profile.model).endswith("/Qwen3.6-35B-A3B-Q6_K.gguf")
+    assert "-md" not in profile.command()
+    manifest = json.loads((launcher.ROOT / "llm-manifest.json").read_bytes())
+    manifest["runtime_profiles"][profile.name]["arguments"] += ["--host", "0.0.0.0"]
+    (tmp_path / "llm-manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(launcher, "ROOT", tmp_path)
+    with pytest.raises(launcher.LauncherError, match="runtime arguments"):
+        launcher.qwen36_profile()
+
+
+def test_qwen_missing_gguf_fails_closed(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    profile = replace(launcher.qwen36_profile(), model=tmp_path / "missing.gguf")
+    with pytest.raises(launcher.LauncherError, match="regular non-symlink file"):
+        launcher._start_qwen36(profile)
+
+
+@pytest.mark.parametrize("mismatch", ["build", "device"])
+def test_qwen_runtime_identity_is_pinned(monkeypatch: pytest.MonkeyPatch, mismatch: str) -> None:
+    import subprocess
+
+    profile = launcher.qwen36_profile()
+
+    def probe(command: list[str], **_options: object) -> subprocess.CompletedProcess[str]:
+        assert command[0] == str(profile.runtime)
+        version = (
+            f"version: {profile.runtime_version} "
+            f"(build {profile.runtime_build_number}, commit {profile.runtime_commit})"
+        )
+        result = (
+            ("version: other" if mismatch == "build" else version)
+            if command[1] == "--version"
+            else (
+                "Vulkan1: other"
+                if mismatch == "device"
+                else f"{profile.device}: {profile.device_name}"
+            )
+        )
+        return subprocess.CompletedProcess(command, 0, result, "")
+
+    monkeypatch.setattr(launcher.subprocess, "run", probe)
+    with pytest.raises(launcher.LauncherError, match="identity mismatch|Vulkan device"):
+        launcher.verify_qwen36_runtime(profile)
+
+
+@pytest.mark.parametrize(
+    "owners,address",
+    [
+        ((), "127.0.0.1:18086"),
+        ((123, 456), "127.0.0.1:18086"),
+        ((123,), "0.0.0.0:18086"),
+    ],
+)
+def test_qwen_refuses_ambiguous_or_unapproved_listener(
+    owners: tuple[int, ...], address: str
+) -> None:
+    with pytest.raises(launcher.LauncherError, match="ambiguous"):
+        launcher._qwen36_owner(
+            launcher.qwen36_profile(), launcher.PortState(True, owners, (address,))
+        )
+
+
+def test_qwen_conflicting_port_prevents_borrow(monkeypatch: pytest.MonkeyPatch) -> None:
+    profile = launcher.qwen36_profile()
+    monkeypatch.setattr(
+        launcher,
+        "port_state",
+        lambda port: launcher.PortState(port in {profile.port, 18084}),
+    )
+    with pytest.raises(launcher.LauncherError, match="conflicting listener on port 18084"):
+        launcher._qwen36_state(profile)
+
+
+def test_qwen_start_borrow_verify_and_owned_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+    from types import SimpleNamespace
+
+    profile = launcher.qwen36_profile()
+    listener = launcher.PortState(True, (123,), (f"{profile.host}:{profile.port}",))
+    state = launcher.PortState(False)
+    starts: list[tuple[str, ...]] = []
+    signals: list[tuple[int, int]] = []
+
+    def start(command: tuple[str, ...], **_options: object) -> SimpleNamespace:
+        nonlocal state
+        starts.append(command)
+        state = listener
+        return SimpleNamespace(pid=123, poll=lambda: None)
+
+    def stop(pid: int, _profile: object, *, expected_start_ticks: int, **_options: object) -> None:
+        nonlocal state
+        signals.append((pid, expected_start_ticks))
+        state = launcher.PortState(False)
+
+    monkeypatch.setattr(launcher, "verify_gguf_inventory", lambda *args, **kwargs: None)
+    monkeypatch.setattr(launcher, "verify_qwen36_runtime", lambda _: None)
+    monkeypatch.setattr(launcher, "_qwen36_state", lambda _: state)
+    monkeypatch.setattr(launcher, "process_start_ticks", lambda pid: 456 if pid == 123 else None)
+    monkeypatch.setattr(launcher, "is_qwen36_process", lambda pid, _: pid == 123)
+    monkeypatch.setattr(launcher, "_qwen36_health_ok", lambda _: True)
+    monkeypatch.setattr(launcher, "_state_log_path", lambda: tmp_path / "general.log")
+    monkeypatch.setattr(launcher, "wait_for_port_closed", lambda _: not state.listening)
+    monkeypatch.setattr(launcher, "_signal_verified_process", stop)
+    monkeypatch.setattr(launcher.subprocess, "Popen", start)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+
+    for ownership in ("STARTED", "BORROWED"):
+        assert launcher.main(["switch-json", profile.name]) == 0
+        receipt = json.loads(capsys.readouterr().out)
+        assert receipt["ownership"] == ownership
+        assert receipt["endpoint"] == profile.endpoint()
+        assert (receipt["pid"], receipt["process_start_ticks"]) == (123, 456)
+    assert starts == [profile.command()]
+
+    identity = ["--expected-profile", profile.identity, "--expected-pid", "123"]
+    assert launcher.main(["verify-json", *identity, "--expected-start-ticks", "456"]) == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "VERIFIED"
+    assert launcher.main(["stop-owned-json", *identity, "--expected-start-ticks", "999"]) == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "NOT_OWNED_OR_REPLACED"
+    assert signals == []
+    assert launcher.main(["stop-owned-json", *identity, "--expected-start-ticks", "456"]) == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "STOPPED"
+    assert signals == [(123, 456)]
+
+
+def test_qwen_gguf_integrity_validates_exact_bytes(tmp_path: Path) -> None:
+    from hashlib import sha256
+
+    gguf = tmp_path / "fixture.gguf"
+    accepted = b"GGUF\x03\x00\x00\x00fixture"
+    gguf.write_bytes(accepted)
+    inventory = {
+        "expected_size_bytes": len(accepted),
+        "expected_sha256": sha256(accepted).hexdigest(),
+        "expected_version": 3,
+    }
+    launcher.verify_gguf_inventory(gguf, **inventory)
+    gguf.write_bytes(accepted[:-1] + b"x")
+    with pytest.raises(launcher.LauncherError, match="SHA-256 mismatch"):
+        launcher.verify_gguf_inventory(gguf, **inventory)

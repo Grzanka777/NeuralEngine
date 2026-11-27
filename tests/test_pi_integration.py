@@ -50,8 +50,11 @@ def test_pi_project_settings_select_local_general_and_existing_adapters() -> Non
     settings = _settings()
 
     assert "enabledModels" not in settings
-    assert settings["defaultProvider"] == "neural-general"
-    assert GENERAL_MODEL in settings["defaultModel"]
+    manifest = json.loads((REPOSITORY_ROOT / "llm-manifest.json").read_bytes())
+    pi = manifest["clients"]["pi"]
+    profile = manifest["runtime_profiles"][pi["role_profiles"]["GENERAL"]]
+    assert settings["defaultProvider"] == pi["provider"] == "neuralengine-local"
+    assert settings["defaultModel"] == manifest["models"][profile["model_ref"]]["model_id"]
     assert settings["extensions"] == ["extensions/neuralengine-guard.ts"]
     assert settings["skills"] == [
         "skills/neuralengine-development",
