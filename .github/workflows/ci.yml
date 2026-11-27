@@ -26,6 +26,31 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Set up Node for Pi parity tests
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.1"
+          package-manager-cache: false
+
+      - name: Verify Git capabilities for Pi guard tests
+        shell: bash
+        run: |
+          git --version
+          scratch="$(mktemp -d "$RUNNER_TEMP/pi-git.XXXXXX")"
+          git init --quiet "$scratch/repo"
+          git -C "$scratch/repo" worktree add --orphan -b ci-probe "$scratch/linked"
+          roots="$(git --no-optional-locks --git-dir="$scratch/linked/.git" rev-parse --absolute-git-dir --path-format=absolute --git-common-dir)"
+          test "$roots" = "$scratch/repo/.git/worktrees/linked"$'\n'"$scratch/repo/.git"
+
+      - name: Provision Pi for mandatory mutation parity tests
+        shell: bash
+        run: |
+          test "$(node --version)" = v26.13.1
+          prefix="$RUNNER_TEMP/pi-runtime"
+          npm install --prefix "$prefix" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.6.1
+          test "$("$prefix/node_modules/.bin/pi" --version)" = 1.6.1
+          printf 'PI_GUARD_RUNTIME_PACKAGE=%s\n' "$prefix/node_modules/@earendil-works/pi-coding-agent" >> "$GITHUB_ENV"
+
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
