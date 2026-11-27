@@ -12,6 +12,8 @@ from tempfile import TemporaryFile
 from typing import Literal
 from uuid import UUID, uuid4
 
+from pydantic import Field
+
 from neural_engine.application.brain_context_service import (
     BrainContextError,
     BrainContextIntegrityError,
@@ -20,11 +22,13 @@ from neural_engine.application.task_memory_service import (
     Contract,
     Digest,
     Learning,
+    NativeClientTrust,
     ProviderDestination,
     TaskMemoryError,
     TaskMemoryIntegrityError,
     TaskMemoryPolicy,
     TaskMemoryService,
+    Text,
     VerifiedTaskResult,
     Verifier,
 )
@@ -36,18 +40,26 @@ _TASK = re.compile(r"Read and execute:[ \t]*\n[ \t]*(\.agent-work/prompts/([\w.-
 _MAX_RECEIPT = 32_768
 _MAX_PROMPT = 131_072
 Completion = Literal["completed", "failed", "interrupted"]
+OPERATOR_TRUSTED_NATIVE = "OPERATOR_TRUSTED_NATIVE"
+
+
+class NativeEngine(Contract):
+    engine: Literal["codex", "antigravity"]
+    requested_model: Text
 
 
 class TaskStart(Contract):
     cwd: str
     invocation: str
-    destination: ProviderDestination
+    destination: ProviderDestination | None
+    native_engine: NativeEngine | None = None
 
 
 class TaskFinish(Contract):
     session: UUID
     outcome: Completion
     context_supplied: bool
+    native_session: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TaskAdmission(Contract):
@@ -57,12 +69,14 @@ class TaskAdmission(Contract):
     task_path: str
     task_sha256: Digest
     context: dict[str, object]
+    native_engine: NativeEngine | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TaskCompletion(Contract):
     admission: TaskAdmission
     outcome: Completion
     context_supplied: bool
+    native_session: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
     status: str
     verification_sha256: Digest | None = None
     evidence: EvidenceReference | None = None
@@ -93,7 +107,11 @@ class TaskMemoryRuntime:
             raise TaskMemoryError("POLICY_MUST_BE_OUTSIDE_WORKSPACE")
 
     def start(
-        self, request: TaskStart, service: Callable[[], TaskMemoryService]
+        self,
+        request: TaskStart,
+        service: Callable[[], TaskMemoryService],
+        *,
+        trusted_native: NativeClientTrust | None = None,
     ) -> dict[str, object]:
         parts = _TASK.fullmatch(request.invocation.strip())
         if parts is None or len(parts[2]) > 80 or not parts[2].isascii():
@@ -117,15 +135,34 @@ class TaskMemoryRuntime:
             raise TaskMemoryError("PROJECT_IDENTITY_MISMATCH")
         prompt = self._prompt(parts[1])
         rendered = None
-        if self.policy.share_with != request.destination:
-            context: dict[str, object] = {"state": "DISCLOSURE_DENIED"}
-        else:
+        native = request.native_engine
+        authorized_native = (
+            native is not None
+            and trusted_native is not None
+            and trusted_native == self.policy.trust_native
+            and trusted_native.engine == native.engine
+            and trusted_native.model == native.requested_model
+        )
+        authorized_exact = (
+            native is None
+            and request.destination is not None
+            and request.destination == self.policy.share_with
+        )
+        context: dict[str, object] = {"state": "DISCLOSURE_DENIED"}
+        if native is not None or request.destination is None:
+            context["reason"] = "DESTINATION_UNVERIFIED"
+        if authorized_native or authorized_exact:
             try:
                 context, rendered = service().context(self.policy)
             except BrainContextIntegrityError, TaskMemoryIntegrityError:
                 context = {"state": "INTEGRITY_ERROR"}
             except BrainContextError, NeuralHomeError, OSError, TaskMemoryError:
                 context = {"state": "RETRIEVAL_ERROR"}
+        if authorized_native and trusted_native is not None:
+            context.update(
+                disclosure=OPERATOR_TRUSTED_NATIVE,
+                client_sha256=trusted_native.sha256,
+            )
         session = uuid4()
         admission = TaskAdmission(
             session=session,
@@ -134,6 +171,7 @@ class TaskMemoryRuntime:
             task_path=parts[1],
             task_sha256=sha256(prompt).hexdigest(),
             context=context,
+            native_engine=request.native_engine,
         )
         create_once_bytes(self._receipt_path(session, "started"), _serialize(admission))
         return {
@@ -187,8 +225,21 @@ class TaskMemoryRuntime:
             admission=admission,
             outcome=request.outcome,
             context_supplied=request.context_supplied,
+            native_session=request.native_session,
             status=request.outcome.upper(),
         )
+        if admission.native_engine is not None and (
+            (
+                request.context_supplied
+                and (
+                    admission.context.get("disclosure") != OPERATOR_TRUSTED_NATIVE
+                    or admission.context.get("sha256") is None
+                    or request.native_session is None
+                )
+            )
+            or (request.outcome == "completed" and request.native_session is None)
+        ):
+            raise TaskMemoryError("NATIVE_SETTLEMENT_INVALID")
         if request.outcome != "completed":
             return initial
         verifier = self.policy.verifiers.get(admission.task, self.policy.default_verifier)
@@ -245,9 +296,11 @@ class TaskMemoryRuntime:
             or result.evidence is None
         ):
             raise TaskMemoryError("NO_AUTHORIZABLE_CANDIDATE")
+        engine = result.admission.native_engine
+        engine_name = engine.engine if engine else "pi"
         evidence = EvidenceReference(
             kind="task_memory_verification",
-            locator=f"{result.admission.task_path}#pi-session={session}",
+            locator=f"{result.admission.task_path}#{engine_name}-session={session}",
             repository_or_project=self.policy.project,
             content_hash=result.admission.task_sha256,
             source=f"verifier-sha256:{result.verification_sha256}",
