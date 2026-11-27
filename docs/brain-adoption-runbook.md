@@ -77,7 +77,106 @@ control. The runtime trusts the operator's model catalog, authorized files,
 verification programs and transport configuration. A shared host process or
 provider proxy with broader access needs its own authorization before use.
 
-### Completion and authorization
+## Codex and Antigravity headless task memory
+
+Use the same task file and shared verifier, receipt and authorization commands.
+The supported entrypoints are a new `codex exec --ephemeral --json` task and
+one task sent over the headless Antigravity CLI JSON stream. The launcher
+pins the workspace and sends the admitted task bytes with an explicit model
+selector. It admits success only with exit zero, a native session ID and a
+successful terminal event. The receipt records the requested model and native
+session ID. A requested selector does not attest the effective provider, model,
+endpoint or final provider payload.
+
+Use `share_with: null` and omit `trust_native` for the default
+`DISCLOSURE_DENIED` workflow. The verifier can still prepare a candidate
+locally after a successful settlement.
+
+For an explicitly authorized project and signed-in native client, create
+one private policy per engine. Add `trust_native` alongside the existing
+workspace, project, Brain home, context limits and optional verifier.
+Keep `share_with: null`.
+
+```json
+{
+  "trust_native": {
+    "engine": "codex",
+    "model": "gpt-6.2-sol",
+    "executable": "/canonical/path/to/codex",
+    "sha256": "REPLACE_WITH_THE_64_LOWERCASE_HEX_DIGEST"
+  }
+}
+```
+
+For AGY use `"engine": "antigravity"`, the `gemini-3.8-flash-medium` selector
+and the resolved `agy` executable. Obtain the canonical path with
+`readlink -f (command -s codex)` or `readlink -f (command -s agy)` in fish.
+Use `sha256sum` on the resolved executable. Review a client update and update
+the pin before using it to disclose context.
+
+`trust_native` authorizes the launcher to hand bounded Brain context to the
+pinned native client. The operator trusts the client, its subscription
+account, configuration, tools and routing. The launcher checks the engine,
+requested model, resolved executable and SHA-256. It rejects recognized
+alternate API routes and mixed policy modes. Trusted Codex launches select
+the built-in OpenAI provider and ChatGPT login, ignore user config and
+disable hooks. AGY uses its existing Google account settings with direct
+Gemini API and ADC settings refused. A local preflight does not establish
+the final provider request, recipient, fallback behavior or retention.
+
+The receipt records `OPERATOR_TRUSTED_NATIVE` and the client digest. With
+that label, `context_supplied` records that the launcher attached context
+to native input and observed a session ID. A missing session ID does not
+prove that context stayed local. Pi’s separate `share_with` mode keeps its
+request-payload and destination checks.
+
+The launcher requires Linux bubblewrap with working mount and PID namespaces.
+It hides the selected Brain, inherited Neural home, default Neural home and
+private policy/receipt directory from the CLI subprocess and removes both
+Neural environment variables from its environment. Use trusted client
+configuration, tools and integrations. A pre-existing external process or
+MCP server runs outside this filesystem boundary. Task files and other
+workspace documents are ordinary agent input, so keep private Brain exports
+outside the workspace and out of provider-bound tasks. Invalid policy or
+workspace fails admission before launching a CLI.
+
+From the project root, define the task once in fish. The model selectors
+below are explicit examples. Select available models for your account during
+one-time setup. Run one of the four commands for each task.
+
+```fish
+set task (printf 'Read and execute:\n.agent-work/prompts/TASK.md' | string collect)
+set policies ~/.local/state/neuralengine
+set codex_model gpt-6.2-sol
+set antigravity_model gemini-3.8-flash-medium
+
+uv run --no-sync neural memory run codex --model "$codex_model" \
+  --policy "$policies/codex-policy.json" "$task"
+
+uv run --no-sync neural memory run antigravity --model "$antigravity_model" \
+  --policy "$policies/antigravity-policy.json" "$task"
+
+env NEURAL_TASK_MEMORY_POLICY="$policies/deepseek-policy.json" \
+  scripts/pi-local deepseek -- --offline --print --no-session --no-tools -- "$task"
+
+env NEURAL_TASK_MEMORY_POLICY="$policies/qwen-policy.json" \
+  scripts/pi-local general -- --offline --print --no-session --no-tools -- "$task"
+```
+
+Codex and Antigravity print a `neural memory show` command on completion.
+Inspect the receipt and run its exact authorization command only when you
+approve that candidate for persistence. A Decision record is a proposal.
+Its acceptance remains a separate operation. Native Antigravity may retain
+conversation data according to its client settings. The memory receipt
+stores settlement and verifier provenance only.
+
+T3 Code uses its own Codex and Antigravity drivers. A T3 chat turn bypasses
+this launcher, its private policy preflight and its completion receipt.
+From a terminal at the T3 project's Git root, run the CLI workflow for
+tasks that need automatic memory. T3 chat, desktop and resumed sessions
+remain outside this qualification.
+
+## Completion and authorization
 
 The extension records safe metadata outside Brain, including task hash, context
 hash and record IDs, fallback selection, omissions, and whether the provider

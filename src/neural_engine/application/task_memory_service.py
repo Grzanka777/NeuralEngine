@@ -5,7 +5,7 @@ from hashlib import sha256
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 
 from neural_engine.application.brain_context_service import (
     DEFAULT_CONTEXT_MAX_BYTES,
@@ -38,6 +38,15 @@ class ProviderDestination(Contract):
     base_url: Text
 
 
+class NativeClientTrust(Contract):
+    """Operator approval of a client launch whose provider request is opaque."""
+
+    engine: Key
+    model: Text
+    executable: str
+    sha256: Digest
+
+
 class TaskMemoryPolicy(Contract):
     workspace: str
     project: Key
@@ -47,8 +56,15 @@ class TaskMemoryPolicy(Contract):
         default=DEFAULT_CONTEXT_MAX_BYTES, ge=MIN_CONTEXT_MAX_BYTES, le=MAX_CONTEXT_MAX_BYTES
     )
     share_with: ProviderDestination | None = None
+    trust_native: NativeClientTrust | None = None
     default_verifier: Verifier | None = None
     verifiers: dict[Key, Verifier] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def separate_disclosure_authority(self) -> TaskMemoryPolicy:
+        if self.share_with is not None and self.trust_native is not None:
+            raise ValueError("NATIVE_TRUST_AND_EXACT_DESTINATION_ARE_MUTUALLY_EXCLUSIVE")
+        return self
 
 
 class Verifier(Contract):
