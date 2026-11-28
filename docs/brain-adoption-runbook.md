@@ -6,7 +6,8 @@ without expanding schemas, Planner enrichment, or Governor rules.
 
 ## Automatic task memory in Pi
 
-Pi 1.6.1 supports one ephemeral print task per invocation. Configure the
+Pi supports one ephemeral print task per invocation; the qualified Z13 host runs
+Pi 1.7.0. Configure the
 workspace and project once, then send the same two-line ticket invocation.
 The Pi extension reads the ticket and supplies eligible Brain evidence before
 inference. It reports a receipt ID and the result on stderr. The provider
@@ -92,6 +93,11 @@ Use `share_with: null` and omit `trust_native` for the default
 `DISCLOSURE_DENIED` workflow. The verifier can still prepare a candidate
 locally after a successful settlement.
 
+The policy document is a strict contract: unknown keys are rejected, so a
+`_note` or comment field makes the whole file unusable. Keep the active
+policy free of annotations. Inactive client-trust drafts belong in a
+separate `templates/` directory and must never be passed to `--policy`.
+
 For an explicitly authorized project and signed-in native client, create
 one private policy per engine. Add `trust_native` alongside the existing
 workspace, project, Brain home, context limits and optional verifier.
@@ -114,6 +120,12 @@ and the resolved `agy` executable. Obtain the canonical path with
 Use `sha256sum` on the resolved executable. Review a client update and update
 the pin before using it to disclose context.
 
+The pin must describe the executable the launcher actually resolves on
+`PATH`, not another installation of the same version. Two builds of one
+version, for example a distribution package and a standalone self-managed
+build, have different digests; pinning the wrong one fails admission with
+`NATIVE_CLIENT_IDENTITY_MISMATCH`. Prefer one installation per client.
+
 `trust_native` authorizes the launcher to hand bounded Brain context to the
 pinned native client. The operator trusts the client, its subscription
 account, configuration, tools and routing. The launcher checks the engine,
@@ -131,7 +143,8 @@ prove that context stayed local. Pi’s separate `share_with` mode keeps its
 request-payload and destination checks.
 
 The launcher requires Linux bubblewrap with working mount and PID namespaces.
-It hides the selected Brain, inherited Neural home, default Neural home and
+It binds `/` read-write, supplies a private `/dev` and `/proc`, and hides the
+selected Brain, inherited Neural home, default Neural home and
 private policy/receipt directory from the CLI subprocess and removes both
 Neural environment variables from its environment. Use trusted client
 configuration, tools and integrations. A pre-existing external process or
@@ -242,8 +255,8 @@ use the existing separately authorized recovery procedure before retrying.
 | --- | --- | --- | --- | --- |
 | Pi with DeepSeek | Automatic for a matching policy | Automatic | Automatic preparation with an eligible verifier. Explicit apply. | Native CLI and serialized request tested offline with mocked transport. |
 | Local Qwen 3.6 via Pi | Automatic for a matching policy | Automatic | Same Pi contract | Native CLI with the configured GENERAL provider/model tested offline with mocked transport. |
-| Codex | Existing instruction-level retrieval only | Unsupported in this integration | Shared operator CLI applies existing Pi receipts | Native lifecycle enforcement unverified. |
-| Antigravity | Existing instruction-level retrieval only | Unsupported in this integration | Shared operator CLI applies existing Pi receipts | No runtime lifecycle hook established. |
+| Codex | Automatic for a matching policy through `neural memory run codex`. Default is `DISCLOSURE_DENIED`; `trust_native` is required for disclosure. | Automatic: native JSONL session ID and terminal event | Shared operator CLI prepares the candidate and applies it after exact-digest authorization | Live headless subscription turn qualified; denied and streamed routes tested with a controlled transport. |
+| Antigravity | Automatic for a matching policy through `neural memory run antigravity`. Default is `DISCLOSURE_DENIED`; `trust_native` is required for disclosure. | Automatic: native NDJSON settlement | Same shared operator CLI | Live headless subscription turn qualified; native workspace and conversation identity matched. |
 
 ### First production task proposal
 

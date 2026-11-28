@@ -5,6 +5,16 @@ Neural Engine is a model-agnostic cognitive evolution engine.
 The project is organized around Clean Architecture boundaries so domain concepts,
 application services, ports, and infrastructure can evolve independently.
 
+## Documentation
+
+- [`docs/operator-deployment.md`](docs/operator-deployment.md) — supported
+  deployment, canonical workspace, daily task workflow, troubleshooting,
+  backup and rollback, portable Brain.
+- [`docs/brain-adoption-runbook.md`](docs/brain-adoption-runbook.md) — Brain
+  adoption, receipts, verifier and authorization workflow.
+- [`docs/stable-release-notes.md`](docs/stable-release-notes.md) — release
+  contents, supported engine matrix and known limitations.
+
 ## Neural Home Selection
 
 By default, Neural Engine stores its complete local operational home at:

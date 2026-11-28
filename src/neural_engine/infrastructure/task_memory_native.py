@@ -172,6 +172,11 @@ def run_native(
         "--bind",
         "/",
         "/",
+        # Bind / exposes the host device nodes, but a capability-free child cannot open
+        # them, so stdio-null (os.devnull, Stdio::null) fails with EACCES. A private
+        # devtmpfs restores /dev/null without exposing host devices.
+        "--dev",
+        "/dev",
         "--proc",
         "/proc",
         *masks,
