@@ -61,6 +61,17 @@ assumptions, and release evidence gate are defined in
   (`release: prepare NeuralEngine 1.0.0`).
 - `v1.0.0` remains an invariant historical annotated tag that peels to that
   release commit; it is not the current package or release state.
+- The post-`v1.1.0` stable consolidation reconciles the supported operating
+  environment around four engines: Codex, Antigravity, DeepSeek and local
+  Qwen 3.6 Q6_K, with Pi as the lightweight DeepSeek and Qwen runtime and
+  T3 Code retained as an operator interface. Deployment, daily invocation,
+  troubleshooting, backup and rollback, portable Brain behaviour and known
+  limitations are documented in
+  [`docs/operator-deployment.md`](docs/operator-deployment.md) and
+  [`docs/stable-release-notes.md`](docs/stable-release-notes.md). The overlay
+  from the historical `ship/llm-context-ubatch-harness` checkout is not merged;
+  only the dependency-closed fixes required by the supported deployment are
+  integrated.
 
 ## 1.0 Closure State
 

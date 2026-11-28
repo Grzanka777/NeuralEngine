@@ -737,6 +737,9 @@ def native_boundary(case: Case) -> Path:
         "assert not list(pathlib.Path(os.environ['EXPECTED_BRAIN']).iterdir())\n"
         "assert not list(pathlib.Path(os.environ['EXPECTED_RECEIPTS']).iterdir())\n"
         "assert 'NEURAL_HOME' not in os.environ and 'NEURAL_TASK_MEMORY_POLICY' not in os.environ\n"
+        # A tool that redirects stdio to /dev/null must work inside the launcher namespace.
+        "with open(os.devnull, 'w') as sink:\n"
+        "    sink.write('')\n"
         "assert '--model=fixture-model' in sys.argv\n"
         "wire = sys.stdin.read()\n"
         "task = wire if engine == 'codex' else json.loads(wire)['message']['content']\n"
